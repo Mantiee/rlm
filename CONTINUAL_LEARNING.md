@@ -59,3 +59,30 @@ Każdy kandydat wymaga jakościowego porównania z bazą i poprzednią zaakcepto
 zapisania regresji oraz świadomej promocji. Obecny fork niczego nie promuje automatycznie.
 Nowe funkcje z powyższej listy pozostają wymaganiami do wdrożenia przed automatycznym
 uczeniem kolejnych rund; nie są jeszcze w całości zaimplementowane.
+
+## Jev i połączenie mechanizmów ochrony
+
+Jev jest uwzględniony w projekcie jako opcjonalna usługa wyboru eksperta i oceny
+przydatności kontekstu. [Dokumentacja routingu](https://docs.typesafe.ai/patterns/intent-routing)
+opisuje ten sposób użycia. To plan integracji, nie działający klient w tej wersji.
+Aktywacja wymaga lokalnie skonfigurowanego klucza API. Nie uruchomiono wywołań usługi.
+
+Jawnie przypięta chroniona wersja eksperta ma pierwszeństwo przed decyzją routera.
+Jev wybiera wyłącznie z listy dostępnych zaakceptowanych ekspertów i może wskazać
+niepewność. Nie zatwierdza sam danych treningowych, nie promuje modeli ani nie
+uznaje własnej oceny za dowód poprawności. Jego wersję, decyzję i warunki wyboru
+trzeba rejestrować i oceniać niezależnie.
+
+Rozwijany kandydat ma łączyć zweryfikowane nowe przykłady, reprezentatywny replay
+oraz eksperymentalną regularizację odpowiedzi względem zamrożonego poprzednika
+(distillation/KL). [Learning without Forgetting](https://arxiv.org/abs/1606.09282)
+jest wzorcem zachowywania zachowania poprzednika przez destylację, pierwotnie badanym
+dla CNN. Przeniesienie do autoregresywnej Gemmy, koszt dodatkowych forwardów i dobór
+siły kar wymagają pomiaru. Nie ma tu gwarancji zachowania nieobserwowanych zachowań.
+
+Pamięć zewnętrzna zachowuje oryginały; indeks embeddingów pomaga je odnaleźć.
+Niezmienne wersje chronią wcześniejsze wagi i ścieżki, replay i regularizacja mają
+ograniczać regresje nowego kandydata, a niezależne testy wykrywają regresje na próbach.
+Te mechanizmy pełnią różne role. Połączenie nie daje ogólnego dowodu zerowego
+zapominania całego systemu. Porównanie LoRA i sieci bocznej na V100 pozostaje konieczne
+przed nazwaniem któregoś rozwiązania najlepszym dla tego setupu.
