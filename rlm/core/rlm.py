@@ -78,6 +78,9 @@ class RLM:
         sub_sampling_args: dict[str, Any] | None = None,
         orchestrator: bool = True,
         user_prologue: str | None = None,
+        context_window: int | None = None,
+        token_counter: Callable[[list[dict[str, Any]]], int] | None = None,
+        max_repl_output_chars: int = 20000,
     ):
         """
         Args:
@@ -162,6 +165,13 @@ class RLM:
 
         self.compaction = compaction
         self.compaction_threshold_pct = compaction_threshold_pct
+        if context_window is not None and context_window < 512:
+            raise ValueError("context_window must be at least 512")
+        if max_repl_output_chars < 1:
+            raise ValueError("max_repl_output_chars must be positive")
+        self.context_window = context_window
+        self.token_counter = token_counter
+        self.max_repl_output_chars = max_repl_output_chars
         self.max_concurrent_subcalls = max_concurrent_subcalls
 
         self.depth = depth
@@ -453,7 +463,7 @@ class RLM:
                         )
 
                     # Format the iteration for the next prompt.
-                    new_messages = format_iteration(iteration)
+                    new_messages = format_iteration(iteration, self.max_repl_output_chars)
 
                     # Update message history with the new messages.
                     message_history.extend(new_messages)
@@ -589,8 +599,12 @@ class RLM:
         model_name = (
             self.backend_kwargs.get("model_name", "unknown") if self.backend_kwargs else "unknown"
         )
-        max_tokens = get_context_limit(model_name)
-        current_tokens = count_tokens(message_history, model_name)
+        max_tokens = self.context_window or get_context_limit(model_name)
+        current_tokens = (
+            self.token_counter(message_history)
+            if self.token_counter is not None
+            else count_tokens(message_history, model_name)
+        )
         threshold_tokens = int(self.compaction_threshold_pct * max_tokens)
         return current_tokens, threshold_tokens, max_tokens
 
@@ -817,6 +831,9 @@ class RLM:
             max_timeout=remaining_timeout,
             max_tokens=self.max_tokens,
             max_errors=self.max_errors,
+            context_window=self.context_window,
+            token_counter=self.token_counter,
+            max_repl_output_chars=self.max_repl_output_chars,
             custom_system_prompt=self.system_prompt,
             other_backends=self.other_backends,
             other_backend_kwargs=self.other_backend_kwargs,

@@ -1,0 +1,45 @@
+# Paths relative to ~/ai-v100, unless explicitly absolute.
+[runtime]
+base_url = "http://127.0.0.1:8088"
+model_name = "v100"
+model_version = "gemma4-original-707f0a3"
+context_window = 8192
+max_output_tokens = 512
+max_iterations = 8
+max_concurrent_subcalls = 1
+max_timeout = 900
+
+[server]
+binary = "src/llama-v0.6.0/build-v100/bin/llama-server"
+model = "models/gguf/gemma4-12b/gemma4-12b-Q6_K.gguf"
+context_per_slot = 8192
+slots = 1
+threads = 8
+batch_size = 512
+ubatch_size = 128
+flash_attention = "auto"
+cache_type = "f16"
+# Enable only after measuring against the no-draft baseline.
+draft_model = ""
+draft_tokens = 4
+
+[memory]
+database = "research/state/memory.sqlite3"
+chunk_tokens = 1536
+summary_tokens = 192
+fanout = 4
+retrieve_count = 4
+
+[training]
+base_model = "models/gemma4-12b"
+output = "research/checkpoints/skill-lora"
+init_adapter = ""
+precision = "nf4"
+rank = 16
+max_length = 1024
+microbatch = 1
+gradient_accumulation = 8
+learning_rate = 0.00005
+max_steps = 100
+eval_steps = 25
+save_steps = 25

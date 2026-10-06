@@ -16,7 +16,11 @@ def get_client(
     Routes a specific backend and the args (as a dict) to the appropriate client if supported.
     Currently supported backends: ['openai']
     """
-    if backend == "openai":
+    if backend == "llamacpp":
+        from rlm.clients.llamacpp import LlamaCppClient
+
+        return LlamaCppClient(**backend_kwargs)
+    elif backend == "openai":
         from rlm.clients.openai import OpenAIClient
 
         return OpenAIClient(**backend_kwargs)

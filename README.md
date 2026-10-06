@@ -186,3 +186,8 @@ To run the visualizer locally, we use Node.js and shadcn/ui:
 cd visualizer/
 npm run dev        # default localhost:3001
 ```
+# V100 fork
+
+For the isolated single-V100 setup, source-preserving memory, verified LoRA feedback,
+and resumable checkpoints, see [V100.md](V100.md). Cloud provider SDKs are optional:
+install `.[providers]` when using the original remote backends.
