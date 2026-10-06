@@ -123,6 +123,7 @@ class LlamaCppClient(BaseLM):
             "answer_chars": len(text) if isinstance(text, str) else 0,
             "reasoning_chars": len(choice["message"].get("reasoning_content") or ""),
             "enable_thinking": self.enable_thinking,
+            "timings": data.get("timings"),
         }
         self.thread_state.response_info = response_info
         with self.lock:
@@ -137,7 +138,6 @@ class LlamaCppClient(BaseLM):
                     "input_tokens": summary.total_input_tokens,
                     "output_tokens": summary.total_output_tokens,
                     "output_tokens_per_second": summary.total_output_tokens / elapsed,
-                    "timings": data.get("timings"),
                     **response_info,
                 }
                 with self.metrics_path.open("a") as handle:

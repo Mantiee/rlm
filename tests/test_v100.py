@@ -34,6 +34,7 @@ def native_server():
                 result = {
                     "choices": [{"message": {"content": "odpowiedź"}}],
                     "usage": {"prompt_tokens": 5, "completion_tokens": 7},
+                    "timings": {"predicted_per_second": 10, "draft_n": 4, "draft_n_accepted": 3},
                 }
                 if data["messages"][-1]["content"] == "reasoning-only":
                     result["choices"][0] = {
@@ -111,6 +112,7 @@ def test_benchmark_uses_no_thinking_for_warmup_and_runs(native_server, tmp_path,
     report = json.loads((directory / "logs/benchmark.json").read_text())
     assert report["enable_thinking"] is False
     assert report["runs"][0]["tokens"] == 7
+    assert report["runs"][0]["draft_acceptance"] == 0.75
 
 
 def test_reasoning_only_response_is_logged_and_rejected(native_server, tmp_path):
@@ -253,3 +255,60 @@ def test_native_server_slot_budget(tmp_path):
     assert command[command.index("--ctx-size") + 1] == "16384"
     assert command[command.index("--parallel") + 1] == "2"
     assert "--spec-type" not in command
+
+
+@pytest.mark.parametrize("spec_type", ["draft-simple", "draft-mtp"])
+def test_native_draft_mode_and_full_gpu(tmp_path, spec_type):
+    profile = load_profile(Path(__file__).parents[1] / "profiles/v100.toml", tmp_path)
+    profile["server"].update(draft_model="assistant.gguf", spec_type=spec_type, draft_tokens=2)
+    command = server_command(profile)
+    assert command[command.index("--spec-type") + 1] == spec_type
+    assert command[command.index("--spec-draft-n-max") + 1] == "2"
+    assert command[command.index("--spec-draft-ngl") + 1] == "999"
+    del profile["server"]["spec_type"]
+    assert server_command(profile)[command.index("--spec-type") + 1] == "draft-simple"
+
+
+def test_native_refuses_invalid_draft_configuration(tmp_path):
+    profile = load_profile(Path(__file__).parents[1] / "profiles/v100.toml", tmp_path)
+    profile["server"].update(draft_model="assistant.gguf", spec_type="mistake")
+    with pytest.raises(ValueError, match="spec_type"):
+        server_command(profile)
+    profile["server"].update(spec_type="draft-mtp", draft_tokens=0)
+    with pytest.raises(ValueError, match="draft_tokens"):
+        server_command(profile)
+
+
+def test_benchmark_separate_report_and_no_overwrite(native_server, tmp_path, monkeypatch):
+    url, calls = native_server
+    directory = tmp_path / "research"
+    directory.mkdir()
+    profile = (Path(__file__).parents[1] / "profiles/v100.toml").read_text()
+    (directory / "v100.toml").write_text(profile.replace("http://127.0.0.1:8088", url))
+    baseline = directory / "logs/benchmark.json"
+    baseline.parent.mkdir()
+    baseline.write_text("baseline")
+    output = directory / "logs/mtp2.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "v100-lab",
+            "--root",
+            str(tmp_path),
+            "bench",
+            "--suite",
+            "--repeats",
+            "1",
+            "--output",
+            str(output),
+        ],
+    )
+    main()
+    report = json.loads(output.read_text())
+    assert len(report["runs"]) == 3
+    assert set(report["cases"]) == {"short", "code", "long"}
+    assert baseline.read_text() == "baseline"
+    before = len(calls)
+    with pytest.raises(FileExistsError, match="overwrite"):
+        main()
+    assert len(calls) == before

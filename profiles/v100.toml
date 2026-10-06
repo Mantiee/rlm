@@ -21,6 +21,7 @@ flash_attention = "auto"
 cache_type = "f16"
 # Enable only after measuring against the no-draft baseline.
 draft_model = ""
+spec_type = "draft-simple"
 draft_tokens = 4
 
 [memory]

@@ -51,11 +51,18 @@ def server_command(profile: dict) -> list[str]:
         "--no-context-shift",
     ]
     if s["draft_model"]:
+        spec_type = s.get("spec_type", "draft-simple")
+        if spec_type not in ("draft-simple", "draft-mtp"):
+            raise ValueError("spec_type must be draft-simple or draft-mtp")
+        if not isinstance(s["draft_tokens"], int) or not 1 <= s["draft_tokens"] <= 16:
+            raise ValueError("draft_tokens must be between 1 and 16")
         command += [
             "--spec-type",
-            "draft-simple",
+            spec_type,
             "--spec-draft-model",
             s["draft_model"],
+            "--spec-draft-ngl",
+            "999",
             "--spec-draft-n-max",
             str(s["draft_tokens"]),
         ]
@@ -84,8 +91,20 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
     sub.add_parser("serve")
+    sub.add_parser(
+        "prepare-mtp",
+        help="Download/convert the pinned Gemma 12B assistant; create separate profiles",
+    )
+    experiment = sub.add_parser(
+        "test-mtp", help="Measure baseline, MTP2 and MTP4 sequentially on an idle GPU"
+    )
+    experiment.add_argument("--repeats", type=int, default=3)
     bench = sub.add_parser("bench")
     bench.add_argument("--repeats", type=int, default=3)
+    bench.add_argument("--output", type=Path, help="Separate report path; refuses to overwrite")
+    bench.add_argument(
+        "--suite", action="store_true", help="Fixed short/long-context and code workload"
+    )
     bench.add_argument(
         "--thinking",
         action="store_true",
@@ -114,6 +133,16 @@ def main() -> None:
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     profile = load_profile(args.profile or root / "research/v100.toml", root)
+    if args.command == "prepare-mtp":
+        from rlm.v100.speculative import prepare_mtp
+
+        prepare_mtp(args.profile or root / "research/v100.toml", root)
+        return
+    if args.command == "test-mtp":
+        from rlm.v100.speculative import test_mtp
+
+        test_mtp(root, args.repeats)
+        return
     if args.command == "doctor":
         for key in ("binary", "model", "draft_model"):
             value = profile["server"][key]
@@ -149,34 +178,67 @@ def main() -> None:
     if args.command == "bench":
         if args.repeats < 1:
             raise ValueError("repeats must be positive")
+        report_path = args.output or root / "research/logs/benchmark.json"
+        if args.output and report_path.exists():
+            raise FileExistsError(f"Refusing to overwrite benchmark: {report_path}")
+        prompts = [
+            ("short", "Wyjaśnij po polsku działanie pamięci komputera w 300 słowach."),
+        ]
+        if args.suite:
+            from rlm.v100.speculative import benchmark_prompts
+
+            prompts = benchmark_prompts()
         print("Warmup...", flush=True)
         client.completion("Odpowiedz tylko: OK")
         results = []
         for index in range(args.repeats):
-            started = time.perf_counter()
-            answer = client.completion(
-                f"Próba {index}. Wyjaśnij po polsku działanie pamięci komputera w 300 słowach."
-            )
-            elapsed = time.perf_counter() - started
-            usage = client.get_last_usage()
-            row = {
-                "seconds": elapsed,
-                "tokens": usage.total_output_tokens,
-                "tokens_per_second": usage.total_output_tokens / elapsed,
-                "answer": answer,
-            }
-            results.append(row)
-            print(
-                f"{index + 1}: {row['tokens_per_second']:.2f} tok/s, {row['tokens']} tokens",
-                flush=True,
-            )
+            for name, prompt in prompts:
+                started = time.perf_counter()
+                answer = client.completion(f"Próba {index}. {prompt}")
+                elapsed = time.perf_counter() - started
+                usage = client.get_last_usage()
+                info = client.thread_state.response_info
+                timings = info["timings"] or {}
+                drafted, accepted = timings.get("draft_n", 0), timings.get("draft_n_accepted", 0)
+                row = {
+                    "case": name,
+                    "repeat": index,
+                    "seconds": elapsed,
+                    "tokens": usage.total_output_tokens,
+                    "input_tokens": usage.total_input_tokens,
+                    "tokens_per_second": usage.total_output_tokens / elapsed,
+                    "answer": answer,
+                    "timings": timings,
+                    "draft_acceptance": accepted / drafted if drafted else None,
+                    "finish_reason": info["finish_reason"],
+                }
+                results.append(row)
+                print(
+                    f"{index + 1}/{name}: {row['tokens_per_second']:.2f} tok/s, {row['tokens']} tokens, "
+                    f"draft accepted {accepted}/{drafted}",
+                    flush=True,
+                )
         report = {
             "profile": profile,
             "enable_thinking": args.thinking,
+            "suite": args.suite,
+            "prompts_sha256": digest(json.dumps(prompts, ensure_ascii=False)),
             "runs": results,
+            "cases": {
+                name: {
+                    "median_tokens_per_second": statistics.median(
+                        r["tokens_per_second"] for r in results if r["case"] == name
+                    ),
+                    "median_seconds": statistics.median(
+                        r["seconds"] for r in results if r["case"] == name
+                    ),
+                }
+                for name, _ in prompts
+            },
             "median_tokens_per_second": statistics.median(r["tokens_per_second"] for r in results),
         }
-        atomic_json(root / "research/logs/benchmark.json", report)
+        atomic_json(report_path, report)
+        print("Report:", report_path)
         print(
             "Median:",
             report["median_tokens_per_second"],
