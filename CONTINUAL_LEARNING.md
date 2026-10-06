@@ -2,9 +2,20 @@
 
 ## Catastrophic forgetting
 
+Wymaganie użytkownika: nie tracić zaakceptowanych wcześniejszych umiejętności.
+Przegląd badań i granice możliwej ochrony opisuje [FORGETTING_RESEARCH.md](FORGETTING_RESEARCH.md).
+Architektura ma zachowywać niezmienną bazę oraz niezmienne zaakceptowane adaptery
+z jawnymi, wersjonowanymi ścieżkami uruchomienia. Nowe uczenie zmienia osobnego
+kandydata i nie zastępuje automatycznie chronionego eksperta. Routing, prompt,
+retrieval, tokenizer i cache należą do warunków działania chronionej ścieżki.
+Nie oznacza to ogólnej gwarancji zerowej regresji całego systemu dla wszystkich wejść.
+
 Obecny eksport pamięci zachowuje wszystkie zatwierdzone przykłady jako replay.
 Bazowe wagi pozostają osobno, a nowy adapter jest kandydatem z możliwością powrotu
 do wcześniejszej wersji. To ogranicza ryzyko, ale nie dowodzi zachowania umiejętności bazowych.
+Obecne `init_adapter` ładuje wcześniejszy adapter jako trenowalną kopię: nowy kandydat
+może zapominać. Bank chronionych ekspertów i ich routing są wymaganiami do wdrożenia,
+nie istniejącą funkcją tej wersji.
 
 Przed treningiem kolejnych rund trzeba zamrozić podział danych między rundami.
 Obecne `load_records` izoluje powiązane źródła w pojedynczym zbiorze, lecz po dodaniu
