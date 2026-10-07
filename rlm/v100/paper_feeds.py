@@ -20,6 +20,7 @@ def public_json(
             "https://api.exchange.coinbase.com/products/",
             "https://api.nbp.pl/api/exchangerates/",
             "https://data.sec.gov/submissions/",
+            "https://api.kraken.com/0/public/",
         )
     ):
         raise ValueError("Unsupported public data origin")
@@ -62,7 +63,7 @@ def poll_crypto(book: PaperBook, cancelled=None) -> list[dict]:
         for instrument in state["instruments"].values()
         if instrument["market"] == "crypto"
         and instrument["product"] == "spot"
-        and instrument["feed_id"].startswith("coinbase:")
+        and instrument["feed_id"].startswith(("coinbase:", "kraken:"))
     ]
     if not selected:
         raise ValueError("Register operator-verified Coinbase spot instruments and fees first")
@@ -71,10 +72,15 @@ def poll_crypto(book: PaperBook, cancelled=None) -> list[dict]:
     for instrument in selected:
         if cancelled and cancelled():
             break
-        product = instrument["feed_id"].removeprefix("coinbase:")
-        if not re.fullmatch(r"[A-Z0-9]{2,12}-[A-Z]{3}", product):
+        provider, product = instrument["feed_id"].split(":", 1)
+        if provider == "kraken":
+            if not re.fullmatch(r"[A-Z0-9]{2,20}USD", product):
+                raise ValueError("Unsupported Kraken pair")
+            quote_currency = "USD"
+        elif not re.fullmatch(r"[A-Z0-9]{2,12}-[A-Z]{3}", product):
             raise ValueError("Unsupported Coinbase product identifier")
-        quote_currency = product.rsplit("-", 1)[1]
+        else:
+            quote_currency = product.rsplit("-", 1)[1]
         rate, fx = number("1"), None
         if quote_currency != state["currency"]:
             if state["currency"] != "PLN" or quote_currency not in ("USD", "EUR", "GBP"):
@@ -94,8 +100,16 @@ def poll_crypto(book: PaperBook, cancelled=None) -> list[dict]:
             rate = number(fx["rate"], positive=True)
         if cancelled and cancelled():
             break
-        url = f"https://api.exchange.coinbase.com/products/{product}/book?level=1"
+        url = (
+            f"https://api.kraken.com/0/public/Depth?pair={product}&count=1"
+            if provider == "kraken"
+            else f"https://api.exchange.coinbase.com/products/{product}/book?level=1"
+        )
         data, digest, observed = public_json(book.root, url)
+        if provider == "kraken":
+            if data.get("error") or len(data.get("result", {})) != 1:
+                raise ValueError("Kraken order book unavailable")
+            data = next(iter(data["result"].values()))
         if cancelled and cancelled():
             break
         if not data["bids"] or not data["asks"]:

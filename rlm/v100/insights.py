@@ -24,7 +24,12 @@ def reference(task: dict) -> tuple[dict, str]:
     expression = task["expression"]
     if not isinstance(expression, str) or not 1 <= len(expression) <= 160:
         raise ValueError("Formal expression exceeds its budget")
-    if task["kind"] == "arithmetic":
+    if task["kind"] == "decimal_calculation":
+        from rlm.v100.calculator import calculate
+
+        answer = calculate(expression)["result"]
+        normalized = {"kind": task["kind"], "expression": re.sub(r"\s+", "", expression)}
+    elif task["kind"] == "arithmetic":
         tree = ast.parse(expression, mode="eval")
         if sum(1 for _ in ast.walk(tree)) > 40:
             raise ValueError("Formal expression is too complex")
@@ -75,7 +80,9 @@ def verified_record(task: dict) -> dict:
     task, answer = reference(task)
     identity = hashlib.sha256(json.dumps(task, sort_keys=True).encode()).hexdigest()
     prompt = (
-        "Calculate this integer expression. // is floor division and % is modulo."
+        "Calculate these explicit decimal costs. Market assumptions are not validated."
+        if task["kind"] == "decimal_calculation"
+        else "Calculate this integer expression. // is floor division and % is modulo."
         if task["kind"] == "arithmetic"
         else "Solve this linear equation for x. Use an integer or a reduced fraction, e.g. 2/3."
     )

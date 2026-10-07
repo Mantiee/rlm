@@ -194,7 +194,11 @@ def test_paper_workers_match_cpu_slots_and_keep_compact_catalog(tmp_path, monkey
         paper_agents,
         "helper_client",
         lambda profile, *args: SimpleNamespace(
-            research_tool_names=set(research_tools.COMPACT_CPU_TOOLS) if profile is helper else None
+            sampling_args={"max_tokens": 512},
+            context_window=32768,
+            research_tool_names=set(research_tools.COMPACT_CPU_TOOLS)
+            if profile is helper
+            else None,
         ),
     )
     parallel, work = [], []
@@ -411,7 +415,7 @@ def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
     events, capacities = [], iter([3, 20])
 
     @contextmanager
-    def server(path, root, log):
+    def server(path, root, log, **kwargs):
         chosen = load_profile(path, root)
         events.append(("serve", chosen["server"]["context_per_slot"]))
         yield chosen
@@ -475,7 +479,7 @@ def test_first_update_can_use_verified_seed_then_failed_upgrade_retains_parent(
     original = json.dumps(profile, sort_keys=True)
 
     @contextmanager
-    def server(*args):
+    def server(*args, **kwargs):
         yield profile
 
     monkeypatch.setattr(continuous, "managed_server", server)

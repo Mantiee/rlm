@@ -266,7 +266,7 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
     active, trials = [], []
 
     @contextmanager
-    def server(path, *args):
+    def server(path, *args, **kwargs):
         active.append(path)
         yield data
         active.remove(path)

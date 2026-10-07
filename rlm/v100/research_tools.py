@@ -32,8 +32,73 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "discover_spot_markets",
+        "Discover public USD spot pair codes and venue minimums from primary Kraken data; choose what to research rather than a fixed crypto list.",
+        {"limit": {"type": "integer", "minimum": 1, "maximum": 100}},
+    ),
+    tool_schema(
+        "register_paper_spot",
+        "Register 1-8 selected USD spot pairs using fresh primary rules and lowest-volume fee evidence. Fully paid PAPER only, existing risk limits and quote checks apply. Never certify income or account entitlement.",
+        {
+            "pair_codes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {"type": "string"},
+            }
+        },
+    ),
+    tool_schema(
+        "propose_colab_trial",
+        "Queue a short optional interactive Colab tiny-model training pilot. User opens notebook; this does not create accounts, remote workers, bypass quotas or replace the main model.",
+        {
+            "steps": {"type": "integer", "minimum": 10, "maximum": 100},
+            "purpose": {"type": "string", "maxLength": 600},
+        },
+    ),
+    tool_schema(
+        "list_algorithm_files",
+        "List editable own algorithm source; protected system prompts, host controllers and evaluators stay read-only.",
+        {},
+    ),
+    tool_schema(
+        "read_algorithm_file",
+        "Read one tracked editable algorithm file from the pinned experimental source.",
+        {"filename": {"type": "string"}},
+    ),
+    tool_schema(
+        "create_code_candidate",
+        "Propose one exact algorithm edit in an isolated copy. Run check_code_candidate afterward; independent training and task-quality gates are still required.",
+        {
+            "filename": {"type": "string"},
+            "find": {"type": "string", "maxLength": 6000},
+            "replace": {"type": "string", "maxLength": 6000},
+            "hypothesis": {"type": "string", "maxLength": 1200},
+        },
+    ),
+    tool_schema(
+        "calculate",
+        "Calculate explicit costs and percentages using decimal arithmetic and + - * / parentheses. Inputs are assumptions, not market predictions.",
+        {"expression": {"type": "string", "maxLength": 512}},
+    ),
+    tool_schema(
+        "set_research_budget",
+        "Choose thinking and output budget for master V100 or helper RTX R&D. Helper batch is 16 and active-time target at most 30% after crashes. Master batch is a proposal requiring a stopped-server benchmark; evaluations stay fixed. Use thinking for difficult analysis and disable for fast extraction.",
+        {
+            "target": {"type": "string", "enum": ["master", "helper"]},
+            "thinking": {"type": "boolean"},
+            "max_tokens": {"type": "integer", "minimum": 256, "maximum": 8192},
+            "batch_tokens": {"type": "integer", "enum": [16, 128, 256, 512]},
+        },
+    ),
+    tool_schema(
+        "parallel_source_research",
+        "Send up to eight public URLs to lightweight source drones, at most two concurrent fetches. Returns bounded source excerpts, not verified conclusions. No arbitrary installed code, paid services or browser accounts.",
+        {"urls": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 8}},
+    ),
+    tool_schema(
         "backtest_prices",
-        "Run chronological historical spot-price research on public JSON OHLC data. Choose instrument/source and rule. Official Coinbase candles work, e.g. https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600. Other sources need open_time, available_at, open, close fields per row. Optional event_url must return published_at and available_at per event; empty string disables event filter. Select lookback on first 70%, evaluate later 30% and double costs. Costs are assumptions, not certified fees. Not for sports odds or leverage. Results are exploratory hypotheses, never automatic profit labels.",
+        "Run chronological historical spot-price research on public JSON OHLC data. Choose instrument/source and rule. Official Coinbase candles work, e.g. https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600. Other sources need open_time, available_at, open, close fields per row. Optional event_url must return published_at and available_at per event; empty string disables event filter. Select lookback using only prior data in three disjoint walk-forward windows, compare cash/buy-hold and doubled costs. Duplicate data/parameters reuse the pinned report. Costs are assumptions, not certified fees. Not for sports odds or leverage. Results are exploratory hypotheses, never automatic profit labels.",
         {
             "price_url": {"type": "string"},
             "event_url": {"type": "string"},
@@ -159,7 +224,9 @@ def public_origin(url: str) -> tuple[object, str]:
     return origin, sorted(addresses)[0]
 
 
-def download_page(url: str) -> tuple[str, str]:
+def download_page(url: str, max_bytes: int = 262144) -> tuple[str, str]:
+    if type(max_bytes) is not int or not 262144 <= max_bytes <= 2 * 2**20:
+        raise ValueError("Invalid bounded source read budget")
     for _ in range(3):
         origin, address = public_origin(url)
         # Connect to the already checked IP, retaining hostname verification and
@@ -205,9 +272,9 @@ def download_page(url: str) -> tuple[str, str]:
                 raise ValueError(
                     "Research reader currently supports text/HTML/JSON, not PDF or binaries"
                 )
-            body = response.read(262145)
-            if len(body) > 262144:
-                raise ValueError("Source exceeds the 256 KiB read budget")
+            body = response.read(max_bytes + 1)
+            if len(body) > max_bytes:
+                raise ValueError(f"Source exceeds the {max_bytes} byte read budget")
             return url, body.decode("utf-8", errors="replace")
         finally:
             if response is not None:
@@ -242,6 +309,62 @@ class ResearchTools:
         self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name in ("discover_spot_markets", "register_paper_spot"):
+            from rlm.v100.spot_bootstrap import discover, prepare
+
+            if name == "discover_spot_markets" and set(arguments) == {"limit"}:
+                return discover(self.root, **arguments)
+            if name == "register_paper_spot" and set(arguments) == {"pair_codes"}:
+                return prepare(self.root, refresh=True, **arguments)
+            raise ValueError("Invalid market discovery/registration arguments")
+        if name == "propose_colab_trial":
+            from rlm.v100.colab_jobs import propose
+
+            if set(arguments) != {"steps", "purpose"}:
+                raise ValueError("Invalid Colab proposal")
+            return propose(self.root, self.branch, **arguments)
+        if name in ("list_algorithm_files", "read_algorithm_file", "create_code_candidate"):
+            from rlm.v100.self_code import execute
+
+            return execute(self.root, self.branch, name, arguments)
+        if name == "calculate":
+            from rlm.v100.calculator import calculate
+
+            if set(arguments) != {"expression"}:
+                raise ValueError("Invalid calculator input")
+            return calculate(arguments["expression"])
+        if name == "set_research_budget":
+            from rlm.v100.research_policy import choose
+
+            if set(arguments) != {"target", "thinking", "max_tokens", "batch_tokens"}:
+                raise ValueError("Invalid research budget")
+            return choose(self.root, **arguments)
+        if name == "parallel_source_research":
+            from concurrent.futures import ThreadPoolExecutor
+
+            urls = arguments.get("urls")
+            if (
+                set(arguments) != {"urls"}
+                or not isinstance(urls, list)
+                or not 1 <= len(urls) <= 8
+                or any(not isinstance(url, str) for url in urls)
+            ):
+                raise ValueError("Source drones require 1-8 public URLs")
+
+            def fetch(url: str) -> dict:
+                try:
+                    reader = ResearchTools(self.root, self.settings, self.branch)
+                    return reader.execute("read_public_page", {"url": url})
+                except (ValueError, OSError, requests.RequestException) as error:
+                    return {"url": url, "error": str(error)[:300], "status": "failed"}
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(fetch, dict.fromkeys(urls)))
+            return {
+                "sources": results,
+                "scope": "Unverified source excerpts; original documents preserved",
+                "workers": 2,
+            }
         if name == "backtest_prices":
             from rlm.v100.backtesting import run
 
@@ -257,7 +380,9 @@ class ResearchTools:
             memory = store(self.root)
             try:
                 if name == "search_memory" and set(arguments) == {"query"}:
-                    hits = memory.retrieve(arguments["query"], 4)
+                    from rlm.v100.mission_semantic import retrieve
+
+                    hits = retrieve(self.root, memory, arguments["query"], 4)
                     self.known_memory_sources.update(hit["id"] for hit in hits)
                     return {
                         "passages": [
@@ -410,6 +535,9 @@ class ResearchTools:
 
 
 def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dict:
+    from rlm.v100.research_policy import apply
+
+    client = apply(client, root)
     owner = getattr(client, "research_owner", "A")
     journal = ActivityLog(root, owner, getattr(client, "activity_actor", "tester"))
     tools = ResearchTools(
@@ -490,6 +618,8 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
                 "result": result,
             }
         )
+        if call["function"]["name"] == "set_research_budget" and result.get("scope"):
+            client = apply(client, root)
         journal.write("tools", "tool-result", trace[-1], step_id=step_id)
         messages = [
             *messages,

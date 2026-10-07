@@ -44,6 +44,7 @@ def test_router_is_fast_and_source_ids_are_constrained(tmp_path, monkeypatch):
     mission_memory.archive(tmp_path, "https://example.org/fees", "Coinbase fees")
     client = SimpleNamespace(
         sampling_args={"max_tokens": 4096},
+        context_window=32768,
         enable_thinking=True,
         tool_protocol="json",
         research_tool_names={"search_memory", "read_source"},
@@ -99,7 +100,11 @@ def test_remote_and_master_overlap_and_empty_book_skips_trade_generation(tmp_pat
     monkeypatch.setattr(
         paper_agents,
         "helper_client",
-        lambda p, *args: SimpleNamespace(endpoint=p["runtime"]["base_url"]),
+        lambda p, *args: SimpleNamespace(
+            endpoint=p["runtime"]["base_url"],
+            sampling_args={"max_tokens": 512},
+            context_window=32768,
+        ),
     )
 
     def research(client, branch, job, observations, root):

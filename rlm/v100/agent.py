@@ -123,7 +123,9 @@ def native_turn(
 
 def research_output_limit(client) -> int | None:
     """Extra output allowance only for explicitly reasoning-enabled R&D clients."""
-    return 8192 if getattr(client, "enable_thinking", None) is True else None
+    if getattr(client, "enable_thinking", None) is not True:
+        return None
+    return 4096 if hasattr(client, "helper_batch_tokens") else 8192
 
 
 def select_expert(client, question: str, experts: list[dict]) -> dict:

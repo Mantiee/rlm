@@ -51,6 +51,15 @@ def benchmark_prompts() -> list[tuple[str, str]]:
 def mtp_profile_text(source: str, draft_model: Path | None, tokens: int) -> str:
     if type(tokens) is not int or not 1 <= tokens <= 16:
         raise ValueError("draft_tokens must be between 1 and 16")
+    if source.lstrip().startswith("{"):
+        profile = json.loads(source)
+        profile["runtime"]["base_url"] = "http://127.0.0.1:8089"
+        profile["server"].update(
+            draft_model=str(draft_model) if draft_model else "",
+            draft_tokens=tokens,
+            spec_type="draft-mtp",
+        )
+        return json.dumps(profile, indent=2) + "\n"
     # Preserve the user's comments, settings and formatting. Change only isolated experiment fields.
     lines = source.splitlines(keepends=True)
     section = ""
@@ -143,12 +152,12 @@ def compare_reports(baseline: dict, candidate: dict) -> dict:
     }
 
 
-def recommend_mtp(comparison: dict) -> dict:
+def recommend_mtp(comparison: dict, require_exact_answers: bool = True) -> dict:
     # Conservative speed candidate only; fixed text equality is not a quality suite.
     eligible = {
         name: result
         for name, result in comparison.items()
-        if result["answers_exact_match"]
+        if (result["answers_exact_match"] or not require_exact_answers)
         and result["median_case_throughput_ratio"] >= 1.05
         and all(c["latency_ratio"] >= 0.95 for c in result["cases"].values())
     }
@@ -167,7 +176,7 @@ def recommend_mtp(comparison: dict) -> dict:
 
 def test_mtp(
     root: Path, repeats: int, draft_tokens: tuple[int, ...] = DEFAULT_DRAFT_TOKENS
-) -> None:
+) -> Path:
     from rlm.v100.cli import server_command
 
     if repeats < 1:
@@ -179,7 +188,17 @@ def test_mtp(
     ):
         raise ValueError("Choose distinct draft token counts between 1 and 16")
     names = ("baseline", *(f"mtp{n}" for n in draft_tokens))
-    profiles = {name: root / f"research/v100-{name}.toml" for name in names}
+    profiles = {
+        name: next(
+            (
+                p
+                for p in (root / f"research/v100-{name}.json", root / f"research/v100-{name}.toml")
+                if p.exists()
+            ),
+            root / f"research/v100-{name}.toml",
+        )
+        for name in names
+    }
     loaded = {name: load_profile(path, root) for name, path in profiles.items()}
     for name, profile in loaded.items():
         if profile["runtime"]["base_url"] != "http://127.0.0.1:8089":
@@ -272,6 +291,7 @@ def test_mtp(
                         str(profiles[name]),
                         "bench",
                         "--suite",
+                        *(["--thinking"] if profile["runtime"].get("enable_thinking") else []),
                         "--repeats",
                         str(repeats),
                         "--output",
@@ -317,6 +337,7 @@ def test_mtp(
     print(json.dumps(comparison, ensure_ascii=False, indent=2), flush=True)
     print("MTP TEST OK. Reports:", destination)
     print("No profile was promoted. Restore the usual server with v100-lab serve.")
+    return destination
 
 
 def prepare_mtp(profile_path: Path, root: Path) -> None:
@@ -481,11 +502,12 @@ def prepare_mtp(profile_path: Path, root: Path) -> None:
         ("baseline", None, 2),
         *((f"mtp{n}", output, n) for n in DEFAULT_DRAFT_TOKENS),
     ):
-        experiment = root / f"research/v100-{name}.toml"
+        suffix = ".json" if original.lstrip().startswith("{") else ".toml"
+        experiment = root / f"research/v100-{name}{suffix}"
         if not experiment.exists():
             text = mtp_profile_text(original, draft, tokens)
             # Validate before writing; never rewrite the user's original or existing experiment.
-            temporary = experiment.with_suffix(".toml.tmp")
+            temporary = experiment.with_name(experiment.stem + ".tmp" + suffix)
             temporary.write_text(text)
             load_profile(temporary, root)
             temporary.replace(experiment)

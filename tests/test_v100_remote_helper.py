@@ -80,6 +80,21 @@ def profile(root):
     return load_profile(Path(__file__).parents[1] / "profiles/v100.toml", root)
 
 
+def test_remote_thinking_and_larger_budget_reach_ollama(transport):
+    instance = client(enable_thinking=True, helper_batch_tokens=16, helper_duty_percent=30)
+    instance.http_request(
+        "/v1/chat/completions",
+        {
+            "model": remote_helper.MODEL,
+            "messages": [{"role": "user", "content": "Check explicit fees"}],
+            "max_tokens": 4096,
+        },
+    )
+    payload = next(data for endpoint, data in transport[0] if endpoint == "/api/chat")
+    assert payload["think"] is True
+    assert payload["options"]["num_predict"] == 4096 and payload["options"]["num_batch"] == 16
+
+
 def prepared(root):
     path = remote_helper.prepare_remote(profile(root), root, URL, 32768, DIGEST)
     return path, load_profile(path, root)

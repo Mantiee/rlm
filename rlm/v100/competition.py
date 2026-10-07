@@ -125,7 +125,9 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
 
 
 @contextmanager
-def waiting_researcher(profile_path: Path, root: Path, log_path: Path):
+def waiting_researcher(
+    profile_path: Path, root: Path, log_path: Path, fallback: dict | None = None
+):
     """Retry only remote entry transport failures, never repeat work after yield."""
     from rlm.v100.remote_helper import remote_profile
 
@@ -169,6 +171,20 @@ def waiting_researcher(profile_path: Path, root: Path, log_path: Path):
                 with log_path.open("a") as log:
                     log.write(json.dumps(event) + "\n")
                 print(json.dumps(event), flush=True)
+                if fallback is not None:
+                    ActivityLog(root, "controller", "tester").write(
+                        "steps",
+                        "research-on-current-master",
+                        {
+                            "remote_unavailable": True,
+                            "scope": "No second model loaded; retry external helper next cycle",
+                        },
+                    )
+                    if status_path is not None:
+                        atomic_json(status_path, original_state)
+                    # Caller already owns and verified this serving master.
+                    yield fallback
+                    return
             else:
                 if attempt:
                     if status_path is not None:
@@ -247,6 +263,7 @@ def helper_client(
         },
     )
     client.research_config = profile.get("research", {})
+    client.research_device = profile.get("resources", {}).get("device", "cuda")
     client.tool_protocol = settings.get("tool_protocol", "native")
     if (
         profile.get("resources", {}).get("device") == "cpu"
@@ -586,6 +603,9 @@ def evolve(
         # Parent is served only while choosing the next experiments, then unloaded
         # before GPU training. CPU research is concurrent with the training itself.
         with managed_server(planning_profile, root, output / f"planner-{generation:02d}.log"):
+            from rlm.v100.lineages import read
+
+            parents, _ = read(current)
             plan_duel(
                 helper_client(planner, root),
                 current,
@@ -594,8 +614,20 @@ def evolve(
                 root,
                 replay=replay,
                 recent=True,
+                **({"branch_parents": parents} if parents else {}),
             )
-        verdict = run_duel(directory, root, suite, gates, researcher_path, train_timeout)
+        from rlm.v100.self_code import admitted
+
+        candidates = admitted(root)
+        verdict = run_duel(
+            directory,
+            root,
+            suite,
+            gates,
+            researcher_path,
+            train_timeout,
+            **({"code_candidates": candidates} if candidates else {}),
+        )
         rounds.append({"directory": str(directory), "judgment": verdict})
         result = {
             "schema": "v100-evolution-v1",
@@ -616,6 +648,9 @@ def evolve(
         current["training"].update(init_adapter=str(adapter), teacher_adapter=str(adapter))
         current["server"].update(model=str(adapter.parent / "export-Q6_K.gguf"), draft_model="")
         current["runtime"]["model_version"] = f"{directory.name}-{winner}"
+        from rlm.v100.lineages import record
+
+        current.setdefault("resources", {})["branch_lineages"] = record(current, directory, verdict)
         replay = directory / "verified-pool.jsonl"
         for branch in ("A", "B"):
             if verdict["branches"][branch]["eligible"]:

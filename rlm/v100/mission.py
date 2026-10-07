@@ -157,7 +157,12 @@ def gpu_free_gib() -> float:
 def setup_profile(profile: dict, context: int) -> dict:
     chosen = copy.deepcopy(profile)
     chosen["runtime"].update(context_window=context, tool_protocol="json")
-    chosen["server"].update(context_per_slot=context, draft_model="", jinja=True)
+    chosen["server"].update(context_per_slot=context, jinja=True)
+    from rlm.v100.mtp_gate import valid
+
+    if not valid(chosen):
+        chosen["server"]["draft_model"] = ""
+        chosen.setdefault("resources", {}).pop("mtp_validation", None)
     chosen["memory"]["database"] = "research/state/mission-memory.sqlite3"
     chosen["training"]["max_steps"] = min(50, chosen["training"]["max_steps"])
     return chosen
@@ -229,7 +234,7 @@ def run(root: Path, profile: dict, directory: Path) -> None:
         crypto_ready = any(
             item["market"] == "crypto"
             and item["product"] == "spot"
-            and item["feed_id"].startswith("coinbase:")
+            and item["feed_id"].startswith(("coinbase:", "kraken:"))
             for item in configured["instruments"].values()
         )
     finally:
@@ -298,7 +303,7 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     kv_cache_type=serving["server"]["cache_type"],
                 )
                 with waiting_researcher(
-                    helper_path, root, directory / "research-helper.log"
+                    helper_path, root, directory / "research-helper.log", fallback=serving
                 ) as helper:
                     with PaperLearning(root, paper_settings) as income:
                         try:
@@ -366,7 +371,10 @@ def worker(root: Path, profile: dict, directory: Path) -> None:
 
     signal.signal(signal.SIGTERM, interrupted)
     try:
-        run(root, profile, directory)
+        from rlm.v100.mission_chat import alongside
+
+        with alongside(root, directory):
+            run(root, profile, directory)
     except KeyboardInterrupt:
         note(directory, "stopped", checkpoints="retained")
     except Exception as error:

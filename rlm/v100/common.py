@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -7,13 +8,17 @@ from typing import Any
 
 def atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + ".tmp")
-    with temp.open("w") as handle:
-        json.dump(value, handle, ensure_ascii=False, indent=2, allow_nan=False)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    temp.replace(path)
+    descriptor, temporary = tempfile.mkstemp(prefix="." + path.name + "-", dir=path.parent)
+    temp = Path(temporary)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def load_profile(path: Path, root: Path) -> dict[str, Any]:

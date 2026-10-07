@@ -988,6 +988,21 @@ class PaperBook:
         if not quantity:
             return None
         notional = quantity * price
+        if quantity < number(instrument.get("minimum_quantity", "0")):
+            return None
+        minimum_notional = number(instrument.get("minimum_notional_quote", "0"))
+        if minimum_notional:
+            currency = instrument.get("quote_currency")
+            if currency != quote.get("price_source_currency"):
+                raise ValueError("Minimum notional requires the documented quote currency")
+            if currency == self.state()["currency"]:
+                conversion = Decimal(1)
+            elif quote.get("fx"):
+                conversion = number(quote["fx"]["rate"], positive=True)
+            else:
+                raise ValueError("Minimum notional requires documented currency conversion")
+            if notional / conversion < minimum_notional:
+                return None
         margin, entry_fees = (
             notional / leverage + exit_reserve,
             fee_total(profile, notional, closing=False),

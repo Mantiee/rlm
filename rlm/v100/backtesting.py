@@ -151,6 +151,68 @@ def run(root: Path, branch: str, arguments: dict) -> dict:
                 "sha256": hashlib.sha256(event_body.encode()).hexdigest(),
             }
         )
+    from rlm.v100.protection import file_hash
+
+    key = hashlib.sha256(
+        json.dumps(
+            {"parameters": arguments, "bars": bars, "events": events}, sort_keys=True, default=str
+        ).encode()
+    ).hexdigest()
+    cache = root / "research/backtests/cache" / (key + ".json")
+    if cache.exists():
+        saved = json.loads(cache.read_text())
+        path = Path(saved["report"]).resolve()
+        if (
+            not path.is_relative_to((root / "research/backtests").resolve())
+            or file_hash(path) != saved["sha256"]
+        ):
+            raise ValueError("Cached backtest report changed")
+        previous = json.loads(path.read_text())
+        for section in ("training", "development_test", "cost_stress"):
+            if isinstance(previous.get(section), dict):
+                previous[section].pop("trace", None)
+        return {
+            **previous,
+            "cache_reused": True,
+            "requested_branch": branch,
+            "cache_note": "Same data and parameters are not independent evidence",
+        }
+    folds = []
+    bounds = [int(len(bars) * fraction) for fraction in (0.5, 0.65, 0.8)] + [len(bars)]
+    for start, end in zip(bounds, bounds[1:], strict=False):
+        past = {
+            lookback: simulate(
+                bars,
+                21,
+                start,
+                arguments["rule"],
+                lookback,
+                arguments["fee_bps"],
+                arguments["slippage_bps"],
+                events,
+            )
+            for lookback in (5, 10, 20)
+        }
+        lookback = max(past, key=lambda length: past[length]["net_return"])
+        fold = {"start": start, "end": end, "lookback_selected_only_on_past": lookback}
+        for label, rule, multiplier in (
+            ("test", arguments["rule"], 1),
+            ("double_cost", arguments["rule"], 2),
+            ("buy_hold", "buy_hold", 1),
+        ):
+            outcome = simulate(
+                bars,
+                start,
+                end,
+                rule,
+                lookback,
+                arguments["fee_bps"] * multiplier,
+                arguments["slippage_bps"] * multiplier,
+                events if rule != "buy_hold" else None,
+            )
+            fold[label] = {k: v for k, v in outcome.items() if k != "trace"}
+        fold["cash_net_return"] = 0
+        folds.append(fold)
     split = int(len(bars) * 0.7)
     candidates = [5, 10, 20]
     training = {
@@ -196,6 +258,8 @@ def run(root: Path, branch: str, arguments: dict) -> dict:
         (directory / f"source-{index}.json").write_text(source["body"])
     result = {
         "branch": branch,
+        "walk_forward": folds,
+        "cache_reused": False,
         "fetched_at": now.isoformat(),
         "parameters": arguments,
         "sources": [
@@ -218,6 +282,10 @@ def run(root: Path, branch: str, arguments: dict) -> dict:
         "report": str(directory / "report.json"),
     }
     atomic_json(directory / "report.json", result)
+    atomic_json(
+        cache,
+        {"report": str(directory / "report.json"), "sha256": file_hash(directory / "report.json")},
+    )
     return {
         key: (
             {subkey: subvalue for subkey, subvalue in value.items() if subkey != "trace"}

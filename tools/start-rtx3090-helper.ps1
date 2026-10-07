@@ -4,7 +4,9 @@ param(
     [int]$Port = 11435,
     [int]$Context = 32768,
     [ValidateSet(16, 32, 64)]
-    [int]$BatchTokens = 64,
+    [int]$BatchTokens = 16,
+    [ValidateRange(1,30)]
+    [int]$ActiveTimePercent = 30,
     [switch]$DebugLogs,
     [switch]$Stop
 )
@@ -35,6 +37,7 @@ $Origin = "http://${WindowsIp}:$Port"
 $Rule = "v100-helper-$Port-from-$DebianIp"
 $BlockRule = "$Rule-block-other-addresses"
 $OwnerPath = Join-Path $Root 'server-owner.json'
+$GuardianPath = Join-Path $Root 'guardian-owner.json'
 function Stop-HelperProcesses([string]$RuntimePath) {
     # A dead parent can leave llama-server.exe alive. This directory is reserved
     # for this single helper, so include its orphan workers as well as Ollama.
@@ -55,6 +58,17 @@ function Stop-HelperProcesses([string]$RuntimePath) {
     }
 }
 if ($Stop) {
+    if (Test-Path $GuardianPath) {
+        $Guardian = Get-Content -Raw $GuardianPath | ConvertFrom-Json
+        $GuardProcess = Get-Process -Id $Guardian.pid -ErrorAction SilentlyContinue
+        if ($GuardProcess) {
+            if ($GuardProcess.StartTime.ToUniversalTime().ToString('o') -ne $Guardian.started -or $GuardProcess.Path -ne $Guardian.path) {
+                throw 'Guardian identity changed; nothing stopped.'
+            }
+            Stop-Process -InputObject $GuardProcess -Force
+        }
+        Remove-Item -LiteralPath $GuardianPath -ErrorAction SilentlyContinue
+    }
     if (Test-Path $OwnerPath) {
         $Owner = Get-Content -Raw $OwnerPath | ConvertFrom-Json
         $Owned = Get-Process -Id $Owner.pid -ErrorAction SilentlyContinue
@@ -72,6 +86,9 @@ if ($Stop) {
 }
 if (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue) {
     throw "Port $Port is already in use. Existing process left intact."
+}
+if (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) {
+    throw 'League is running. Start the isolated helper after the game; guardian will pause it during later games.'
 }
 $GpuRows = @(& nvidia-smi --query-gpu=name,memory.free --format=csv,noheader,nounits)
 if ($LASTEXITCODE -ne 0 -or $GpuRows.Count -ne 1 -or $GpuRows[0] -notmatch '3090') {
@@ -162,12 +179,44 @@ $WorkerScript = Join-Path $Root 'serve-worker.ps1'
 @'
 param([string]$OllamaPath, [string]$HelperRoot)
 $ErrorActionPreference = 'Stop'
-$server = Start-Process -FilePath $OllamaPath -ArgumentList 'serve' -PassThru -WindowStyle Hidden `
+$prefix = [IO.Path]::GetFullPath((Split-Path $OllamaPath)).TrimEnd('\') + '\'
+$restarting = $false
+while ($true) {
+    while (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) {
+        @{time=(Get-Date).ToUniversalTime().ToString('o');phase='paused-for-game'} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
+        Start-Sleep -Seconds 15
+        $restarting = $true
+    }
+    if ($restarting) { Start-Sleep -Seconds 60 }
+    if (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) { continue }
+    $server = Start-Process -FilePath $OllamaPath -ArgumentList 'serve' -PassThru -WindowStyle Hidden `
     -RedirectStandardOutput (Join-Path $HelperRoot 'logs/server.stdout.log') `
     -RedirectStandardError (Join-Path $HelperRoot 'logs/server.stderr.log')
 @{ pid = $server.Id; started = $server.StartTime.ToUniversalTime().ToString('o'); path = $OllamaPath } |
     ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $HelperRoot 'server-owner.json')
-$server.WaitForExit()
+    if ($restarting) {
+        Start-Sleep -Seconds 5
+        $warm = @{model='qwen3.5:9b-q8_0';stream=$false;think=$false;keep_alive=-1;messages=@(@{role='user';content='Return only OK.'});options=@{num_ctx=[int]$env:OLLAMA_CONTEXT_LENGTH;num_batch=[int]$env:HELPER_BATCH_TOKENS;num_predict=8;num_thread=4}} | ConvertTo-Json -Depth 8
+        $warmJob = Start-Job -ArgumentList "http://$env:OLLAMA_HOST/api/chat",$warm -ScriptBlock {
+            param($url,$body)
+            Invoke-RestMethod $url -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120
+        }
+        while ($warmJob.State -eq 'Running' -and -not (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue)) { Start-Sleep -Seconds 3 }
+        if ($warmJob.State -eq 'Running') { Stop-Job $warmJob }
+        $null = Receive-Job $warmJob -ErrorAction SilentlyContinue
+        Remove-Job $warmJob -Force
+    }
+    @{time=(Get-Date).ToUniversalTime().ToString('o');phase='serving';pid=$server.Id} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
+    while (-not $server.HasExited) {
+        if (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) {
+            Get-CimInstance Win32_Process -Filter "Name='ollama.exe' OR Name='llama-server.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            $restarting = $true
+            break
+        }
+        Start-Sleep -Seconds 3
+    }
+    if (-not $restarting) { break }
+}
 '@ | Set-Content -Encoding UTF8 $WorkerScript
 
 $Info = New-Object Diagnostics.ProcessStartInfo
@@ -188,12 +237,14 @@ $Settings = @{
     OLLAMA_DEBUG_LOG_REQUESTS = '0'
     OLLAMA_DEBUG = '0'
     OLLAMA_KEEP_ALIVE = '-1'
+    HELPER_BATCH_TOKENS = "$BatchTokens"
     # Reserve the other half as a scheduler hint, not a hard VRAM partition.
     OLLAMA_GPU_OVERHEAD = "$([int64][Math]::Max(0, ($FreeMiB - 12288)) * 1048576)"
 }
 if ($DebugLogs) { $Settings['OLLAMA_DEBUG'] = '1' }
 foreach ($key in $Settings.Keys) { $Info.EnvironmentVariables[$key] = $Settings[$key] }
 $Worker = [Diagnostics.Process]::Start($Info)
+@{pid=$Worker.Id;started=$Worker.StartTime.ToUniversalTime().ToString('o');path=$Worker.MainModule.FileName} | ConvertTo-Json | Set-Content -Encoding UTF8 $GuardianPath
 $Ready = $false
     for ($i = 0; $i -lt 60; $i++) {
         if ($Worker.HasExited) { throw "Helper startup failed. Inspect $Root\logs." }
@@ -240,7 +291,7 @@ $Ready = $false
     $SmokeSeconds = ((Get-Date) - $Started).TotalSeconds
     # Pace only our startup requests. The updated Debian controller separately
     # reserves idle time between all its helper turns; no board-wide power change.
-    $SmokeIdleMs = [int][Math]::Ceiling(($Response.total_duration / 1e9) * 35 / 65 * 1000)
+    $SmokeIdleMs = [int][Math]::Ceiling(($Response.total_duration / 1e9) * (100-$ActiveTimePercent) / $ActiveTimePercent * 1000)
     if ($SmokeIdleMs -gt 0) { Start-Sleep -Milliseconds $SmokeIdleMs }
 
     # Preserve the original harder question as an explicitly recorded quality
@@ -285,7 +336,8 @@ $Ready = $false
         seconds = [Math]::Round($SmokeSeconds, 2)
         generation_tps = [Math]::Round($Response.eval_count * 1e9 / [Math]::Max(1, $Response.eval_duration), 2)
         note = 'GPU memory measurement after load, not a hard or transient peak limit'
-        batch_tokens = $BatchTokens; startup_request_active_time_target_percent = 65
+        batch_tokens = $BatchTokens; startup_request_active_time_target_percent = $ActiveTimePercent
+        game_guard = 'Pause isolated helper during League of Legends; resume after game and cooldown'
         workload_note = 'Controller update required for research pacing; no hard GPU utilization or board power cap'
         debug_logs = [bool]$DebugLogs
         server_log = (Join-Path $Root 'logs/server.stderr.log')

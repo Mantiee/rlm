@@ -137,10 +137,18 @@ def ensure_schema(memory) -> None:
         PRIMARY KEY(encoder, node_id, part))""")
 
 
-def index_memory(memory, encoder) -> int:
+def index_memory(memory, encoder, max_nodes: int = 4096) -> int:
     ensure_schema(memory)
+    if type(max_nodes) is not int or not 1 <= max_nodes <= 4096:
+        raise ValueError("Index batch must have 1-4096 nodes")
     count = 0
-    rows = memory.db.execute("SELECT id,text FROM nodes WHERE level=0 ORDER BY id").fetchall()
+    rows = memory.db.execute(
+        """SELECT n.id,n.text FROM nodes n JOIN documents d ON d.id=n.document_id
+        WHERE n.level=0 AND (?=0 OR (d.source NOT LIKE 'worker:%' AND d.source NOT LIKE 'source-error:%'))
+        AND NOT EXISTS(SELECT 1 FROM embeddings e WHERE e.node_id=n.id AND e.encoder=?)
+        ORDER BY n.id LIMIT ?""",
+        (int(getattr(memory, "exclude_self_transcripts", False)), encoder.identity, max_nodes),
+    ).fetchall()
     for row in rows:
         if memory.db.execute(
             "SELECT 1 FROM embeddings WHERE encoder=? AND node_id=?", (encoder.identity, row["id"])
@@ -167,16 +175,20 @@ def hybrid_retrieve(memory, encoder, question: str, count: int) -> list[dict]:
         raise ValueError("Retrieval count must be positive")
     ensure_schema(memory)
     missing = memory.db.execute(
-        """SELECT COUNT(*) FROM nodes n WHERE level=0 AND NOT EXISTS(
+        """SELECT COUNT(*) FROM nodes n JOIN documents d ON d.id=n.document_id WHERE level=0
+        AND (?=0 OR (d.source NOT LIKE 'worker:%' AND d.source NOT LIKE 'source-error:%')) AND NOT EXISTS(
         SELECT 1 FROM embeddings e WHERE e.node_id=n.id AND e.encoder=?)""",
-        (encoder.identity,),
+        (int(getattr(memory, "exclude_self_transcripts", False)), encoder.identity),
     ).fetchone()[0]
     if missing:
         raise ValueError("Semantic index is incomplete; run index-memory after importing sources")
     queries = [checked_vector(vector) for vector in encoder.encode(question)]
     scores = {}
     cursor = memory.db.execute(
-        "SELECT node_id,dimensions,vector FROM embeddings WHERE encoder=?", (encoder.identity,)
+        """SELECT e.node_id,e.dimensions,e.vector FROM embeddings e JOIN nodes n ON n.id=e.node_id
+        JOIN documents d ON d.id=n.document_id WHERE e.encoder=?
+        AND (?=0 OR (d.source NOT LIKE 'worker:%' AND d.source NOT LIKE 'source-error:%'))""",
+        (encoder.identity, int(getattr(memory, "exclude_self_transcripts", False))),
     )
     # Bounded matrix batches avoid loading the entire vector index into RAM/GPU.
     while rows := cursor.fetchmany(1024):

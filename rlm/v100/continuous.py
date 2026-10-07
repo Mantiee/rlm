@@ -82,6 +82,13 @@ def learn_loop(
     require_idle_gpu()
     output.mkdir(parents=True)
     current, gates = copy.deepcopy(profile), list(baselines)
+    from rlm.v100.lineages import read, record
+
+    _, prior_gates = read(current)
+    for parent in prior_gates:
+        if parent["suite_sha256"] != file_hash(suite):
+            raise ValueError("Branch ancestors need reevaluation on this quality suite")
+        gates.append(parent)
     current_pool = output / "initial-pool.jsonl"
     current_pool.write_bytes(pool.read_bytes())
     live = output / "live.json"
@@ -110,8 +117,10 @@ def learn_loop(
                 paper.phase("serving-rnd", cycle, current)
             # Serve the current version during R&D/waiting. Only our own inference
             # process is stopped for the training phase; never another user's server.
-            with waiting_researcher(researcher_path, root, output / "researcher.log") as helper:
-                with managed_server(live, root, output / "live-server.log"):
+            with managed_server(live, root, output / "live-server.log"):
+                with waiting_researcher(
+                    researcher_path, root, output / "researcher.log", fallback=current
+                ) as helper:
                     shared = SharedLab(root / "research/state/competition.sqlite3")
                     try:
                         observations = [
@@ -264,6 +273,7 @@ def learn_loop(
             verdict = generation["judgment"]
             directory = Path(generation["directory"])
             if verdict["winner"] is not None:
+                old_lineages = current.get("resources", {}).get("branch_lineages", {})
                 branch = verdict.get("continuation_branch") or (
                     "A" if verdict["winner"] == "tie" else verdict["winner"]
                 )
@@ -271,6 +281,8 @@ def learn_loop(
                 chosen = json.loads(Path(bundle["branches"][branch]["profile"]).read_text())
                 adapter_path = Path(chosen["training"]["output"]) / "candidate"
                 current = json.loads((directory / branch / "serving.json").read_text())
+                current.setdefault("resources", {})["branch_lineages"] = old_lineages
+                current["resources"]["branch_lineages"] = record(current, directory, verdict)
                 current["training"].update(
                     init_adapter=str(adapter_path), teacher_adapter=str(adapter_path)
                 )
@@ -283,6 +295,22 @@ def learn_loop(
                             )
                         )
                 status = "selected for next serving phase after finite quality gates"
+                from rlm.v100.crossbreeding import try_child
+
+                try:
+                    current, child = try_child(root, current, suite, gates, trial / "crossbreed")
+                    if child is not None:
+                        atomic_json(trial / "crossbreed-result.json", child)
+                        if child.get("passed"):
+                            gates.append(json.loads(Path(child["quality_report"]).read_text()))
+                except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                    atomic_json(
+                        trial / "crossbreed-result.json",
+                        {
+                            "status": "child failed; accepted parent retained",
+                            "detail": str(error)[:400],
+                        },
+                    )
             else:
                 # Parent remains live next cycle. A later trial may revisit the
                 # verified pool using different model-selected settings.

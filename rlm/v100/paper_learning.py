@@ -118,7 +118,7 @@ class PaperLearning:
         if self.settings["crypto"] and not any(
             item["market"] == "crypto"
             and item["product"] == "spot"
-            and item["feed_id"].startswith("coinbase:")
+            and item["feed_id"].startswith(("coinbase:", "kraken:"))
             for item in state["instruments"].values()
         ):
             raise ValueError("Register verified Coinbase spot instruments and fees before polling")
@@ -146,6 +146,25 @@ class PaperLearning:
         book = PaperBook(self.root)
         try:
             if self.settings["crypto"]:
+                state = book.state()
+                kraken = [
+                    item
+                    for item in state["instruments"].values()
+                    if item["feed_id"].startswith("kraken:")
+                ]
+                if kraken:
+                    from datetime import UTC, datetime, timedelta
+
+                    from rlm.v100.spot_bootstrap import prepare
+
+                    if any(
+                        datetime.fromisoformat(
+                            state["fee_profiles"][item["fee_profile"]]["valid_until"]
+                        )
+                        <= datetime.now(UTC) + timedelta(hours=1)
+                        for item in kraken
+                    ):
+                        prepare(self.root, refresh=True)
                 poll_crypto(book, self.stop_event.is_set)
             for cik in self.settings["ciks"]:
                 if self.stop_event.is_set():

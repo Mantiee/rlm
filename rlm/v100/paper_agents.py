@@ -118,7 +118,10 @@ def paper_round(
 ) -> list[dict]:
     if type(research_rounds) is not int or not 1 <= research_rounds <= 6:
         raise ValueError("Financial research rounds must be between 1 and 6")
+    from rlm.v100.mission_chat import emit_alert, preferences
+
     results = []
+    user_settings = preferences(book.root)
     for branch in ("A", "B"):
         if observe:
             observe(book)
@@ -127,7 +130,9 @@ def paper_round(
             4096 if parent_profile["runtime"].get("enable_thinking") else 1536,
             parent_profile["runtime"]["max_output_tokens"],
         )
-        parent = helper_client(client_profile, book.root, branch)
+        from rlm.v100.research_policy import apply
+
+        parent = apply(helper_client(client_profile, book.root, branch), book.root)
         findings = []
         master_context = worker_context(compact_context(book.context(branch)), 0)
 
@@ -142,6 +147,7 @@ def paper_round(
                 [
                     {
                         "income_objective": objective,
+                        "user_preferences": user_settings,
                         "paper_context": data,
                     }
                 ],
@@ -195,6 +201,12 @@ def paper_round(
                 worker = helper_client(selected_profile, book.root, selected_branch)
                 available = getattr(worker, "research_tool_names", None)
                 worker.research_tool_names = {
+                    "propose_colab_trial",
+                    "discover_spot_markets",
+                    "register_paper_spot",
+                    "calculate",
+                    "set_research_budget",
+                    "parallel_source_research",
                     "search_memory",
                     "read_source",
                     "read_public_page",
@@ -208,6 +220,14 @@ def paper_round(
                 if income_research:
                     worker.research_tool_names.update(
                         {"create_submodel", "support_submodel", "test_submodel"}
+                    )
+                    worker.research_tool_names.update(
+                        {
+                            "list_algorithm_files",
+                            "read_algorithm_file",
+                            "create_code_candidate",
+                            "check_code_candidate",
+                        }
                     )
                 if available is not None:
                     worker.research_tool_names &= available
@@ -303,6 +323,7 @@ def paper_round(
                                 "review": review,
                                 "persistent_research_memory": remembered,
                                 "income_objective": objective,
+                                "user_preferences": user_settings,
                                 "income_scope": "Only PAPER portfolio actions execute here; other income ideas are research, not real sales or verified revenue",
                             },
                             ensure_ascii=False,
@@ -318,9 +339,11 @@ def paper_round(
             for index in proposal["accepted_research"]
         ):
             raise ValueError("Invalid financial decision or researcher selection")
+        rejected = False
         try:
             event = book.decide(branch, proposal, context["sequence"])
         except ValueError as error:
+            rejected = True
             event = book.note(
                 branch,
                 {"status": "proposal-rejected", "error": str(error)[:400], "proposal": proposal},
@@ -328,6 +351,7 @@ def paper_round(
             ActivityLog(book.root, branch, "paper").write(
                 "errors", "paper-proposal-rejected", event
             )
+        emit_alert(book.root, branch, proposal, rejected)
         results.append(event)
     return results
 

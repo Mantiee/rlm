@@ -86,6 +86,15 @@ def parameter_schema(profile: dict) -> dict:
         )
         rank = [config["r"]]
     steps = min(1000, profile["training"]["max_steps"])
+    budget = profile.get("resources", {}).get("training_budget")
+    lengths = [512, 1024, 2048]
+    if budget:
+        if file_hash(Path(budget["report"])) != budget["report_sha256"]:
+            raise ValueError("Measured training budget evidence changed")
+        rank = [r for r in rank if r <= budget["max_rank"]]
+        lengths = [n for n in lengths if n <= budget["max_length"]]
+        if not rank or not lengths:
+            raise ValueError("Parent adapter exceeds measured training budget; recalibrate")
     return {
         "learning_rate": {
             "type": "number",
@@ -94,7 +103,7 @@ def parameter_schema(profile: dict) -> dict:
             "enum": [0.000001, 0.000002, 0.000005, 0.00001, 0.00002, 0.00005, 0.0001, 0.0002],
         },
         "rank": {"type": "integer", "enum": rank},
-        "max_length": {"type": "integer", "enum": [512, 1024, 2048]},
+        "max_length": {"type": "integer", "enum": lengths},
         "gradient_accumulation": {
             "type": "integer",
             "minimum": 1,
@@ -315,6 +324,7 @@ def plan_duel(
     replay: Path | None = None,
     page: int = 0,
     recent: bool = False,
+    branch_parents: dict | None = None,
 ) -> dict:
     root, pool, output = root.resolve(), pool.resolve(), output.resolve()
     from rlm.v100.goals import load_goal
@@ -367,7 +377,13 @@ def plan_duel(
     }
     try:
         for branch in ("A", "B"):
-            decision = choose_experiment(client, branch, catalog, profile, shared.recent())
+            branch_profile = copy.deepcopy(profile)
+            if branch_parents and branch in branch_parents:
+                parent = branch_parents[branch]["training"]
+                branch_profile["training"].update(
+                    init_adapter=parent["init_adapter"], teacher_adapter=parent["teacher_adapter"]
+                )
+            decision = choose_experiment(client, branch, catalog, branch_profile, shared.recent())
             selected = set(decision["selected_ids"]) | mandatory
             branch_path = output / branch
             branch_path.mkdir()
@@ -378,7 +394,7 @@ def plan_duel(
                     for row in [*[row for row in train if record_id(row) in selected], *validation]
                 )
             )
-            chosen = copy.deepcopy(profile)
+            chosen = copy.deepcopy(branch_profile)
             chosen["runtime"]["activity_branch"] = branch
             chosen["training"].update(decision["parameters"])
             chosen["training"].update(

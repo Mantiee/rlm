@@ -113,7 +113,12 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
     client.sampling_args = dict(client.sampling_args)
     if getattr(client, "enable_thinking", None) is True:
         client.sampling_args["max_tokens"] = max(4096, client.sampling_args.get("max_tokens", 512))
-    observations = [*observations, {"persistent_research_memory": recall(root)}]
+    from rlm.v100.mission_chat import preferences
+
+    observations = [
+        *observations,
+        {"persistent_research_memory": recall(root), "user_preferences": preferences(root)},
+    ]
 
     client.research_owner = branch
     client.activity_actor = job["role"]
@@ -134,7 +139,10 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
             "additionalProperties": False,
             "required": ["kind", "expression"],
             "properties": {
-                "kind": {"type": "string", "enum": ["arithmetic", "linear_equation"]},
+                "kind": {
+                    "type": "string",
+                    "enum": ["arithmetic", "linear_equation", "decimal_calculation"],
+                },
                 "expression": {"type": "string", "maxLength": 160},
             },
         },

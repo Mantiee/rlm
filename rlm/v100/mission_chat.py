@@ -1,0 +1,334 @@
+"""Persistent user chat/control queue serviced alongside the owned mission.
+
+No second model is loaded. During exclusive training, requests remain queued.
+User directives steer R&D; they never rewrite the fixed goal or quality gates.
+"""
+
+import copy
+import json
+import sqlite3
+import threading
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+
+import requests
+
+from rlm.v100.activity import ActivityLog, append_locked
+from rlm.v100.common import atomic_json, load_profile
+
+
+@contextmanager
+def connect(root: Path):
+    path = root / "research/state/user-chat.sqlite3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path, timeout=30)
+    db.row_factory = sqlite3.Row
+    db.execute("""CREATE TABLE IF NOT EXISTS requests(
+        id TEXT PRIMARY KEY, created TEXT NOT NULL, message TEXT NOT NULL,
+        state TEXT NOT NULL, response TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+        error TEXT, updated REAL NOT NULL DEFAULT 0)""")
+    try:
+        with db:
+            yield db
+    finally:
+        db.close()
+
+
+def submit(root: Path, message: str) -> str:
+    if not isinstance(message, str) or not message.strip() or len(message) > 8000:
+        raise ValueError("Chat needs 1-8000 characters")
+    identity = uuid.uuid4().hex
+    with connect(root) as db:
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute("SELECT count(*) FROM requests WHERE state='queued'").fetchone()[0] >= 32:
+            raise ValueError("Chat queue has 32 pending requests; let them complete first")
+        db.execute(
+            "INSERT INTO requests(id,created,message,state) VALUES(?,?,?,'queued')",
+            (identity, datetime.now(UTC).isoformat(), message),
+        )
+    return identity
+
+
+def inspect(root: Path, identity: str) -> dict:
+    with connect(root) as db:
+        row = db.execute("SELECT * FROM requests WHERE id=?", (identity,)).fetchone()
+    if row is None:
+        raise ValueError("Unknown chat request")
+    result = dict(row)
+    if result["response"]:
+        result["response"] = json.loads(result["response"])
+    return result
+
+
+def preferences(root: Path) -> dict:
+    path = root / "research/user-preferences.json"
+    return json.loads(path.read_text()) if path.exists() else {"directive": "", "alerts": False}
+
+
+def apply_actions(root: Path, actions: list[dict]) -> list[dict]:
+    from rlm.v100.research_policy import choose
+
+    if not isinstance(actions, list) or len(actions) > 3:
+        raise ValueError("At most three chat actions per reply")
+    # Validate the entire plan before executing any control change.
+    for action in actions:
+        if set(action) != {
+            "kind",
+            "text",
+            "target",
+            "thinking",
+            "max_tokens",
+            "batch_tokens",
+            "enabled",
+        }:
+            raise ValueError("Invalid chat action keys")
+        kind = action["kind"]
+        if kind not in ("directive", "alerts", "budget") or type(action["enabled"]) is not bool:
+            raise ValueError("Unknown chat control action")
+        if not isinstance(action["text"], str) or len(action["text"]) > 2000:
+            raise ValueError("Directive exceeds its budget")
+        if kind == "budget":
+            target = action["target"]
+            maximum = 8192 if target == "master" else 4096
+            batches = (128, 256, 512) if target == "master" else (16,)
+            if (
+                target not in ("master", "helper")
+                or type(action["thinking"]) is not bool
+                or type(action["max_tokens"]) is not int
+                or not 256 <= action["max_tokens"] <= maximum
+                or type(action["batch_tokens"]) is not int
+                or action["batch_tokens"] not in batches
+            ):
+                raise ValueError("Budget outside measured host limits")
+    receipts = []
+    chosen = preferences(root)
+    for action in actions:
+        if action["kind"] == "budget":
+            receipts.append(
+                choose(
+                    root,
+                    **{k: action[k] for k in ("target", "thinking", "max_tokens", "batch_tokens")},
+                )
+            )
+        elif action["kind"] == "directive":
+            chosen["directive"] = action["text"]
+            receipts.append({"directive": action["text"], "effective": "next R&D request"})
+        else:
+            chosen.update(alerts=action["enabled"], alert_rule=action["text"])
+            receipts.append(
+                {
+                    "alerts": action["enabled"],
+                    "rule": action["text"],
+                    "scope": "local paper/research alerts; no real orders",
+                }
+            )
+    atomic_json(root / "research/user-preferences.json", chosen)
+    return receipts
+
+
+def emit_alert(root: Path, branch: str, proposal: dict, rejected: bool) -> None:
+    settings = preferences(root)
+    if not settings["alerts"] or proposal.get("action") not in ("open", "close"):
+        return
+    event = {
+        "time": datetime.now(UTC).isoformat(),
+        "branch": branch,
+        "proposal": proposal,
+        "rejected": rejected,
+        "scope": "Paper-model signal, not an independently validated buy/sell recommendation",
+    }
+    append_locked(
+        root / "research/alerts/signals.jsonl", json.dumps(event, ensure_ascii=False) + "\n"
+    )
+    ActivityLog(root, branch, "alerts").write("decisions", "paper-signal", event)
+
+
+def schema() -> dict:
+    fields = {
+        "kind": {"type": "string", "enum": ["directive", "alerts", "budget"]},
+        "text": {"type": "string", "maxLength": 2000},
+        "target": {"type": "string", "enum": ["master", "helper"]},
+        "thinking": {"type": "boolean"},
+        "max_tokens": {"type": "integer", "minimum": 256, "maximum": 8192},
+        "batch_tokens": {"type": "integer", "enum": [16, 128, 256, 512]},
+        "enabled": {"type": "boolean"},
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["answer", "actions"],
+        "properties": {
+            "answer": {"type": "string", "maxLength": 3000},
+            "actions": {
+                "type": "array",
+                "maxItems": 3,
+                "items": {
+                    "type": "object",
+                    "properties": fields,
+                    "required": list(fields),
+                    "additionalProperties": False,
+                },
+            },
+        },
+    }
+
+
+def respond(root: Path, directory: Path, request: dict) -> dict:
+    from rlm.v100.agent import native_turn
+    from rlm.v100.competition import helper_client
+    from rlm.v100.mission import status
+    from rlm.v100.research_policy import settings
+
+    mission = status(root)
+    paths = [directory / "learning/live.json"]
+    current = mission.get("state", {}).get("live_profile")
+    if current:
+        paths.append(Path(current))
+    paths.extend(sorted(directory.glob("profile-*.json")))
+    path = next((p for p in paths if p.exists()), None)
+    if path is None:
+        raise requests.ConnectionError("Waiting for owned inference server")
+    profile = copy.deepcopy(load_profile(path, root))
+    profile["runtime"].update(enable_thinking=False, max_output_tokens=2048, max_timeout=120)
+    client = helper_client(profile, root)
+    client.activity_actor = "chat"
+    # The endpoint is reused for candidate evaluation. Chat waits rather than
+    # talking to an unaccepted candidate or opening another GPU server.
+    actual = client.request("/props")
+    if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
+        raise requests.ConnectionError("Waiting for the accepted serving model")
+    with connect(root) as db:
+        history = db.execute(
+            "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 3"
+        ).fetchall()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Answer the authenticated local user's chat in Polish. Return answer and explicit requested actions. "
+                "An ordinary question needs no actions. Steer R&D using directive; do not change the fixed goal, "
+                "system prompt, quality gates or money ledger. Enable local paper alerts using alerts; the rule steers "
+                "future R&D but is not a guaranteed executable condition. Budget selects master/helper thinking and "
+                "tokens (master256..8192/helper256..4096). Helper batch16; master128/256/512 is a benchmark proposal, "
+                "not an immediate native reconfiguration. No real trading, arbitrary host commands or quota bypass. "
+                "Describe missing capabilities honestly. Actions apply only after host validation; do not claim "
+                "weights changed, profit learned or settings executed before the host receipt. "
+                "Unused action fields: text empty, target master, thinking false, max_tokens256, batch_tokens128, enabled false."
+            ),
+        }
+    ]
+    for old in reversed(history):
+        messages += [
+            {"role": "user", "content": old["message"][:1500]},
+            {"role": "assistant", "content": json.loads(old["response"])["answer"][:1500]},
+        ]
+    messages.append(
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "message": request["message"],
+                    "mission": mission,
+                    "settings": settings(root),
+                    "preferences": preferences(root),
+                },
+                ensure_ascii=False,
+            ),
+        }
+    )
+    result = json.loads(
+        native_turn(client, messages, response_format={"type": "json_object", "schema": schema()})[
+            "content"
+        ]
+    )
+    if set(result) != {"answer", "actions"} or not isinstance(result["answer"], str):
+        raise ValueError("Invalid chat response")
+    result["applied"] = apply_actions(root, result["actions"])
+    result["scope"] = (
+        "Weights change only through independently tested training; chat shares the inference queue"
+    )
+    return result
+
+
+def service(root: Path, directory: Path, stop: threading.Event) -> None:
+    while not stop.wait(1):
+        with connect(root) as db:
+            row = db.execute(
+                "SELECT * FROM requests WHERE state='queued' AND updated<? ORDER BY rowid LIMIT 1",
+                (time.time() - 15,),
+            ).fetchone()
+        if row is None:
+            continue
+        request = dict(row)
+        try:
+            response = respond(root, directory, request)
+            with connect(root) as db:
+                db.execute(
+                    "UPDATE requests SET state='completed',response=?,error=NULL,updated=? WHERE id=?",
+                    (json.dumps(response, ensure_ascii=False), time.time(), request["id"]),
+                )
+            ActivityLog(root, "controller", "chat").write(
+                "decisions", "user-command-completed", {"id": request["id"], **response}
+            )
+        except (requests.ConnectionError, requests.Timeout) as error:
+            with connect(root) as db:
+                db.execute(
+                    "UPDATE requests SET attempts=attempts+1,error=?,updated=? WHERE id=?",
+                    (str(error)[:300], time.time(), request["id"]),
+                )
+        except Exception as error:
+            with connect(root) as db:
+                db.execute(
+                    "UPDATE requests SET state='failed',error=?,updated=? WHERE id=?",
+                    (str(error)[:500], time.time(), request["id"]),
+                )
+            ActivityLog(root, "controller", "chat").write(
+                "errors", "user-command-failed", {"id": request["id"], "error": str(error)[:500]}
+            )
+
+
+@contextmanager
+def alongside(root: Path, directory: Path):
+    stop = threading.Event()
+    thread = threading.Thread(target=service, args=(root, directory, stop), daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1)
+
+
+def wait_reply(root: Path, identity: str, timeout: float = 120) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = inspect(root, identity)
+        if result["state"] != "queued":
+            return result
+        time.sleep(0.5)
+    return inspect(root, identity)
+
+
+def chat(root: Path, message: str | None = None) -> None:
+    print("Czat misji. /exit kończy tylko czat. Podczas treningu lub gry polecenie może czekać.")
+    while True:
+        try:
+            text = message if message is not None else input("Ty> ")
+        except (EOFError, KeyboardInterrupt):
+            break
+        if text.strip() == "/exit":
+            break
+        identity = submit(root, text)
+        print("Zapisano polecenie:", identity, flush=True)
+        result = wait_reply(root, identity)
+        if result["state"] == "completed":
+            print("Model>", result["response"]["answer"])
+            print("Wykonane zmiany:", json.dumps(result["response"]["applied"], ensure_ascii=False))
+        else:
+            print(json.dumps({k: result[k] for k in ("id", "state", "error")}, ensure_ascii=False))
+            print("Odczyt: v100-continual chat-status", identity)
+        if message is not None:
+            break

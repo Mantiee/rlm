@@ -109,6 +109,12 @@ def main() -> None:
 
     add_commands(sub)
     sub.add_parser("doctor")
+    chat = sub.add_parser(
+        "chat", help="Talk to the running mission and issue validated R&D controls"
+    )
+    chat.add_argument("--message")
+    chat_status = sub.add_parser("chat-status", help="Inspect persistent command acknowledgement")
+    chat_status.add_argument("identity")
     sub.add_parser("prepare-thinking", help="Create a separate reasoning and sampling profile")
     sub.add_parser(
         "prepare-challenge", help="Prepare verified curriculum and 81 fixed development cases"
@@ -128,6 +134,41 @@ def main() -> None:
         "mission-report", help="Income hypotheses, paper results and actual weight updates"
     )
     sub.add_parser("mission-watch", help="Follow model and tool events, with local times")
+    sub.add_parser(
+        "mission-audit",
+        help="Report implemented mechanisms versus observed evidence and remaining gaps",
+    )
+    sub.add_parser(
+        "prepare-mission-memory",
+        help="Connect incremental CPU embeddings to persistent mission retrieval",
+    )
+    sub.add_parser(
+        "prepare-self-code",
+        help="Prepare pinned own source and private sandbox without system installation",
+    )
+    sub.add_parser(
+        "prepare-income-skills",
+        help="Prepare verified decimal-cost training and reserved heldout exercises",
+    )
+    sub.add_parser(
+        "prepare-paper-spot",
+        help="Configure BTC/ETH paper sources from primary Kraken rules and current fees",
+    )
+    preparation = sub.add_parser(
+        "mission-prepare",
+        help="Prepare stopped mission, helper, sources and optional exclusive GPU pilots",
+    )
+    preparation.add_argument("--optimize", action="store_true")
+    preparation.add_argument("--calibrate", action="store_true")
+    optimize = sub.add_parser(
+        "optimize-mtp", help="Exclusive measured speed sweep and fixed-suite quality gate"
+    )
+    optimize.add_argument("--suite", type=Path, required=True)
+    optimize.add_argument("--repeats", type=int, default=3)
+    calibration = sub.add_parser(
+        "calibrate-training", help="Compare isolated NF4/FP16 pilots; no serving promotion"
+    )
+    calibration.add_argument("pool", type=Path)
     sub.add_parser(
         "repair-memory", help="Back up memory and exclude recursive transcripts from retrieval"
     )
@@ -303,6 +344,67 @@ def main() -> None:
     checks.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
+    if args.command == "mission-prepare":
+        from rlm.v100.preparation import prepare
+
+        prepare(root, args.optimize, args.calibrate)
+        return
+    if args.command == "mission-audit":
+        from rlm.v100.capabilities import audit
+
+        print(json.dumps(audit(root), indent=2))
+        return
+    if args.command in ("chat", "chat-status"):
+        from rlm.v100.mission_chat import chat, inspect
+
+        if args.command == "chat":
+            chat(root, args.message)
+        else:
+            print(json.dumps(inspect(root, args.identity), ensure_ascii=False, indent=2))
+        return
+    if args.command == "prepare-mission-memory":
+        from rlm.v100.mission_semantic import prepare
+
+        print(json.dumps(prepare(root), indent=2))
+        return
+    if args.command == "prepare-self-code":
+        from rlm.v100.self_code import prepare
+
+        print(json.dumps(prepare(root), indent=2))
+        return
+    if args.command == "prepare-paper-spot":
+        from rlm.v100.spot_bootstrap import prepare
+
+        print(json.dumps(prepare(root), indent=2))
+        return
+    if args.command == "prepare-income-skills":
+        from rlm.v100.income_skills import prepare
+        from rlm.v100.mission import status
+
+        if status(root)["running"]:
+            raise ValueError("Stop the mission before preparing curricula")
+        print(
+            json.dumps(
+                prepare(
+                    root, load_profile(args.profile or root / "research/v100-thinking.json", root)
+                ),
+                indent=2,
+            )
+        )
+        return
+    if args.command in ("calibrate-training", "optimize-mtp"):
+        if args.command == "calibrate-training":
+            from rlm.v100.training_calibration import calibrate
+
+            path = calibrate(root, args.profile or root / "research/v100-thinking.json", args.pool)
+        else:
+            from rlm.v100.mtp_gate import optimize
+
+            path = optimize(
+                root, args.profile or root / "research/v100-thinking.json", args.suite, args.repeats
+            )
+        print("RESULT PROFILE:", path, flush=True)
+        return
     if args.command in ("mission-report", "mission-watch", "repair-memory"):
         if args.command == "repair-memory":
             from rlm.v100.mission_memory import repair

@@ -44,6 +44,17 @@ PROMPT_FILES = {
     "rlm/v100/tool_protocol.py",
     "rlm/v100/mission.py",
     "rlm/v100/mission_memory.py",
+    "rlm/v100/calculator.py",
+    "rlm/v100/research_policy.py",
+    "rlm/v100/self_code.py",
+    "rlm/v100/mtp_gate.py",
+    "rlm/v100/spot_bootstrap.py",
+    "rlm/v100/mission_chat.py",
+    "rlm/v100/lineages.py",
+    "rlm/v100/crossbreeding.py",
+    "rlm/v100/training_calibration.py",
+    "rlm/v100/preparation.py",
+    "rlm/v100/capabilities.py",
 }
 
 
@@ -74,7 +85,7 @@ def snapshot_source(source: Path, destination: Path) -> dict:
     return hashes
 
 
-def propose_code(client, source: Path, filename: str, output: Path) -> dict:
+def algorithm_source(source: Path, filename: str) -> str:
     if filename in PROMPT_FILES or not filename.startswith("rlm/") or not filename.endswith(".py"):
         raise ValueError("Choose algorithm code; system-prompt files are read-only")
     if filename not in source_files(source):
@@ -82,7 +93,11 @@ def propose_code(client, source: Path, filename: str, output: Path) -> dict:
     path = (source / filename).resolve()
     if not path.is_relative_to(source.resolve()) or path.stat().st_size > 16000:
         raise ValueError("Source view exceeds the working context budget")
-    original = path.read_text()
+    return path.read_text()
+
+
+def propose_code(client, source: Path, filename: str, output: Path) -> dict:
+    original = algorithm_source(source, filename)
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -105,6 +120,11 @@ def propose_code(client, source: Path, filename: str, output: Path) -> dict:
         response_format={"type": "json_object", "schema": schema},
     )
     change = json.loads(response["content"])
+    return create_code(source, filename, change, output)
+
+
+def create_code(source: Path, filename: str, change: dict, output: Path) -> dict:
+    original = algorithm_source(source, filename)
     if set(change) != {"find", "replace", "hypothesis"} or not all(
         isinstance(value, str) for value in change.values()
     ):
@@ -167,6 +187,13 @@ def sandbox_command(
     output: Path, task: list[str], mounts: list[tuple[Path, bool]] | None = None, gpu: bool = False
 ) -> list[str]:
     bwrap = shutil.which("bwrap")
+    if len(output.parents) >= 3:
+        marker = output.parents[2] / "research/sandbox-runtime.json"
+        if marker.exists():
+            pinned = json.loads(marker.read_text())
+            if file_hash(Path(pinned["binary"])) != pinned["sha256"]:
+                raise ValueError("Private sandbox executable changed")
+            bwrap = pinned["binary"]
     if bwrap is None:
         raise FileNotFoundError(
             "bubblewrap is required; untrusted code never falls back to host execution"
@@ -256,7 +283,9 @@ def code_training_command(
     private_profile = json.loads(json.dumps(profile))
     # Candidate code can experiment with its private split copy. It cannot write
     # the global split ledger, protected experts, source pool or host prompt.
-    ledger = destination / "splits.sqlite3"
+    private_root = destination / "private-root"
+    ledger = private_root / "research/state/splits.sqlite3"
+    ledger.parent.mkdir(parents=True)
     import sqlite3
 
     with sqlite3.connect(
@@ -264,6 +293,13 @@ def code_training_command(
     ) as source:
         with sqlite3.connect(ledger) as target:
             source.backup(target)
+    book = root / "research/paper/ledger.sqlite3"
+    if book.exists():
+        copied = private_root / "research/paper/ledger.sqlite3"
+        copied.parent.mkdir(parents=True)
+        with sqlite3.connect(book.resolve().as_uri() + "?mode=ro", uri=True) as source:
+            with sqlite3.connect(copied) as target:
+                source.backup(target)
     private_profile["training"]["split_ledger"] = str(ledger)
     training_output = Path(profile["training"]["output"]).resolve()
     if training_output.exists() and any(training_output.iterdir()):
@@ -283,7 +319,7 @@ def code_training_command(
     runner = "import json,sys;from pathlib import Path;sys.path.insert(0,'/work');from rlm.v100.training import train_model;train_model(json.loads(Path(sys.argv[1]).read_text()),Path(sys.argv[2]),False,Path(sys.argv[3]))"
     return sandbox_command(
         output,
-        [sys.executable, "-I", "-c", runner, str(config), str(dataset), str(root)],
+        [sys.executable, "-I", "-c", runner, str(config), str(dataset), str(private_root)],
         mounts,
         gpu=True,
     )

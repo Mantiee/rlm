@@ -82,13 +82,13 @@ def validate_remote(profile: dict) -> None:
         runtime.get("backend") != BACKEND
         or runtime.get("tool_protocol") != "json"
         or runtime["model_name"] != MODEL
-        or runtime.get("enable_thinking") is not False
+        or type(runtime.get("enable_thinking")) is not bool
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("model_digest", ""))
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("metadata_sha256", ""))
         or resources.get("metadata_hash_scheme", FULL_METADATA)
         not in (FULL_METADATA, STABLE_METADATA)
         or runtime["context_window"] not in (8192, 16384, 32768, 65536, 131072)
-        or runtime["max_output_tokens"] > 1024
+        or not 256 <= runtime["max_output_tokens"] <= 8192
         or server["slots"] != 1
         or server.get("model")
         or server.get("binary")
@@ -134,9 +134,9 @@ class OllamaResearchClient(LlamaCppClient):
         ):
             raise ValueError("Only the explicitly pinned local Qwen model is permitted")
         kwargs["model_name"] = MODEL
-        if kwargs.get("enable_thinking", False) is not False:
-            raise ValueError("Remote helper uses bounded non-thinking research")
-        kwargs["enable_thinking"] = False
+        if type(kwargs.get("enable_thinking", False)) is not bool:
+            raise ValueError("Remote thinking must be an explicit boolean")
+        kwargs.setdefault("enable_thinking", False)
         # Reuse local usage/activity bookkeeping without relaxing the local
         # llama.cpp client's loopback-only contract.
         super().__init__(base_url="http://127.0.0.1:11435", **kwargs)
@@ -316,7 +316,7 @@ class OllamaResearchClient(LlamaCppClient):
         maximum = data.get("max_tokens")
         if (
             type(maximum) is not int
-            or not 1 <= maximum <= 1024
+            or not 1 <= maximum <= 8192
             or prompt_budget + maximum > self.context_window
         ):
             raise ValueError("Remote text/context budget exceeded; reduce retrieved material")
@@ -333,7 +333,7 @@ class OllamaResearchClient(LlamaCppClient):
             "model": self.model_name,
             "messages": data["messages"],
             "stream": False,
-            "think": False,
+            "think": self.enable_thinking,
             "options": options,
             "keep_alive": -1,
         }

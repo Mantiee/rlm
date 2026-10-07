@@ -481,7 +481,7 @@ def test_evolution_preserves_all_eligible_reports_replays_and_stops_on_failure(
     plans, gate_counts = [], []
     real_plan = experiments.plan_duel
 
-    def plan(client, settings, pool, output, root, replay=None, recent=False):
+    def plan(client, settings, pool, output, root, replay=None, recent=False, **kwargs):
         plans.append(
             {
                 "init": settings["training"]["init_adapter"],
@@ -489,7 +489,7 @@ def test_evolution_preserves_all_eligible_reports_replays_and_stops_on_failure(
                 "replay": replay,
             }
         )
-        return real_plan(client, settings, pool, output, root, replay, recent=recent)
+        return real_plan(client, settings, pool, output, root, replay, recent=recent, **kwargs)
 
     monkeypatch.setattr(competition, "plan_duel", plan)
 
@@ -497,6 +497,8 @@ def test_evolution_preserves_all_eligible_reports_replays_and_stops_on_failure(
         gate_counts.append(len(gates))
         for branch in ("A", "B"):
             atomic_json(output / branch / "development-quality.json", baseline)
+            parent = json.loads((output / branch / "profile.json").read_text())
+            atomic_json(output / branch / "serving.json", parent)
             adapter = output / branch / "training/candidate"
             adapter.mkdir(parents=True)
             (adapter / "adapter_config.json").write_text('{"r":16}')
@@ -540,7 +542,9 @@ def test_code_training_only_writes_private_ledger_and_new_round(tmp_path, monkey
     code_lab.code_training_command(output, data, dataset, tmp_path, destination)
     chosen = json.loads((destination / "worker-profile.json").read_text())
     assert chosen["training"]["output"] == data["training"]["output"]
-    assert chosen["training"]["split_ledger"] == str(destination / "splits.sqlite3")
+    assert chosen["training"]["split_ledger"] == str(
+        destination / "private-root/research/state/splits.sqlite3"
+    )
     assert file_hash(ledger) == before
     assert (ledger, True) not in seen["mounts"]
     assert (Path(data["training"]["base_model"]), False) in seen["mounts"]

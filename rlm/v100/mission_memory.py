@@ -2,13 +2,18 @@
 
 import copy
 import re
+import threading
 from pathlib import Path
 
 from rlm.v100.memory import Memory
 
+ARCHIVE_LOCK = threading.Lock()
+
 
 class ResearchMemory(Memory):
     """Keep audit originals, but never retrieve recursive worker transcripts."""
+
+    exclude_self_transcripts = True
 
     def node(self, node_id: str) -> dict:
         row = super().node(node_id)
@@ -59,16 +64,18 @@ def repair(root: Path) -> dict:
 
 
 def archive(root: Path, source: str, text: str) -> str:
-    memory = store(root)
-    try:
-        # UTF-8 byte count is a conservative cheap chunk bound for this text
-        # archive; requests still enforce the real native tokenizer budget.
-        return memory.ingest(source, text, lambda value: len(value.encode("utf-8")) + 1, 1536)
-    finally:
-        memory.close()
+    # Network fetching remains parallel; serialize SQLite initialization/writes.
+    with ARCHIVE_LOCK:
+        memory = store(root)
+        try:
+            return memory.ingest(source, text, lambda value: len(value.encode("utf-8")) + 1, 1536)
+        finally:
+            memory.close()
 
 
 def recall(root: Path, query: str = "research income costs evidence", limit: int = 3) -> list[dict]:
+    from rlm.v100.mission_semantic import retrieve
+
     memory = store(root)
     try:
         return [
@@ -81,7 +88,7 @@ def recall(root: Path, query: str = "research income costs evidence", limit: int
                 "text": row["text"][:1200],
                 "note": "A summary or excerpt may omit details; read the original before relying on it",
             }
-            for row in memory.search(query, limit)
+            for row in retrieve(root, memory, query, limit)
         ]
     finally:
         memory.close()
