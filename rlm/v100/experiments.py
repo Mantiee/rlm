@@ -38,6 +38,8 @@ class SharedLab:
             "code-candidate",
             "architecture-result",
             "architecture-proposal",
+            "service-selection",
+            "free-consultation",
         ):
             raise ValueError("Only public development observations can enter shared lab memory")
         with self.db:

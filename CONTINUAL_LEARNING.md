@@ -1,4 +1,4 @@
-# V100 continual learning, v100.6
+# V100 continual learning, v100.7
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,7 +6,7 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
-Kod v100.6 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Kod v100.7 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
 Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
 pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
 
@@ -162,6 +162,38 @@ Nie jest wyszukiwarką, przeglądarką z logowaniem ani czytnikiem PDF.
 Nie ma konsultacji przez płatne API. Automatyzacja darmowego LLM przez stronę,
 tworzenie kont, logowanie i CAPTCHA nie są podłączone; wymagają konkretnej
 usługi i jej obsługi. Nie ma obchodzenia limitów przez kolejne konta.
+
+Od v100.7 model może przez `list_free_services`, `propose_free_service` oraz
+`choose_free_service` sam badać i zmieniać preferowaną stronę do danego zadania.
+Nie narzucamy jednej witryny. Dokumentację pobiera istniejącym czytnikiem;
+URL, SHA i czas trafiają do osobnego SQLite. Dowód starszy niż 24 h lub zmieniony
+tekst wymagają ponownego researchu. Wybór jest publiczny dla A/B, ale nie oznacza
+zweryfikowanej darmowości ani uruchomionej konsultacji przez przeglądarkę.
+
+Osobny działający protokół `list_free_models` / `consult_free_model` obsługuje
+OpenRouter wyłącznie w wariantach `:free`. A/B i ich testerzy mogą wybierać model
+z aktualnej listy; katalog nie jest rankingiem inteligencji. Przed każdym POST
+kontroler sprawdza zero we wszystkich polach pricing oraz konto `is_free_tier`.
+Żądanie ma max_price prompt/completion/request równe 0, bez fallbacków i pluginów,
+z wymogiem distillable text. Płatna trasa, nieznana cena lub finansowane konto
+są blokowane. To poleganie na zadeklarowanych cenach i egzekwowaniu limitu przez
+dostawcę, nie możliwość kontrolowania jego rozliczeń od strony klienta.
+
+Konsultacje potrzebują darmowego konta OpenRouter i klucza w lokalnym
+`V100_FREE_ROUTER_KEY`. Żadnego konta ani klucza nie utworzono w tej rozmowie,
+nie wykonano rzeczywistej konsultacji. Nie dodajemy karty, kredytów ani billing.
+Jeden klucz służy wszystkim gałęziom: do 40 prób dziennie UTC, minimum 5 s
+odstępu. Błąd/quota zatrzymuje wywołanie bez płatnej zmiany modelu i automatycznych
+retry. Zewnętrzna odpowiedź jest hipotezą, nie etykietą treningową ani werdyktem.
+Niezerowy lub niepoprawny koszt zgłoszony przez usługę blokuje dalsze konsultacje
+do przeglądu przez operatora; nie ponawia automatycznie problematycznej trasy.
+Ślad zawiera model, SHA pytania/odpowiedzi i czas; klucz nie trafia do trace.
+Testy używają zastępczego transportu. Logowanie i konfiguracja na docelowym
+Debianie pozostają do wykonania; kod nie daje gwarancji dostępności darmowych modeli.
+
+Źródła protokołu: [OpenRouter free models](https://openrouter.ai/collections/free-models),
+[provider routing](https://openrouter.ai/docs/guides/routing/provider-selection),
+[status klucza](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key).
 
 `learn-loop POOL --output DIR --suite DEV_SUITE --baseline-report BASELINE --researcher-profile CPU_PROFILE`
 powtarza R&D A/B i weryfikację. Tylko NOWE sprawdzone, przyjęte przykłady
@@ -352,6 +384,11 @@ przy wskazaniu Python 3.11. Wielopokoleniową orkiestrację sprawdzono przez zas
 treningi/serwery: zachowuje wszystkie dopuszczone raporty rodziców, ustawia
 poprzednika jako init/nauczyciela, wymusza replay i kończy po braku zwycięzcy.
 Wynik v100.6: 382 zaliczone, 63 pominięte; hooki ruff, formatter i ty zaliczone.
+Wynik v100.7: 404 zaliczone, 63 pominięte; te same hooki zaliczone. Nowe testy
+sprawdzają aktualność źródeł, zmianę wyboru usług, filtrowanie cen, odmowę
+finansowanego konta, wspólny limit konsultacji, brak płatnego fallbacku i
+blokadę dalszych wywołań po naruszeniu kontroli kosztu. Transport jest zastępczy;
+nie wykonano konsultacji z prawdziwym kluczem ani rejestracji kont.
 Nowe testy sprawdzają rzeczywiste zmiany LoRA od automatycznie wyliczonych etykiet
 oraz zmianę wszystkich parametrów zaufanej małej sieci CPU. Orkiestracja loopu
 jest testowana na zastępczych serwerach; ocena nowych architektur sprawdza oddzielenie

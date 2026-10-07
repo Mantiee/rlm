@@ -24,6 +24,8 @@ PROMPT_FILES = {
     "rlm/v100/goals.py",
     "rlm/v100/architectures.py",
     "rlm/v100/architecture_worker.py",
+    "rlm/v100/free_router.py",
+    "rlm/v100/free_services.py",
 }
 
 

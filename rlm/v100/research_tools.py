@@ -10,11 +10,46 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+import requests
 import urllib3
 
 from rlm.v100.agent import native_turn, tool_schema
 
 TOOLS = [
+    tool_schema(
+        "list_free_models",
+        "Search the live catalog of zero-price OpenRouter text models. Provide an empty query or a model/name substring. No intelligence ranking. Consultation requires a locally configured free-tier account key.",
+        {"query": {"type": "string"}},
+    ),
+    tool_schema(
+        "consult_free_model",
+        "Ask a selected explicit :free model for advice. Only verified zero-price catalog entries and a free-tier account are accepted; provider max prices are zero, no paid fallback. Answer remains unverified research data.",
+        {"model_id": {"type": "string"}, "question": {"type": "string"}},
+    ),
+    tool_schema(
+        "list_free_services",
+        "Inspect researched browser-service proposals, discovery documentation and peer selections. Browser login is not installed; dedicated free API models are listed separately with list_free_models.",
+        {},
+    ),
+    tool_schema(
+        "propose_free_service",
+        "Research any potentially useful free LLM service. Read its documentation with read_public_page first. This proposes a service; it cannot authorize cost or log in.",
+        {
+            "name": {"type": "string"},
+            "url": {"type": "string"},
+            "documentation": {"type": "string"},
+            "rationale": {"type": "string"},
+        },
+    ),
+    tool_schema(
+        "choose_free_service",
+        "Choose a previously researched service proposal for this task; may change later. State evidence and avoid claiming unmeasured quality. Records preference only, does not consult the service or create accounts.",
+        {
+            "candidate_id": {"type": "string"},
+            "purpose": {"type": "string"},
+            "rationale": {"type": "string"},
+        },
+    ),
     tool_schema(
         "read_public_page",
         "Read an HTTPS public source URL; no accounts or credentials.",
@@ -149,6 +184,34 @@ class ResearchTools:
         self.branch = branch
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name in ("list_free_models", "consult_free_model"):
+            from rlm.v100.free_router import consult, public_catalog
+
+            if name == "list_free_models" and set(arguments) == {"query"}:
+                return public_catalog(arguments["query"])
+            if name == "consult_free_model" and set(arguments) == {"model_id", "question"}:
+                return consult(self.root, self.branch, **arguments)
+            raise ValueError("Invalid free-model request")
+        if name in ("list_free_services", "propose_free_service", "choose_free_service"):
+            from rlm.v100.free_services import ServiceBook
+
+            expected = {
+                "list_free_services": set(),
+                "propose_free_service": {"name", "url", "documentation", "rationale"},
+                "choose_free_service": {"candidate_id", "purpose", "rationale"},
+            }
+            if set(arguments) != expected[name]:
+                raise ValueError("Invalid service research arguments")
+            book = ServiceBook(self.root)
+            try:
+                if name == "list_free_services":
+                    return {**book.catalog(), "recent_choices": book.recent()}
+                if name == "propose_free_service":
+                    public_origin(arguments["url"])
+                    return book.propose(**arguments)
+                return book.choose(self.branch, **arguments)
+            finally:
+                book.close()
         if name == "create_submodel":
             from rlm.v100.architectures import create_candidate
 
@@ -201,6 +264,13 @@ class ResearchTools:
                 "status": "source text, not independently verified truth",
             }
             self.sources.append(source)
+            from rlm.v100.free_services import ServiceBook
+
+            book = ServiceBook(self.root)
+            try:
+                book.record_source(source)
+            finally:
+                book.close()
             return source
         if name == "check_code_candidate":
             from rlm.v100.code_lab import check_code
@@ -246,6 +316,7 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
             RuntimeError,
             OSError,
             urllib3.exceptions.HTTPError,
+            requests.RequestException,
         ) as error:
             result = {"status": "failed", "error": str(error)[:300]}
         trace.append(
