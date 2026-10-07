@@ -49,6 +49,24 @@ def require_idle_gpu() -> None:
 @contextmanager
 def managed_server(profile_path: Path, root: Path, log_path: Path):
     profile = load_profile(profile_path, root)
+    from rlm.v100.remote_helper import remote_profile
+
+    if remote_profile(profile):
+        client = helper_client(profile, root)
+        from rlm.v100.remote_helper import OllamaResearchClient
+
+        assert isinstance(client, OllamaResearchClient)
+        client.identity()
+        measured = client.loaded()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a") as log:
+            log.write(
+                json.dumps({"remote_helper": profile["runtime"]["base_url"], "loaded": measured})
+                + "\n"
+            )
+        # The Windows process is owned by its launcher, never by this context.
+        yield profile
+        return
     origin = urlparse(profile["runtime"]["base_url"])
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", origin.port))
@@ -109,8 +127,21 @@ def helper_client(
 ) -> LlamaCppClient:
     settings = profile["runtime"]
     from rlm.v100.inference import sampling_settings, thinking_enabled
+    from rlm.v100.remote_helper import OllamaResearchClient, remote_profile
 
-    client = LlamaCppClient(
+    remote = remote_profile(profile)
+    client_type = OllamaResearchClient if remote else LlamaCppClient
+    extras = (
+        {
+            "model_digest": profile["resources"]["model_digest"],
+            "metadata_sha256": profile["resources"]["metadata_sha256"],
+            "max_vram_gib": profile["resources"]["max_vram_gib"],
+        }
+        if remote
+        else {}
+    )
+    client = client_type(
+        **extras,
         model_name=settings["model_name"],
         base_url=settings["base_url"],
         context_window=settings["context_window"],
@@ -119,7 +150,9 @@ def helper_client(
         enable_thinking=thinking_enabled(profile),
         activity_root=str(root) if root else None,
         activity_branch=branch,
-        activity_actor="tester" if profile.get("resources", {}).get("device") == "cpu" else "model",
+        activity_actor="tester"
+        if profile.get("resources", {}).get("device") in ("cpu", "remote")
+        else "model",
         activity_context={
             "model_version": settings["model_version"],
             "target": profile["server"]["model"],

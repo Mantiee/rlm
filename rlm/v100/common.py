@@ -21,6 +21,12 @@ def load_profile(path: Path, root: Path) -> dict[str, Any]:
         json.loads(path.read_text()) if path.suffix == ".json" else tomllib.loads(path.read_text())
     )
     runtime, server = profile["runtime"], profile["server"]
+    from rlm.v100.remote_helper import remote_profile, validate_remote
+
+    if remote_profile(profile):
+        validate_remote(profile)
+    elif runtime.get("backend") == "ollama-research":
+        raise ValueError("Ollama transport is reserved for explicit remote researchers")
     from rlm.v100.inference import sampling_settings, thinking_enabled
 
     sampling_settings(profile)

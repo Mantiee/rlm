@@ -650,3 +650,9 @@ Nie zmierzono jeszcze tych nowych funkcji na Twoim Debianie/V100. Rzeczywista
 izolacja wymaga testu docelowego; nie zastępujemy jej wykonywaniem kodu na hoście.
 Ladder side network oraz automatyczna przebudowa i wymiana głównej Gemmy
 pozostają kolejnymi eksperymentami. Granice badań: [FORGETTING_RESEARCH.md](FORGETTING_RESEARCH.md).
+# Opcjonalny dodatkowy GPU do researchu
+
+Wersja v100.15 obsługuje izolowanego researchera Ollama na Windows/RTX 3090,
+również w czasie treningu V100. Instalacja i ograniczenia:
+[RTX3090_HELPER.md](RTX3090_HELPER.md). Aktualizacja pakietu sama nie podłącza
+zdalnego GPU; potrzebny jest udany smoke test i przygotowany profil z pełnym digestem.

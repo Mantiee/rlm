@@ -75,9 +75,9 @@ def start(root: Path, profile_path: Path) -> dict:
         if not (folder / "manifest.json").exists():
             raise ValueError("Prepare the disjoint challenge curriculum before starting a mission")
         profile = load_profile(profile_path, root)
-        helper = root / "research/researcher-cpu.toml"
-        if not helper.exists():
-            raise ValueError("Missing prepared CPU researcher")
+        from rlm.v100.remote_helper import selected_helper
+
+        load_profile(selected_helper(root), root)
         if not (root / "research/paper/ledger.sqlite3").exists():
             raise ValueError("Missing initialized paper ledger; run paper-init")
         require_idle_gpu()
@@ -150,6 +150,10 @@ def setup_profile(profile: dict, context: int) -> dict:
 
 def setup_helper(profile: dict) -> dict:
     chosen = copy.deepcopy(profile)
+    from rlm.v100.remote_helper import remote_profile
+
+    if remote_profile(chosen):
+        return chosen
     chosen["runtime"].update(
         tool_protocol="json",
         max_output_tokens=768,
@@ -215,8 +219,10 @@ def run(root: Path, profile: dict, directory: Path) -> None:
     }
     paper_settings = directory / "income-settings.json"
     atomic_json(paper_settings, settings)
-    helper_original = setup_helper(load_profile(root / "research/researcher-cpu.toml", root))
-    helper_path = directory / "cpu-helper.json"
+    from rlm.v100.remote_helper import selected_helper
+
+    helper_original = setup_helper(load_profile(selected_helper(root), root))
+    helper_path = directory / "research-helper.json"
     atomic_json(helper_path, helper_original)
     helper_path = financial_helper_profile(helper_path, root)
     tool_reader = ResearchTools(root, {}, "A")
@@ -257,7 +263,7 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     context_window=context,
                     free_vram_gib=round(free, 2),
                 )
-                with managed_server(helper_path, root, directory / "cpu-helper.log") as helper:
+                with managed_server(helper_path, root, directory / "research-helper.log") as helper:
                     with PaperLearning(root, paper_settings) as income:
                         try:
                             income.research(serving, helper)

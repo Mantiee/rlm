@@ -18,6 +18,8 @@ from rlm.v100.protection import ExpertRegistry, compare_reports, reserve_audit_s
 
 
 def server_command(profile: dict) -> list[str]:
+    if profile.get("resources", {}).get("device") == "remote":
+        raise ValueError("Remote researcher is externally served; no local server can be launched")
     s, r = profile["server"], profile["runtime"]
     origin = urlparse(r["base_url"])
     command = [
@@ -224,6 +226,12 @@ def main() -> None:
     breed.add_argument("--output", type=Path, required=True)
     breed.add_argument("--alpha", type=float, default=0.5)
     sub.add_parser("prepare-researcher", help="Prepare a separate, pinned CPU assistant profile")
+    remote = sub.add_parser(
+        "prepare-remote-helper", help="Pin an already running LAN Ollama researcher"
+    )
+    remote.add_argument("--url", required=True)
+    remote.add_argument("--context", type=int, choices=(8192, 16384, 32768), required=True)
+    remote.add_argument("--digest", required=True)
     duel = sub.add_parser(
         "plan-duel", help="Ask the model to plan independent bounded A/B experiments"
     )
@@ -385,6 +393,14 @@ def main() -> None:
         from rlm.v100.researchers import prepare_researcher
 
         print("CPU researcher profile:", prepare_researcher(profile, root))
+        return
+    if args.command == "prepare-remote-helper":
+        from rlm.v100.remote_helper import prepare_remote
+
+        print(
+            "Remote researcher profile:",
+            prepare_remote(profile, root, args.url, args.context, args.digest),
+        )
         return
     if args.command == "run-duel":
         from rlm.v100.competition import run_duel

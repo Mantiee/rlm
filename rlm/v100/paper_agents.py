@@ -308,14 +308,17 @@ def paper_round(
 
 def financial_helper_profile(path: Path, root: Path) -> Path:
     researcher = load_profile(path, root)
+    from rlm.v100.remote_helper import remote_profile
+
     if (
         researcher["server"].get("gpu_layers") != 0
         or researcher.get("resources", {}).get("device") != "cpu"
-    ):
-        raise ValueError("Financial helper must use CPU to preserve training VRAM")
+    ) and not remote_profile(researcher):
+        raise ValueError("Financial helper must use CPU or a separate remote GPU")
     researcher = copy.deepcopy(researcher)
-    researcher["runtime"]["context_window"] = 8192
-    researcher["server"]["context_per_slot"] = 8192
+    if not remote_profile(researcher):
+        researcher["runtime"]["context_window"] = 8192
+        researcher["server"]["context_per_slot"] = 8192
     destination = root / "research/paper" / f"researcher-{sha(researcher)[:16]}.json"
     if not destination.exists():
         atomic_json(destination, researcher)
