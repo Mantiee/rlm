@@ -73,6 +73,22 @@ def test_parent_tampering_and_incompatible_target_modules_rejected(tmp_path):
         breed_adapters(first, second, tmp_path / "child", 0.5, base, tmp_path)
 
 
+def test_target_module_order_is_not_a_semantic_difference(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    (base / "model.safetensors").write_bytes(b"base")
+    first, second = tmp_path / "parent-a", tmp_path / "parent-b"
+    parent(first, base, 2, 4, 1)
+    parent(second, base, 2, 4, 2)
+    for directory, modules in ((first, ["q_proj", "v_proj"]), (second, ["v_proj", "q_proj"])):
+        path = directory / "adapter_config.json"
+        config = json.loads(path.read_text())
+        config["target_modules"] = modules
+        path.write_text(json.dumps(config))
+        record_adapter(directory, base_signature(base))
+    assert breed_adapters(first, second, tmp_path / "child", 0.5, base, tmp_path)["rank"] == 4
+
+
 def test_real_cpu_trainer_updates_only_child_with_checkpointed_backward(tmp_path):
     torch = pytest.importorskip("torch")
     from peft import LoraConfig, get_peft_model

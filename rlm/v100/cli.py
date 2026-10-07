@@ -30,7 +30,7 @@ def server_command(profile: dict) -> list[str]:
         "--port",
         str(origin.port or 8088),
         "--gpu-layers",
-        "999",
+        str(s.get("gpu_layers", 999)),
         "--ctx-size",
         str(s["context_per_slot"] * s["slots"]),
         "--parallel",
@@ -175,10 +175,109 @@ def main() -> None:
     breed.add_argument("second", type=Path)
     breed.add_argument("--output", type=Path, required=True)
     breed.add_argument("--alpha", type=float, default=0.5)
+    sub.add_parser("prepare-researcher", help="Prepare a separate, pinned CPU assistant profile")
+    duel = sub.add_parser(
+        "plan-duel", help="Ask the model to plan independent bounded A/B experiments"
+    )
+    duel.add_argument("pool", type=Path)
+    duel.add_argument("--output", type=Path, required=True)
+    duel.add_argument("--replay", type=Path)
+    duel.add_argument("--page", type=int, default=0)
+    run = sub.add_parser("run-duel", help="Sequential GPU learning with concurrent CPU research")
+    run.add_argument("directory", type=Path)
+    run.add_argument("--suite", type=Path, required=True)
+    run.add_argument("--baseline-report", type=Path, required=True, action="append")
+    run.add_argument("--researcher-profile", type=Path)
+    run.add_argument("--timeout", type=int, default=7200)
+    run.add_argument("--code-a", type=Path)
+    run.add_argument("--code-b", type=Path)
+    evolution = sub.add_parser(
+        "evolve", help="Bounded A/B generations on a fixed development suite"
+    )
+    evolution.add_argument("pool", type=Path)
+    evolution.add_argument("--output", type=Path, required=True)
+    evolution.add_argument("--suite", type=Path, required=True)
+    evolution.add_argument("--baseline-report", type=Path, required=True, action="append")
+    evolution.add_argument("--researcher-profile", type=Path)
+    evolution.add_argument("--generations", type=int, default=2)
+    evolution.add_argument("--timeout", type=int, default=7200)
+    code = sub.add_parser("propose-code", help="Create an isolated algorithm-code candidate")
+    code.add_argument("repository", type=Path)
+    code.add_argument("file")
+    code.add_argument("--output", type=Path, required=True)
+    checks = sub.add_parser(
+        "check-code", help="Run fixed checks through bubblewrap, never the host"
+    )
+    checks.add_argument("directory", type=Path)
+    checks.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     profile = load_profile(args.profile or root / "research/v100.toml", root)
     registry = ExpertRegistry(root / "research/experts")
+    if args.command == "evolve":
+        from rlm.v100.competition import evolve
+
+        print(
+            json.dumps(
+                evolve(
+                    profile,
+                    root,
+                    args.pool,
+                    args.output,
+                    args.suite,
+                    [json.loads(path.read_text()) for path in args.baseline_report],
+                    args.researcher_profile,
+                    args.generations,
+                    args.timeout,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if args.command == "prepare-researcher":
+        from rlm.v100.researchers import prepare_researcher
+
+        print("CPU researcher profile:", prepare_researcher(profile, root))
+        return
+    if args.command == "run-duel":
+        from rlm.v100.competition import run_duel
+
+        candidates = {
+            branch: path for branch, path in (("A", args.code_a), ("B", args.code_b)) if path
+        }
+        result = run_duel(
+            args.directory,
+            root,
+            args.suite,
+            [json.loads(path.read_text()) for path in args.baseline_report],
+            args.researcher_profile,
+            args.timeout,
+            candidates,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    if args.command == "check-code":
+        from rlm.v100.code_lab import check_code
+
+        print(json.dumps(check_code(args.directory.resolve(), args.timeout), indent=2))
+        return
+    if args.command in ("plan-duel", "propose-code"):
+        planning_client = client_for(profile, root, max_tokens=1536, enable_thinking=False)
+        if args.command == "plan-duel":
+            from rlm.v100.experiments import plan_duel
+
+            result = plan_duel(
+                planning_client, profile, args.pool, args.output, root, args.replay, args.page
+            )
+        else:
+            from rlm.v100.code_lab import propose_code
+
+            result = propose_code(
+                planning_client, args.repository.resolve(), args.file, args.output
+            )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     if args.command == "breed-adapters":
         from rlm.v100.breeding import breed_adapters
 

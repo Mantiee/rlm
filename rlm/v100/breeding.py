@@ -126,6 +126,10 @@ def breed_adapters(
     ignored = {"r", "lora_alpha", "base_model_name_or_path", "revision", "inference_mode"}
     left_semantics = {key: value for key, value in left_config.items() if key not in ignored}
     right_semantics = {key: value for key, value in right_config.items() if key not in ignored}
+    for semantics in (left_semantics, right_semantics):
+        for key in ("target_modules", "exclude_modules"):
+            if isinstance(semantics.get(key), list):
+                semantics[key] = sorted(semantics[key])
     if left_semantics != right_semantics:
         raise ValueError("Parent LoRA configurations are incompatible")
     left = load_file(str(first / "adapter_model.safetensors"), device="cpu")

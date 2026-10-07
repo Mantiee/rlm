@@ -17,7 +17,9 @@ def atomic_json(path: Path, value: Any) -> None:
 
 
 def load_profile(path: Path, root: Path) -> dict[str, Any]:
-    profile = tomllib.loads(path.read_text())
+    profile = (
+        json.loads(path.read_text()) if path.suffix == ".json" else tomllib.loads(path.read_text())
+    )
     runtime, server = profile["runtime"], profile["server"]
     if runtime["context_window"] != server["context_per_slot"]:
         raise ValueError("Client context_window must equal context_per_slot")

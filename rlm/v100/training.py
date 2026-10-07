@@ -7,6 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from rlm.v100.breeding import base_signature, parent_exports, record_adapter, verified_adapter
+from rlm.v100.checkpointing import best_model_arguments, record_best
 from rlm.v100.common import atomic_json
 from rlm.v100.protection import assert_candidate_output, file_hash, fixed_split
 
@@ -85,6 +86,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         Trainer,
         TrainerCallback,
         TrainingArguments,
+        set_seed,
     )
 
     if not torch.cuda.is_available() or torch.cuda.get_device_capability() != (7, 0):
@@ -93,6 +95,11 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     if free < 28 * 2**30:
         raise ValueError("Stop inference server before training: need at least 28 GiB free VRAM")
     settings = profile["training"]
+    best_arguments = best_model_arguments(settings)
+    seed = settings.get("seed", 42)
+    if type(seed) is not int or not 0 <= seed < 2**32:
+        raise ValueError("Invalid training seed")
+    set_seed(seed)
     output = Path(settings["output"])
     base = Path(settings["base_model"])
     root = root or output.parents[2]
@@ -127,7 +134,13 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         },
         "training_code_sha256": {
             name: file_hash(Path(__file__).with_name(name))
-            for name in ("training.py", "distillation.py", "protection.py", "breeding.py")
+            for name in (
+                "training.py",
+                "distillation.py",
+                "protection.py",
+                "breeding.py",
+                "checkpointing.py",
+            )
         },
         "train_records": len(train),
         "eval_records": len(evaluation),
@@ -245,13 +258,15 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
             print(json.dumps(row), flush=True)
 
         def on_save(self, args, state, control, **kwargs):
+            manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
             atomic_json(
                 output / f"checkpoint-{state.global_step}" / "complete.json",
                 {
                     "step": state.global_step,
-                    "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                    "manifest_sha256": manifest_sha256,
                 },
             )
+            record_best(output, state, manifest_sha256)
 
     args = TrainingArguments(
         output_dir=str(output),
@@ -269,10 +284,10 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         eval_strategy="steps",
         eval_steps=settings["eval_steps"],
         save_steps=settings["save_steps"],
-        save_total_limit=3,
+        **best_arguments,
         save_only_model=False,
         report_to=[],
-        seed=42,
+        seed=seed,
         dataloader_num_workers=0,
         include_num_input_tokens_seen=True,
     )
@@ -295,6 +310,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     if not resume:
         atomic_json(output / "baseline_eval.json", trainer.evaluate())
     trainer.train(resume_from_checkpoint=str(checkpoint) if checkpoint else None)
+    record_best(output, trainer.state, file_hash(manifest_path))
     candidate = output / "candidate"
     trainer.save_model(str(candidate))
     tokenizer.save_pretrained(candidate)
