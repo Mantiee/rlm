@@ -20,8 +20,8 @@ foreach ($address in @($WindowsIp, $DebianIp)) {
     }
     $null = [Net.IPAddress]::Parse($address)
 }
-if ($Port -ne 11435 -or $Context -notin @(8192, 16384, 32768)) {
-    throw 'Use the isolated port 11435 and context 8192, 16384 or 32768.'
+if ($Port -ne 11435 -or $Context -notin @(8192, 16384, 32768, 65536, 131072)) {
+    throw 'Use the isolated port 11435 and context 8192, 16384, 32768, 65536 or 131072.'
 }
 $Root = Join-Path $env:USERPROFILE 'ai-v100-helper'
 $RuntimeVersion = '0.40.0'

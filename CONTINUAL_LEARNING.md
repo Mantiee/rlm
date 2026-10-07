@@ -1,4 +1,31 @@
-# V100 continual learning, v100.14
+# V100 continual learning, v100.16
+
+## Budżet thinking i większy kontekst, v100.16
+
+Logi użytkownika potwierdziły ucięte odpowiedzi Gemmy w researchu i planowaniu:
+thinking było włączone, ale odpowiedź miała limit 2048 tokenów. Tylko wywołania
+R&D, recenzji, planowania eksperymentów i decyzji paper mogą ponowić tę samą
+prośbę po `finish_reason=length`, podwajając budżet do 8192 tokenów. Maksymalnie
+trzy próby, dodatkowo ograniczone wolnym miejscem w kontekście. Nie dopisujemy
+częściowych odpowiedzi i nie wykonujemy uciętych akcji. Sampling, schema i
+thinking pozostają takie same. Zwykła ocena jakości nadal nie ponawia próśb.
+Pomocnicy bez thinking zachowują dotychczasowe limity. Zdarzenia
+`research-output-retry` pokazują model, próby i koszt tokenów w timeline.
+
+`mission-start --max-context 131072 --flash-attention on` próbuje 128k,
+następnie 64k/32k/16k/8k, przy zachowaniu minimum 4 GiB wolnego VRAM po
+załadowaniu. Ustawienia są snapshotem nowej misji, nie nadpisują profilu
+wejściowego. Jawne `on` wymaga obsługi w lokalnym buildzie i nie jest po cichu
+wyłączane przy błędzie. KV cache zachowuje typ z profilu, domyślnie F16.
+Cache zostaje zwolniony wraz z serwerem przed treningiem; długość sekwencji
+treningowych nie wzrasta automatycznie. Nowy kontekst lub tryb Flash Attention
+wymaga nowego baseline, wcześniejszy raport pozostaje zachowany.
+
+Samo uruchomienie i wolny VRAM po załadowaniu nie dowodzą szybkości, szczytowego
+zużycia pamięci ani jakości przy pełnym 128k promptu. Wymaga to osobnego testu
+na sprzęcie i modelu użytkownika. Dłuższe wejście może wydłużyć prefill; nie
+zapełniamy go automatycznie wszystkimi źródłami. Pamięć oryginałów i hierarchiczne
+podsumowania nadal pozwalają dobierać potrzebne fragmenty.
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite

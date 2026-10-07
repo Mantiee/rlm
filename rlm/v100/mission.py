@@ -63,7 +63,13 @@ def status(root: Path) -> dict:
     }
 
 
-def start(root: Path, profile_path: Path) -> dict:
+def start(
+    root: Path, profile_path: Path, max_context: int = 32768, flash_attention: str | None = None
+) -> dict:
+    if max_context not in (32768, 65536, 131072):
+        raise ValueError("Mission context ceiling must be 32768, 65536 or 131072")
+    if flash_attention not in (None, "auto", "on", "off"):
+        raise ValueError("Flash Attention must be auto, on or off")
     root = root.resolve()
     directory = root / "research/mission"
     directory.mkdir(parents=True, exist_ok=True)
@@ -75,6 +81,9 @@ def start(root: Path, profile_path: Path) -> dict:
         if not (folder / "manifest.json").exists():
             raise ValueError("Prepare the disjoint challenge curriculum before starting a mission")
         profile = load_profile(profile_path, root)
+        profile.setdefault("resources", {})["mission_max_context"] = max_context
+        if flash_attention is not None:
+            profile["server"]["flash_attention"] = flash_attention
         from rlm.v100.remote_helper import selected_helper
 
         load_profile(selected_helper(root), root)
@@ -243,7 +252,12 @@ def run(root: Path, profile: dict, directory: Path) -> None:
             )
             print("Source unavailable:", url, type(error).__name__, str(error)[:300], flush=True)
     selected, baseline, selected_path = None, None, None
-    for context in (32768, 16384, 8192):
+    max_context = profile.get("resources", {}).get("mission_max_context", 32768)
+    if max_context not in (32768, 65536, 131072):
+        raise ValueError("Invalid snapshotted mission context ceiling")
+    for context in (131072, 65536, 32768, 16384, 8192):
+        if context > max_context:
+            continue
         chosen = setup_profile(profile, context)
         path = directory / f"profile-{context}.json"
         atomic_json(path, chosen)
@@ -262,6 +276,8 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     "income-research",
                     context_window=context,
                     free_vram_gib=round(free, 2),
+                    flash_attention_requested=serving["server"]["flash_attention"],
+                    kv_cache_type=serving["server"]["cache_type"],
                 )
                 with managed_server(helper_path, root, directory / "research-helper.log") as helper:
                     with PaperLearning(root, paper_settings) as income:

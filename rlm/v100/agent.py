@@ -39,6 +39,7 @@ def native_turn(
     tools: list[dict] | None = None,
     response_format: dict | None = None,
     response_info: dict | None = None,
+    retry_output_limit: int | None = None,
 ) -> dict:
     if response_info is not None:
         response_info.clear()
@@ -59,30 +60,70 @@ def native_turn(
         raise ValueError(
             "Tool conversation exceeds the working context; shorten sources or start a new turn"
         )
-    result = client.request(
-        "/v1/chat/completions",
-        {
-            "model": client.model_name,
-            "messages": messages,
-            "stream": False,
-            "temperature": 0.0,
-            "seed": 42,
-            **sampling,
-            "max_tokens": max_tokens,
-            "cache_prompt": True,
-            **extras,
-            **client.template_args(),
-        },
-    )
-    choice = result["choices"][0]
-    if response_info is not None:
-        response_info.update(
-            finish_reason=choice.get("finish_reason"),
-            reasoning_chars=len(choice["message"].get("reasoning_content") or ""),
-        )
-    if choice.get("finish_reason") == "length":
-        raise ValueError("Tool turn exhausted output budget; no partial answer is accepted")
-    return choice["message"]
+    payload = {
+        "model": client.model_name,
+        "messages": messages,
+        "stream": False,
+        "temperature": 0.0,
+        "seed": 42,
+        **sampling,
+        "max_tokens": max_tokens,
+        "cache_prompt": True,
+        **extras,
+        **client.template_args(),
+    }
+    if retry_output_limit is not None and (
+        type(retry_output_limit) is not int or not 1 <= retry_output_limit <= 8192
+    ):
+        raise ValueError("Research retry output limit must be 1-8192 tokens")
+    ceiling = min(retry_output_limit or max_tokens, client.context_window - prompt_tokens)
+    attempts, completion_tokens = 0, 0
+    while True:
+        attempts += 1
+        result = client.request("/v1/chat/completions", payload)
+        choice = result["choices"][0]
+        completion_tokens += (result.get("usage") or {}).get("completion_tokens", 0)
+        if response_info is not None:
+            response_info.update(
+                finish_reason=choice.get("finish_reason"),
+                reasoning_chars=len(choice["message"].get("reasoning_content") or ""),
+                attempts=attempts,
+                max_tokens=payload["max_tokens"],
+                total_completion_tokens=completion_tokens,
+            )
+        if choice.get("finish_reason") != "length":
+            return choice["message"]
+        if attempts >= 3 or payload["max_tokens"] >= ceiling:
+            raise ValueError(
+                "Tool turn exhausted output budget; no partial answer is accepted "
+                f"(model={client.model_name}, max_tokens={payload['max_tokens']}, "
+                f"attempts={attempts})"
+            )
+        next_maximum = min(payload["max_tokens"] * 2, ceiling)
+        if getattr(client, "activity_root", None):
+            from rlm.v100.activity import ActivityLog
+
+            ActivityLog(client.activity_root, client.research_owner, client.activity_actor).write(
+                "steps",
+                "research-output-retry",
+                {
+                    "model": client.model_name,
+                    "attempt": attempts,
+                    "previous_max_tokens": payload["max_tokens"],
+                    "next_max_tokens": next_maximum,
+                    "prompt_tokens": prompt_tokens,
+                    "total_completion_tokens": completion_tokens,
+                    "finish_reason": "length",
+                },
+            )
+        # Repeat the same input, sampling and schema. A partial answer or tool
+        # action is never appended to the conversation or executed.
+        payload = {**payload, "max_tokens": next_maximum}
+
+
+def research_output_limit(client) -> int | None:
+    """Extra output allowance only for explicitly reasoning-enabled R&D clients."""
+    return 8192 if getattr(client, "enable_thinking", None) is True else None
 
 
 def select_expert(client, question: str, experts: list[dict]) -> dict:
@@ -122,17 +163,22 @@ def select_expert(client, question: str, experts: list[dict]) -> dict:
 
 
 def tool_turn(
-    client, messages: list[dict], tools=None, response_format=None, response_info=None
+    client,
+    messages: list[dict],
+    tools=None,
+    response_format=None,
+    response_info=None,
+    retry_output_limit=None,
 ) -> dict:
     if getattr(client, "tool_protocol", "native") == "json" and tools:
         from rlm.v100.tool_protocol import json_tool_turn
 
-        return json_tool_turn(client, messages, tools, response_info)
+        return json_tool_turn(client, messages, tools, response_info, retry_output_limit)
     if getattr(client, "tool_protocol", "native") == "json":
         from rlm.v100.tool_protocol import action_history
 
         messages = action_history(messages)
-    return native_turn(client, messages, tools, response_format, response_info)
+    return native_turn(client, messages, tools, response_format, response_info, retry_output_limit)
 
 
 def answer_with_tools(client, question: str, retrieve, max_turns: int = 6) -> dict:

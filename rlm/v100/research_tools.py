@@ -15,7 +15,7 @@ import requests
 import urllib3
 
 from rlm.v100.activity import ActivityLog
-from rlm.v100.agent import native_turn, tool_schema, tool_turn
+from rlm.v100.agent import native_turn, research_output_limit, tool_schema, tool_turn
 from rlm.v100.tool_protocol import json_object
 
 COMPACT_CPU_TOOLS = {
@@ -393,9 +393,19 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
     ]
     for _ in range(2):
         turn = (
-            tool_turn(client, messages, tools=selected_tools)
+            tool_turn(
+                client,
+                messages,
+                tools=selected_tools,
+                retry_output_limit=research_output_limit(client),
+            )
             if getattr(client, "tool_protocol", "native") == "json"
-            else native_turn(client, messages, tools=selected_tools)
+            else native_turn(
+                client,
+                messages,
+                tools=selected_tools,
+                retry_output_limit=research_output_limit(client),
+            )
         )
         calls = turn.get("tool_calls") or []
         if not calls:
@@ -440,10 +450,18 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
             {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result)},
         ]
     result = (
-        tool_turn(client, messages, response_format={"type": "json_object", "schema": schema})
+        tool_turn(
+            client,
+            messages,
+            response_format={"type": "json_object", "schema": schema},
+            retry_output_limit=research_output_limit(client),
+        )
         if getattr(client, "tool_protocol", "native") == "json"
         else native_turn(
-            client, messages, response_format={"type": "json_object", "schema": schema}
+            client,
+            messages,
+            response_format={"type": "json_object", "schema": schema},
+            retry_output_limit=research_output_limit(client),
         )
     )
     result["content"] = json.dumps(json_object(result.get("content"), "Research final answer"))

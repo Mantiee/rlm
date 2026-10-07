@@ -76,6 +76,20 @@ def prepared(root):
     return path, load_profile(path, root)
 
 
+@pytest.mark.parametrize("context", [65536, 131072])
+def test_large_remote_context_still_requires_loaded_context_and_vram_budget(
+    tmp_path, transport, context
+):
+    calls, state = transport
+    state["loaded"]["context_length"] = context
+    path = remote_helper.prepare_remote(profile(tmp_path), tmp_path, URL, context, DIGEST)
+    chosen = load_profile(path, tmp_path)
+    assert chosen["runtime"]["context_window"] == context
+    state["loaded"]["size_vram"] = 13 * 2**30
+    with pytest.raises(ValueError, match="GPU"):
+        competition.helper_client(chosen).loaded()
+
+
 @pytest.mark.parametrize(
     "url",
     [

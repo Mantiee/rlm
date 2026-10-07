@@ -11,7 +11,7 @@ from pathlib import Path
 import requests
 
 from rlm.v100.activity import ActivityLog
-from rlm.v100.agent import native_turn
+from rlm.v100.agent import native_turn, research_output_limit
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import helper_client, managed_server
 from rlm.v100.paper import PaperBook, sha
@@ -285,6 +285,7 @@ def paper_round(
                 },
             ],
             response_format={"type": "json_object", "schema": decision_schema()},
+            retry_output_limit=research_output_limit(parent),
         )
         proposal = json.loads(message["content"])
         if set(proposal) != set(decision_schema()["properties"]) or any(

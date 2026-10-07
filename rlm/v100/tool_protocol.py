@@ -91,7 +91,9 @@ def validate_value(value, schema: dict) -> None:
             validate_value(item, schema.get("items", {}))
 
 
-def json_tool_turn(client, messages: list[dict], tools: list[dict], response_info=None) -> dict:
+def json_tool_turn(
+    client, messages: list[dict], tools: list[dict], response_info=None, retry_output_limit=None
+) -> dict:
     from rlm.v100.agent import native_turn
 
     catalog = {tool["function"]["name"]: tool["function"] for tool in tools}
@@ -129,6 +131,7 @@ def json_tool_turn(client, messages: list[dict], tools: list[dict], response_inf
         ],
         response_format={"type": "json_object", "schema": {"oneOf": options}},
         response_info=response_info,
+        retry_output_limit=retry_output_limit,
     )
     data = json_object(message.get("content"), "Model action")
     if set(data) == {"answer"} and isinstance(data["answer"], str):

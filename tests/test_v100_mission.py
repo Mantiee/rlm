@@ -156,7 +156,7 @@ def test_memory_compression_preserves_originals_and_resumes_partial_trees(tmp_pa
 def test_context_profile_keeps_working_inputs_and_gpu_headroom_policy(tmp_path):
     profile = load_profile(Path(__file__).parents[1] / "profiles/v100.toml", tmp_path)
     old = json.dumps(profile, sort_keys=True)
-    for context in (32768, 16384, 8192):
+    for context in (131072, 65536, 32768, 16384, 8192):
         chosen = mission.setup_profile(profile, context)
         assert (
             chosen["runtime"]["context_window"] == chosen["server"]["context_per_slot"] == context
@@ -341,7 +341,10 @@ def mission_inputs(root):
     return profile
 
 
-def test_background_start_snapshots_profile_and_does_not_reset_paper(tmp_path, monkeypatch):
+@pytest.mark.parametrize("context", [32768, 131072])
+def test_background_start_snapshots_profile_and_does_not_reset_paper(
+    tmp_path, monkeypatch, context
+):
     profile = mission_inputs(tmp_path)
     path = tmp_path / "input.json"
     atomic_json(path, profile)
@@ -354,11 +357,15 @@ def test_background_start_snapshots_profile_and_does_not_reset_paper(tmp_path, m
         "Popen",
         lambda args, **kwargs: created.append((args, kwargs)) or SimpleNamespace(pid=12345),
     )
-    result = mission.start(tmp_path, path)
+    result = mission.start(tmp_path, path, context, "on")
     assert result["running"]
     assert created[0][1]["start_new_session"] is True
     assert "mission-loop" in created[0][0]
-    assert json.loads((Path(result["run"]) / "input-profile.json").read_text()) == profile
+    expected = json.loads(json.dumps(profile))
+    expected.setdefault("resources", {})["mission_max_context"] = context
+    expected["server"]["flash_attention"] = "on"
+    assert json.loads((Path(result["run"]) / "input-profile.json").read_text()) == expected
+    assert json.loads(path.read_text()) == profile
     with pytest.raises(FileExistsError, match="already running"):
         mission.start(tmp_path, path)
     monkeypatch.setattr(mission, "process_identity", lambda pid: "reused-pid")
@@ -391,10 +398,14 @@ def test_stop_only_signals_verified_mission_session(tmp_path, monkeypatch, owned
         assert not signals
 
 
+@pytest.mark.parametrize(
+    "ceiling, first, selected", [(32768, 32768, 16384), (131072, 131072, 65536)]
+)
 def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, ceiling, first, selected
 ):
     profile = mission_inputs(tmp_path)
+    profile.setdefault("resources", {})["mission_max_context"] = ceiling
     directory = tmp_path / "research/mission/run-test"
     directory.mkdir(parents=True)
     events, capacities = [], iter([3, 20])
@@ -431,10 +442,10 @@ def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
     )
     mission.run(tmp_path, profile, directory)
     assert events.index(("research",)) < events.index(("baseline",))
-    assert ("serve", 32768) in events and ("serve", 16384) in events
+    assert ("serve", first) in events and ("serve", selected) in events
     assert events[-1][0] == "learning"
     assert events[-1][1]["cycles"] == 0 and events[-1][1]["initial_update"] is True
-    assert json.loads((directory / "status.json").read_text())["context_window"] == 16384
+    assert json.loads((directory / "status.json").read_text())["context_window"] == selected
     assert json.loads((directory / "income-settings.json").read_text())["crypto"] is False
 
 

@@ -66,6 +66,19 @@ runtime innych serwerów. Ollama z `AppData\Local\Programs\Ollama` jest pomijana
 
 ## Debian, po udanym teście Windows
 
+Launcher v100.16 przyjmuje też `-Context 65536` i `-Context 131072`.
+Dotychczasowy domyślny kontekst pozostaje 32768. Izolowany proces już otrzymuje
+`OLLAMA_FLASH_ATTENTION=1` i `OLLAMA_KV_CACHE_TYPE=q8_0`; nowe okno nie oznacza
+zmiany kwantyzacji wag Q8_0. Po zmianie trzeba zatrzymać wyłącznie helper,
+uruchomić go z wybranym kontekstem i ponownie sprawdzić `/api/ps`, JSON i VRAM.
+Pomiar nadal musi mieścić się w 12 GiB i pokazywać pełną rezydencję GPU.
+To pomiar po smoke, nie twardy limit ani test pełnego okna. Nie dodajemy slotów
+bez osobnego pomiaru, bo równoległe okna mogą zwiększać zużycie cache.
+
+Przy zatrzymanej misji można zachować stary `researcher-rtx3090.json` pod inną
+nazwą i użyć `prepare-remote-helper --context 131072` do przygotowania nowego
+profilu z tym samym pełnym digestem. Istniejącego profilu komenda nie nadpisuje.
+
 Po zainstalowaniu tej wersji forka przepisz **pełny digest i kontekst z wyniku
 Windows**, nie skrócony identyfikator ze strony modelu:
 

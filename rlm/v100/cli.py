@@ -115,7 +115,13 @@ def main() -> None:
     )
     sub.add_parser("challenge-smoke", help="Run two isolated offline tool cases, without training")
     sub.add_parser("challenge-baseline", help="Evaluate all 81 prepared cases, without training")
-    sub.add_parser("mission-start", help="Start income research and guarded learning in background")
+    mission_start = sub.add_parser(
+        "mission-start", help="Start income research and guarded learning in background"
+    )
+    mission_start.add_argument(
+        "--max-context", type=int, choices=(32768, 65536, 131072), default=32768
+    )
+    mission_start.add_argument("--flash-attention", choices=("auto", "on", "off"))
     sub.add_parser("mission-status", help="Inspect the owned background mission")
     sub.add_parser("mission-stop", help="Stop only this mission and its owned children")
     mission = sub.add_parser("mission-loop", help="Owned background mission worker")
@@ -230,7 +236,9 @@ def main() -> None:
         "prepare-remote-helper", help="Pin an already running LAN Ollama researcher"
     )
     remote.add_argument("--url", required=True)
-    remote.add_argument("--context", type=int, choices=(8192, 16384, 32768), required=True)
+    remote.add_argument(
+        "--context", type=int, choices=(8192, 16384, 32768, 65536, 131072), required=True
+    )
     remote.add_argument("--digest", required=True)
     duel = sub.add_parser(
         "plan-duel", help="Ask the model to plan independent bounded A/B experiments"
@@ -302,7 +310,12 @@ def main() -> None:
             if args.command == "mission-status"
             else stop(root)
             if args.command == "mission-stop"
-            else start(root, args.profile or root / "research/v100.toml")
+            else start(
+                root,
+                args.profile or root / "research/v100.toml",
+                args.max_context,
+                args.flash_attention,
+            )
         )
         print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
         return

@@ -59,7 +59,7 @@ def validate_remote(profile: dict) -> None:
         or runtime.get("enable_thinking") is not False
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("model_digest", ""))
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("metadata_sha256", ""))
-        or runtime["context_window"] not in (8192, 16384, 32768)
+        or runtime["context_window"] not in (8192, 16384, 32768, 65536, 131072)
         or runtime["max_output_tokens"] > 1024
         or server["slots"] != 1
         or server.get("model")

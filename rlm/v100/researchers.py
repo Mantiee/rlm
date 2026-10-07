@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from rlm.v100.agent import native_turn
+from rlm.v100.agent import native_turn, research_output_limit
 from rlm.v100.common import atomic_json
 from rlm.v100.experiments import SharedLab
 from rlm.v100.insights import InsightQueue
@@ -224,6 +224,7 @@ def review_research(client, branch: str, results: list[dict], root: Path) -> dic
             },
         ],
         response_format={"type": "json_object", "schema": schema},
+        retry_output_limit=research_output_limit(client),
     )
     decision = json.loads(response["content"])
     if set(decision) != {"useful_indices", "conclusion"}:

@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 
 from rlm.v100.activity import public_event_log
-from rlm.v100.agent import native_turn
+from rlm.v100.agent import native_turn, research_output_limit
 from rlm.v100.common import atomic_json
 from rlm.v100.efficiency import continuation, load_performance
 from rlm.v100.protection import assert_candidate_output, compare_reports, file_hash
@@ -204,6 +204,7 @@ def choose_experiment(
             },
         ],
         response_format={"type": "json_object", "schema": schema},
+        retry_output_limit=research_output_limit(client),
     )
     decision = json.loads(response["content"])
     if set(decision) != {
