@@ -98,6 +98,9 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=Path.home() / "ai-v100")
     parser.add_argument("--profile", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
+    from rlm.v100.paper_cli import add_commands
+
+    add_commands(sub)
     sub.add_parser("doctor")
     objective = sub.add_parser(
         "set-goal",
@@ -252,6 +255,11 @@ def main() -> None:
     checks.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
+    if args.command.startswith("paper-"):
+        from rlm.v100.paper_cli import handle
+
+        handle(args, root)
+        return
     profile = load_profile(args.profile or root / "research/v100.toml", root)
     registry = ExpertRegistry(root / "research/experts")
     if args.command == "set-goal":

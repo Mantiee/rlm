@@ -6,6 +6,7 @@ import json
 import re
 import socket
 import ssl
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -17,6 +18,27 @@ from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn, tool_schema
 
 TOOLS = [
+    tool_schema(
+        "paper_status",
+        "Inspect your current forward paper portfolio and fixed risk budget. Read-only, no real money.",
+        {},
+    ),
+    tool_schema(
+        "paper_observed_results",
+        "Inspect audited past paper results for A/B, costs, data freshness and limitations. Past results do not certify a repeatable edge.",
+        {},
+    ),
+    tool_schema(
+        "paper_test_position",
+        "Independently calculate an estimated position and an instantaneous adverse-price scenario using registered fees and the latest quote. Hypothetical only, no order, no future outcome or automatic training label.",
+        {
+            "symbol": {"type": "string"},
+            "budget": {"type": "number"},
+            "leverage": {"type": "number"},
+            "side": {"type": "string", "enum": ["long", "short"]},
+            "adverse_bps": {"type": "number", "minimum": 0, "maximum": 10000},
+        },
+    ),
     tool_schema(
         "list_free_models",
         "Search the live catalog of zero-price OpenRouter text models. Provide an empty query or a model/name substring. No intelligence ranking. Consultation requires a locally configured free-tier account key.",
@@ -185,6 +207,10 @@ class ResearchTools:
         self.branch = branch
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name in ("paper_status", "paper_observed_results", "paper_test_position"):
+            from rlm.v100.paper_tools import execute
+
+            return execute(self.root, self.branch, name, arguments)
         if name in ("list_free_models", "consult_free_model"):
             from rlm.v100.free_router import consult, public_catalog
 
@@ -263,6 +289,7 @@ class ResearchTools:
                 "sha256": sha,
                 "excerpt": text[:1200],
                 "status": "source text, not independently verified truth",
+                "fetched_at": datetime.now(UTC).isoformat(),
             }
             self.sources.append(source)
             from rlm.v100.free_services import ServiceBook
@@ -302,14 +329,22 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
         root, getattr(client, "research_config", {}), getattr(client, "research_owner", "A")
     )
     trace = []
+    selected_names = getattr(client, "research_tool_names", None)
+    selected_tools = [
+        tool
+        for tool in TOOLS
+        if selected_names is None or tool["function"]["name"] in selected_names
+    ]
     for _ in range(2):
-        turn = native_turn(client, messages, tools=TOOLS)
+        turn = native_turn(client, messages, tools=selected_tools)
         calls = turn.get("tool_calls") or []
         if not calls:
             break
         if len(calls) != 1:
             raise ValueError("Research tools run sequentially within their budget")
         call = calls[0]
+        if call["function"]["name"] not in {tool["function"]["name"] for tool in selected_tools}:
+            raise ValueError("Researcher selected a tool outside its task scope")
         step_id = journal.write(
             "tools",
             "tool-start",

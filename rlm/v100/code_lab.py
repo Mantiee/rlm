@@ -26,6 +26,12 @@ PROMPT_FILES = {
     "rlm/v100/architecture_worker.py",
     "rlm/v100/free_router.py",
     "rlm/v100/free_services.py",
+    "rlm/v100/paper.py",
+    "rlm/v100/paper_agents.py",
+    "rlm/v100/paper_feeds.py",
+    "rlm/v100/paper_reports.py",
+    "rlm/v100/paper_cli.py",
+    "rlm/v100/paper_tools.py",
 }
 
 

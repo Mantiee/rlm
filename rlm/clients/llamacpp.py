@@ -44,6 +44,7 @@ class LlamaCppClient(BaseLM):
         self.enable_thinking = enable_thinking
         self.activity_root = Path(activity_root) if activity_root else None
         self.research_owner = activity_branch
+        self.research_tool_names: set[str] | None = None
         self.activity_actor = activity_actor
         self.activity_context = activity_context or {}
         self.metrics_path = Path(metrics_path) if metrics_path else None

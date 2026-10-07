@@ -1,4 +1,4 @@
-# V100 continual learning, v100.8
+# V100 continual learning, v100.9
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,9 +6,19 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
-Kod v100.8 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Kod v100.9 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
 Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
 pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
+
+## Badania finansowe i paper trading, v100.9
+
+Osobne portfele A/B, decyzje zapisane przed kolejną obserwacją, research/critic,
+koszty wejścia i wyjścia, limity dywersyfikacji oraz raporty HTML z wykresami
+opisuje [PAPER_RESEARCH.md](PAPER_RESEARCH.md). Pierwszy krok: `paper-init`.
+Brak zweryfikowanych opłat lub świeżych danych blokuje transakcję. Dostępne są
+odczyty Coinbase spot i metadanych SEC; akcje, instrumenty z dźwignią i zakłady
+wymagają osobnego zatwierdzonego feedu. Wynik paper nie jest automatyczną etykietą
+do treningu wag. Harmonogram raportów działa tylko przy uruchomionej lokalnej pętli.
 
 ## Czytelny dziennik pracy, v100.8
 
@@ -447,6 +457,11 @@ Wynik v100.8: 416 zaliczone, 63 pominięte; hooki ruff, formatter i ty zaliczone
 Nowe testy obejmują rozdzielenie dzienników, maskowanie znanych sekretów,
 współbieżny zapis, powiązania kroków, MTP8/MTP16 i kontynuowanie sweepu po błędzie.
 Pomiary serwerów MTP są zastępcze; nie dowodzą przyspieszenia na V100.
+Wynik v100.9: 443 zaliczone, 63 pominięte. Ruff i formatter oraz dotychczasowe
+hooki pre-commit zaliczone. Testy paper sprawdzają chronologię decyzji, koszty,
+partial fills, ryzyko, funding/likwidację, podatki zakładów, splity/dywidendy,
+audyt, raporty i odmowę brakujących danych. Transport i modelowi researcherzy są
+zastępczy; nie wykonano rzeczywistego paper tradingu ani testu V100 tej funkcji.
 Nowe testy sprawdzają rzeczywiste zmiany LoRA od automatycznie wyliczonych etykiet
 oraz zmianę wszystkich parametrów zaufanej małej sieci CPU. Orkiestracja loopu
 jest testowana na zastępczych serwerach; ocena nowych architektur sprawdza oddzielenie
