@@ -1,4 +1,4 @@
-# Forward paper research, v100.9
+# Forward paper research, v100.10
 
 Cel użytkownika: A/B mają szukać możliwie wysokiego, powtarzalnego zysku netto,
 porównując research sportowy, crypto oraz akcje, także izolowaną dźwignię.
@@ -175,6 +175,52 @@ uczenie polityki finansowej z reward, czasowy holdout i promocja adapterów wed�
 wyników rynku wymagają osobnego walidowanego modułu; nie dodajemy fałszywych etykiet
 "wygrana = poprawny wniosek" do stale uczącej się Gemmy.
 
+## Połączenie z uczeniem wag, v100.10
+
+`learn-loop --paper-config FILE` łączy powyższy research z istniejącą pętlą
+zweryfikowanych danych i treningu A/B. Nadal wymaga poolu, stałej suite,
+raportów baseline i profilu CPU researchera. `paper-learning-status` sprawdza
+ścieżki; `--datasets DIR` pokazuje ograniczoną listę plików bez czytania danych.
+Nie uruchamia modeli ani treningu. Nie powtarzaj `paper-init` po pierwszej instalacji.
+
+Konfiguracja JSON musi zawierać wszystkie pola:
+`schema="v100-paper-learning-v1"`, `objective` (cel użytkownika), `crypto` (bool),
+`ciks` (lista do dziesięciu numerów SEC), `sec_contact` (kontakt operatora lub
+pusty string bez SEC), `observer_interval` (30-300 sekund), `research_rounds`
+(1-6) i `other_income_rnd` (bool). Zmiana konfiguracji podczas pracy blokuje
+kontynuowanie; nowy cel wymaga osobnej próby. Snapshot jest zachowywany według SHA.
+
+Z `other_income_rnd=true` researcher sam wybiera badanie rynku, innego legalnego
+dochodu bez wpłat lub usprawnienia uczenia/narzędzi. Krytyk bada koszty, czas,
+legalność i powtarzalność. Dwie role pozostają w dotychczasowym budżecie rund,
+bez dodawania drugiej kopii Gemmy. Małe podmodele mają istniejący budżet pilota
+CPU i bramki bubblewrap; to nie automatyczna przebudowa/wymiana głównej Gemmy.
+Rzeczywiste działania sprzedażowe i dochody spoza rynku nie mają jeszcze modułu
+wykonania ani niezależnego rozliczenia. Są hipotezami R&D, nie nowym kontem z gotówką.
+
+Podczas serwowania bieżącej wersji research może dostarczać formalne ćwiczenia,
+których etykiety oblicza referencyjny verifier. Dopiero po akceptacji rodzica
+trafiają do poolu, replay i treningu A/B. Brak nowych zaakceptowanych danych
+oznacza brak kolejnego treningu. Aktywacja kolejnej wersji wymaga dotychczasowych
+skończonych testów nowych i dawnych umiejętności. Poprzednie wagi/checkpointy
+pozostają, a w dzienniku faz jest wersja modelu i SHA profilu.
+
+Jedna niezależna nić obserwacji zbiera zatwierdzone dane spot/SEC i raporty także
+w czasie treningu; nie ładuje modelu ani kontekstu CUDA. Jej błąd źródła/audytu
+blokuje dalsze fazy na najbliższym sprawdzeniu. Przerwa sieciowa jest logowana,
+nie uzupełniana fikcyjną ceną. Sam polling nie daje danych tickowych ani HFT.
+Inferencja GPU i trening głównej Gemmy są kolejnymi fazami; własny serwer
+inferencji jest zatrzymywany przed treningiem. CPU researcherzy mogą pracować
+podczas treningu przez istniejący runner A/B, z kontrolą RAM. V100 nie ma MIG:
+moduł nie obiecuje twardej izolacji dowolnych części VRAM.
+
+Nie uruchamiaj jednocześnie `paper-loop` i tego samego zintegrowanego loopu:
+wspólny lease blokuje drugiego właściciela. Zysk paper nadal nie jest labelem,
+miarą treningowego loss ani kryterium automatycznej promocji finansowej strategii.
+Ten bridge uczy tylko istniejących weryfikowalnych ćwiczeń formalnych, nie całego
+researchu ani prognoz. Nie dowodzi wzrostu inteligencji, zyskowności lub absolutnego
+braku forgetting; potwierdzenie wymaga niezależnej oceny na nowych zadaniach/danych.
+
 ## Źródła protokołu
 
 - Coinbase: https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-book
@@ -192,3 +238,8 @@ Nie wykonano paper tradingu na Twoim Debianie ani badań rzeczywistej przewagi
 A/B, nie otwarto kont i nie wysłano żadnego prawdziwego zlecenia.
 Walidacja v100.9: 443 testy zaliczone, 63 pominięte; ruff, formatter i hooki
 pre-commit zaliczone. Nie jest to pomiar wydajności lub zyskowności na V100.
+Walidacja v100.10: 460 testów zaliczonych, 63 pominięte; lint/formatter/hooki
+zaliczone, zmienione moduły bridge i paper przeszły ty bez ignorowania błędów.
+Integracja treningu jest testowana na zastępczym runnerze; istniejący test małej
+LoRA na CPU potwierdza zmianę wag od zweryfikowanych formalnych przykładów.
+Nie uruchomiono tej integracji z Gemmą, feedami i podmodelami na Twoim Debianie.

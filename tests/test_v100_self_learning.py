@@ -237,8 +237,9 @@ def test_paid_api_tools_are_unavailable_and_cannot_run_arbitrary_code(tmp_path, 
         tools.execute("shell", {"cmd": "anything"})
 
 
+@pytest.mark.parametrize("paper_mode", [False, True])
 def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, paper_mode
 ):
     data = load_profile(Path(__file__).parents[1] / "profiles/v100.toml", tmp_path)
     pool = tmp_path / "initial.jsonl"
@@ -258,7 +259,10 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
         "cases": [{"id": "old", "passed": True}],
     }
     helper = tmp_path / "helper.json"
-    helper.write_text("{}")
+    cpu_profile = json.loads(json.dumps(data))
+    cpu_profile["server"]["gpu_layers"] = 0
+    cpu_profile["resources"] = {"device": "cpu"}
+    helper.write_text(json.dumps(cpu_profile))
     active, trials = [], []
 
     @contextmanager
@@ -277,6 +281,8 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
     task = {"kind": "arithmetic", "expression": "13+19"}
 
     def researcher(*args):
+        if paper_mode:
+            return {"exercise_checks": []}
         queue = insights.InsightQueue(tmp_path)
         queue.add(args[1], task)
         queue.close()
@@ -289,9 +295,53 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
 
     monkeypatch.setattr(continuous, "research_task", researcher)
     monkeypatch.setattr(continuous, "review_research", review)
+    paper_config = None
+    if paper_mode:
+        import threading
+
+        from rlm.v100 import paper_learning
+        from rlm.v100.paper import PaperBook
+
+        book = PaperBook(tmp_path)
+        original_paper = book.initialize()
+        book.close()
+        paper_config = tmp_path / "paper-learning.json"
+        atomic_json(
+            paper_config,
+            {
+                "schema": "v100-paper-learning-v1",
+                "objective": "Fast lawful repeatable net income",
+                "crypto": False,
+                "ciks": [],
+                "sec_contact": "",
+                "observer_interval": 30,
+                "research_rounds": 1,
+                "other_income_rnd": True,
+            },
+        )
+        training_started, observation_saved = threading.Event(), threading.Event()
+
+        def financial_research(book, profile, helper, rounds, **kwargs):
+            assert len(active) == 2
+            assert kwargs["income_research"] is True
+            queue = insights.InsightQueue(tmp_path)
+            queue.add("A", task)
+            queue.admit(task)
+            queue.close()
+
+        def observe_during_training(session):
+            assert training_started.wait(5)
+            session.note("observation-during-training", {"synthetic_test": True})
+            observation_saved.set()
+
+        monkeypatch.setattr(paper_learning, "paper_round", financial_research)
+        monkeypatch.setattr(paper_learning.PaperLearning, "tick", observe_during_training)
 
     def evolve(settings, root, expanded, trial, suite, gates, helper, **kwargs):
         assert active == []  # owned inference stopped before exclusive GPU training
+        if paper_mode:
+            training_started.set()
+            assert observation_saved.wait(5)
         assert len(expanded.read_text().splitlines()) == 3
         trials.append(trial)
         directory = trial / "generation-01"
@@ -323,7 +373,15 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
 
     monkeypatch.setattr(continuous, "evolve", evolve)
     result = continuous.learn_loop(
-        data, tmp_path, pool, tmp_path / "loop", suite, [baseline], helper, cycles=2
+        data,
+        tmp_path,
+        pool,
+        tmp_path / "loop",
+        suite,
+        [baseline],
+        helper,
+        cycles=2,
+        paper_config=paper_config,
     )
     assert len(trials) == 1  # repeated already learned exercises do not trigger churn
     assert len(result["cycles"]) == 2
@@ -331,3 +389,11 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
     assert chosen["training"]["init_adapter"].endswith("B/training/candidate")
     assert json.dumps(data, sort_keys=True) == untouched
     assert pool.read_text() == "".join(json.dumps(row) + "\n" for row in seed)
+    if paper_mode:
+        book = PaperBook(tmp_path)
+        assert book.state()["branches"] == original_paper["branches"]
+        statuses = [event["payload"].get("status") for event in book.events()]
+        assert "training-started" in statuses
+        assert "selected for next serving phase after finite quality gates" in statuses
+        assert "observation-during-training" in statuses
+        book.close()

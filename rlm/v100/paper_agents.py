@@ -113,6 +113,8 @@ def paper_round(
     researcher_profile: dict | None = None,
     research_rounds: int = 2,
     observe=None,
+    income_research: bool = False,
+    objective: str | None = None,
 ) -> list[dict]:
     if type(research_rounds) is not int or not 1 <= research_rounds <= 6:
         raise ValueError("Financial research rounds must be between 1 and 6")
@@ -136,6 +138,20 @@ def paper_round(
                     "brief": "Try to disprove the current market hypotheses. Check fees, liquidation, stale quotes, correlated exposure, data leakage and whether holding cash is better. Propose independently checkable cost arithmetic; never certify a trading strategy from one win.",
                 },
             ]
+            if income_research:
+                jobs[0]["brief"] = (
+                    "Choose useful research for the fastest, largest lawful repeatable net income: "
+                    "market research, another zero-deposit income opportunity, or a learning/tool "
+                    "upgrade. Compare time, resources, costs and independently testable evidence. "
+                    "You may propose isolated CPU submodels within the fixed pilot budget. "
+                    "No real sale, spending or guaranteed-profit claim."
+                )
+                jobs[1]["brief"] = (
+                    "Critique the income or self-upgrade hypothesis: legality, costs, time to "
+                    "revenue, resource use, reproducibility and evidence. Reject unsupported "
+                    "forecasts. For market ideas also check fees, liquidation and leakage. "
+                    "Propose useful independently checkable formal exercises; profit is not a label."
+                )
             observations = [
                 {"paper_context": worker_context(context, round_index)},
                 {
@@ -149,6 +165,8 @@ def paper_round(
                     ]
                 },
             ]
+            if objective:
+                observations[0]["income_objective"] = objective[:600]
             profile = researcher_profile or parent_profile
 
             def work(job, selected_profile=profile, selected_branch=branch, data=observations):
@@ -161,6 +179,10 @@ def paper_round(
                     "list_free_models",
                     "consult_free_model",
                 }
+                if income_research:
+                    worker.research_tool_names.update(
+                        {"create_submodel", "support_submodel", "test_submodel"}
+                    )
                 return research_task(
                     worker,
                     selected_branch,
@@ -187,6 +209,15 @@ def paper_round(
         # Parent may reject all findings. Only existing formal proof exercises can enter
         # verified learning; financial hypotheses and trading outcomes are not labels.
         review = review_research(parent, branch, findings[-4:], book.root)
+        book.note(
+            branch,
+            {
+                "status": "research-reviewed",
+                "review": review,
+                "model_version": parent_profile["runtime"]["model_version"],
+                "scope": "Formal exercises may be admitted; income hypotheses remain unverified",
+            },
+        )
         if observe:
             observe(book)
         context = compact_context(book.context(branch))
@@ -206,7 +237,13 @@ def paper_round(
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {"paper": context, "research": excerpts, "review": review},
+                        {
+                            "paper": context,
+                            "research": excerpts,
+                            "review": review,
+                            "income_objective": objective,
+                            "income_scope": "Only PAPER portfolio actions execute here; other income ideas are research, not real sales or verified revenue",
+                        },
                         ensure_ascii=False,
                     ),
                 },
@@ -233,6 +270,24 @@ def paper_round(
     return results
 
 
+def financial_helper_profile(path: Path, root: Path) -> Path:
+    researcher = load_profile(path, root)
+    if (
+        researcher["server"].get("gpu_layers") != 0
+        or researcher.get("resources", {}).get("device") != "cpu"
+    ):
+        raise ValueError("Financial helper must use CPU to preserve training VRAM")
+    researcher = copy.deepcopy(researcher)
+    researcher["runtime"]["context_window"] = 8192
+    researcher["server"]["context_per_slot"] = 8192
+    destination = root / "research/paper" / f"researcher-{sha(researcher)[:16]}.json"
+    if not destination.exists():
+        atomic_json(destination, researcher)
+    elif json.loads(destination.read_text()) != researcher:
+        raise ValueError("Financial helper profile snapshot changed")
+    return destination
+
+
 def paper_loop(
     root: Path,
     parent_profile: dict,
@@ -248,18 +303,9 @@ def paper_loop(
         raise ValueError("Use interval >=30s, cycles >=0, and a real SEC contact for filings")
     from rlm.v100.paper_feeds import poll_crypto, poll_filings
 
+    if researcher_path:
+        researcher_path = financial_helper_profile(researcher_path, root)
     researcher = load_profile(researcher_path, root) if researcher_path else None
-    if researcher and researcher["server"].get("gpu_layers") != 0:
-        raise ValueError("Paper loop helper must be a CPU researcher to preserve V100 VRAM")
-    if researcher:
-        researcher = copy.deepcopy(researcher)
-        researcher["runtime"]["context_window"] = 8192
-        researcher["server"]["context_per_slot"] = 8192
-        researcher_path = root / "research/paper" / f"researcher-{sha(researcher)[:16]}.json"
-        if not researcher_path.exists():
-            atomic_json(researcher_path, researcher)
-        elif json.loads(researcher_path.read_text()) != researcher:
-            raise ValueError("Financial helper profile snapshot changed")
     helper_scope = (
         managed_server(researcher_path, root, root / "research/paper/researcher.log")
         if researcher_path

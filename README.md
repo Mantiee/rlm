@@ -1,7 +1,7 @@
 
 ---
 
-> **V100 fork, v100.9:** the local workflow uses your own llama.cpp server, no paid API.
+> **V100 fork, v100.10:** the local workflow uses your own llama.cpp server, no paid API.
 > It adds A/B learning, persistent shared memory, verified-data learning cycles and
 > isolated full-weight submodel experiments. Read [CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md)
 > for installation, capabilities and limits. The upstream API examples below are
@@ -10,6 +10,8 @@
 > [PAPER_RESEARCH.md](PAPER_RESEARCH.md) describes the new A/B financial research lab:
 > forward-only simulated portfolios, documented fees, independent observations,
 > researcher/critic tools and local daily/weekly reports. No real orders or deposits.
+> v100.10 can connect paper/income R&D to the verified learning loop with
+> `learn-loop --paper-config`, retaining finite quality gates and prior versions.
 
 <h1 align="center" style="font-size:2.8em">
 <span>Recursive Language Models (<span style="color:orange">RLM</span>s)</span>

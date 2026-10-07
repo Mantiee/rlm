@@ -244,6 +244,11 @@ def main() -> None:
     loop.add_argument("--cycles", type=int, default=4, help="0 runs until interrupted")
     loop.add_argument("--interval", type=int, default=600)
     loop.add_argument("--timeout", type=int, default=7200)
+    loop.add_argument(
+        "--paper-config",
+        type=Path,
+        help="Integrate paper/income R&D and independent observation during learning",
+    )
     code = sub.add_parser("propose-code", help="Create an isolated algorithm-code candidate")
     code.add_argument("repository", type=Path)
     code.add_argument("file")
@@ -300,6 +305,7 @@ def main() -> None:
                     args.cycles,
                     args.interval,
                     args.timeout,
+                    args.paper_config,
                 ),
                 ensure_ascii=False,
                 indent=2,

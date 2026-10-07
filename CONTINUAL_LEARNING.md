@@ -1,4 +1,4 @@
-# V100 continual learning, v100.9
+# V100 continual learning, v100.10
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,7 +6,7 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
-Kod v100.9 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Kod v100.10 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
 Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
 pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
 
@@ -19,6 +19,12 @@ Brak zweryfikowanych opłat lub świeżych danych blokuje transakcję. Dostępne
 odczyty Coinbase spot i metadanych SEC; akcje, instrumenty z dźwignią i zakłady
 wymagają osobnego zatwierdzonego feedu. Wynik paper nie jest automatyczną etykietą
 do treningu wag. Harmonogram raportów działa tylko przy uruchomionej lokalnej pętli.
+
+v100.10 dodaje `learn-loop --paper-config FILE`: research paper/innych legalnych
+dochodów może zasilać istniejący trening A/B przez referencyjnie zweryfikowane
+ćwiczenia. Dane rynkowe i raporty są obserwowane również podczas treningu.
+`paper-learning-status --datasets DIR` sprawdza dostępne wejścia bez ich odczytu
+lub uruchamiania modelu. Szczegóły i ograniczenia opisuje dokument paper.
 
 ## Czytelny dziennik pracy, v100.8
 
@@ -462,6 +468,12 @@ hooki pre-commit zaliczone. Testy paper sprawdzają chronologię decyzji, koszty
 partial fills, ryzyko, funding/likwidację, podatki zakładów, splity/dywidendy,
 audyt, raporty i odmowę brakujących danych. Transport i modelowi researcherzy są
 zastępczy; nie wykonano rzeczywistego paper tradingu ani testu V100 tej funkcji.
+Wynik v100.10: 460 zaliczone, 63 pominięte. Ruff, formatter i dotychczasowe hooki
+pre-commit zaliczone; zmienione moduły paper/continuous sprawdzone też przez ty
+bez ignorowania błędów. Nowe testy sprawdzają bridge R&D do poolu, zwolnienie własnej
+inferencji przed zastępczym treningiem, obserwację w czasie treningu, zachowanie
+portfeli/checkpointów, blokadę dwóch loopów, niezmienność celu i błąd obserwatora.
+Nie jest to rzeczywisty trening Gemmy na V100 ani dowód poprawy finansowej strategii.
 Nowe testy sprawdzają rzeczywiste zmiany LoRA od automatycznie wyliczonych etykiet
 oraz zmianę wszystkich parametrów zaufanej małej sieci CPU. Orkiestracja loopu
 jest testowana na zastępczych serwerach; ocena nowych architektur sprawdza oddzielenie

@@ -4,6 +4,7 @@ import copy
 import json
 import shutil
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 from rlm.v100.common import atomic_json
@@ -25,6 +26,7 @@ def learn_loop(
     cycles: int = 4,
     interval: int = 600,
     train_timeout: int = 7200,
+    paper_config: Path | None = None,
 ) -> dict:
     """Zero cycles means run until interrupted; never runs on mere self-agreement."""
     from rlm.v100.architectures import prepare_inputs
@@ -48,6 +50,7 @@ def learn_loop(
         pool.is_relative_to(output)
         or suite.is_relative_to(output)
         or researcher_path.resolve().is_relative_to(output)
+        or (paper_config is not None and paper_config.resolve().is_relative_to(output))
     ):
         raise ValueError("Learning-loop output overlaps its fixed inputs")
     if output.exists():
@@ -60,6 +63,13 @@ def learn_loop(
         compare_reports(parent, parent)
     load_records(pool, Path(profile["training"]["split_ledger"]))
     goal = load_goal(root, suite)
+    paper = None
+    if paper_config is not None:
+        from rlm.v100.paper_agents import financial_helper_profile
+        from rlm.v100.paper_learning import PaperLearning
+
+        paper = PaperLearning(root, paper_config)
+        researcher_path = financial_helper_profile(researcher_path, root)
     require_idle_gpu()
     output.mkdir(parents=True)
     current, gates = copy.deepcopy(profile), list(baselines)
@@ -74,109 +84,130 @@ def learn_loop(
         "goal": goal,
         "scope": "Automatic verified-data training and finite development-gated activation, not a universal no-forgetting guarantee",
     }
+    if paper is not None:
+        state["paper_settings_sha256"] = paper.settings_sha
     cycle = 0
-    while cycles == 0 or cycle < cycles:
-        if load_goal(root, suite) != goal:
-            raise ValueError("User objective changed; start a separate learning experiment")
-        cycle += 1
-        prepare_inputs(root, current_pool, suite)
-        atomic_json(live, current)
-        # Serve the current version during R&D/waiting. Only our own inference
-        # process is stopped for the training phase; never another user's server.
-        with managed_server(researcher_path, root, output / "researcher.log") as helper:
-            with managed_server(live, root, output / "live-server.log"):
-                shared = SharedLab(root / "research/state/competition.sqlite3")
-                try:
-                    observations = [
-                        {
-                            "branch": row["branch"],
-                            "kind": row["kind"],
-                            "public_excerpt": json.dumps(row["payload"], ensure_ascii=False)[:600],
-                        }
-                        for row in shared.recent(4)
-                    ]
-                finally:
-                    shared.close()
-                for branch in ("A", "B"):
+    with ExitStack() as scopes:
+        if paper is not None:
+            scopes.enter_context(paper)
+        while cycles == 0 or cycle < cycles:
+            if load_goal(root, suite) != goal:
+                raise ValueError("User objective changed; start a separate learning experiment")
+            cycle += 1
+            prepare_inputs(root, current_pool, suite)
+            atomic_json(live, current)
+            if paper is not None:
+                paper.phase("serving-rnd", cycle, current)
+            # Serve the current version during R&D/waiting. Only our own inference
+            # process is stopped for the training phase; never another user's server.
+            with managed_server(researcher_path, root, output / "researcher.log") as helper:
+                with managed_server(live, root, output / "live-server.log"):
+                    shared = SharedLab(root / "research/state/competition.sqlite3")
                     try:
-                        result = research_task(
-                            helper_client(helper, root, branch),
-                            branch,
+                        observations = [
                             {
-                                "role": "researcher",
-                                "brief": "Use public peer findings and available research tools to propose a NEW useful independently checkable learning challenge. Do not repeat old exercises.",
-                            },
-                            observations,
-                            root,
+                                "branch": row["branch"],
+                                "kind": row["kind"],
+                                "public_excerpt": json.dumps(row["payload"], ensure_ascii=False)[
+                                    :600
+                                ],
+                            }
+                            for row in shared.recent(4)
+                        ]
+                    finally:
+                        shared.close()
+                    for branch in ("A", "B"):
+                        try:
+                            result = research_task(
+                                helper_client(helper, root, branch),
+                                branch,
+                                {
+                                    "role": "researcher",
+                                    "brief": "Use public peer findings and available research tools to propose a NEW useful independently checkable learning challenge. Do not repeat old exercises.",
+                                },
+                                observations,
+                                root,
+                            )
+                            review_research(
+                                helper_client(current, root, branch), branch, [result], root
+                            )
+                        except (ValueError, RuntimeError, OSError) as error:
+                            atomic_json(
+                                output / f"research-error-{cycle:04d}-{branch}.json",
+                                {"error": type(error).__name__, "detail": str(error)[:400]},
+                            )
+                    if paper is not None:
+                        paper.research(current, helper)
+                    expanded = output / f"pool-{cycle:04d}.jsonl"
+                    changed = extend_pool(current_pool, root, expanded)
+                    if not changed:
+                        history.append(
+                            {"cycle": cycle, "status": "no new verified and admitted examples"}
                         )
-                        review_research(
-                            helper_client(current, root, branch), branch, [result], root
+                        atomic_json(output / "state.json", state)
+                        if cycles == 0 or cycle < cycles:
+                            deadline = time.monotonic() + interval
+                            while time.monotonic() < deadline:
+                                if paper is not None:
+                                    paper.check()
+                                time.sleep(max(0, min(1, deadline - time.monotonic())))
+                        continue
+            # Avoid training indefinitely on a stale dataset. Its immutable prior
+            # snapshots and complete optimizer checkpoints are never overwritten.
+            if len(expanded.read_text().splitlines()) > 10000:
+                raise ValueError(
+                    "Automatic replay exceeds 10000 records; stop and revise the data pipeline before expanding further"
+                )
+            if shutil.disk_usage(output).free < 160 * 2**30:
+                raise ValueError(
+                    "Need 160 GiB free disk for two independent FP16/GGUF exports and checkpoints; prior versions were retained"
+                )
+            trial = output / f"update-{cycle:04d}"
+            if paper is not None:
+                paper.phase("training-started", cycle, current)
+            result = evolve(
+                current,
+                root,
+                expanded,
+                trial,
+                suite,
+                gates,
+                researcher_path,
+                generations=1,
+                train_timeout=train_timeout,
+            )
+            generation = result["rounds"][-1]
+            verdict = generation["judgment"]
+            directory = Path(generation["directory"])
+            if verdict["winner"] is not None:
+                branch = verdict.get("continuation_branch") or (
+                    "A" if verdict["winner"] == "tie" else verdict["winner"]
+                )
+                bundle = load_duel(directory)
+                chosen = json.loads(Path(bundle["branches"][branch]["profile"]).read_text())
+                adapter_path = Path(chosen["training"]["output"]) / "candidate"
+                current = json.loads((directory / branch / "serving.json").read_text())
+                current["training"].update(
+                    init_adapter=str(adapter_path), teacher_adapter=str(adapter_path)
+                )
+                current_pool = directory / "verified-pool.jsonl"
+                for ancestor in ("A", "B"):
+                    if verdict["branches"][ancestor]["eligible"]:
+                        gates.append(
+                            json.loads(
+                                (directory / ancestor / "development-quality.json").read_text()
+                            )
                         )
-                    except (ValueError, RuntimeError, OSError) as error:
-                        atomic_json(
-                            output / f"research-error-{cycle:04d}-{branch}.json",
-                            {"error": type(error).__name__, "detail": str(error)[:400]},
-                        )
-                expanded = output / f"pool-{cycle:04d}.jsonl"
-                changed = extend_pool(current_pool, root, expanded)
-                if not changed:
-                    history.append(
-                        {"cycle": cycle, "status": "no new verified and admitted examples"}
-                    )
-                    atomic_json(output / "state.json", state)
-                    if cycles == 0 or cycle < cycles:
-                        deadline = time.monotonic() + interval
-                        while time.monotonic() < deadline:
-                            time.sleep(max(0, min(1, deadline - time.monotonic())))
-                    continue
-        # Avoid training indefinitely on a stale dataset. Its immutable prior
-        # snapshots and complete optimizer checkpoints are never overwritten.
-        if len(expanded.read_text().splitlines()) > 10000:
-            raise ValueError(
-                "Automatic replay exceeds 10000 records; stop and revise the data pipeline before expanding further"
+                status = "selected for next serving phase after finite quality gates"
+            else:
+                # Parent remains live next cycle. A later trial may revisit the
+                # verified pool using different model-selected settings.
+                status = "rejected; previous version retained"
+            history.append(
+                {"cycle": cycle, "status": status, "trial": str(trial), "judgment": verdict}
             )
-        if shutil.disk_usage(output).free < 160 * 2**30:
-            raise ValueError(
-                "Need 160 GiB free disk for two independent FP16/GGUF exports and checkpoints; prior versions were retained"
-            )
-        trial = output / f"update-{cycle:04d}"
-        result = evolve(
-            current,
-            root,
-            expanded,
-            trial,
-            suite,
-            gates,
-            researcher_path,
-            generations=1,
-            train_timeout=train_timeout,
-        )
-        generation = result["rounds"][-1]
-        verdict = generation["judgment"]
-        directory = Path(generation["directory"])
-        if verdict["winner"] is not None:
-            branch = verdict.get("continuation_branch") or (
-                "A" if verdict["winner"] == "tie" else verdict["winner"]
-            )
-            bundle = load_duel(directory)
-            chosen = json.loads(Path(bundle["branches"][branch]["profile"]).read_text())
-            adapter_path = Path(chosen["training"]["output"]) / "candidate"
-            current = json.loads((directory / branch / "serving.json").read_text())
-            current["training"].update(
-                init_adapter=str(adapter_path), teacher_adapter=str(adapter_path)
-            )
-            current_pool = directory / "verified-pool.jsonl"
-            for ancestor in ("A", "B"):
-                if verdict["branches"][ancestor]["eligible"]:
-                    gates.append(
-                        json.loads((directory / ancestor / "development-quality.json").read_text())
-                    )
-            status = "selected for next serving phase after finite quality gates"
-        else:
-            # Parent remains live next cycle. A later trial may revisit the
-            # verified pool using different model-selected settings.
-            status = "rejected; previous version retained"
-        history.append({"cycle": cycle, "status": status, "trial": str(trial), "judgment": verdict})
-        atomic_json(live, current)
-        atomic_json(output / "state.json", state)
+            atomic_json(live, current)
+            atomic_json(output / "state.json", state)
+            if paper is not None:
+                paper.phase(status, cycle, current)
     return state

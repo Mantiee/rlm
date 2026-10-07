@@ -55,7 +55,7 @@ def public_json(
     return value, digest, datetime.now(UTC).isoformat()
 
 
-def poll_crypto(book: PaperBook) -> list[dict]:
+def poll_crypto(book: PaperBook, cancelled=None) -> list[dict]:
     state = book.state()
     selected = [
         instrument
@@ -69,6 +69,8 @@ def poll_crypto(book: PaperBook) -> list[dict]:
     conversion = {}
     result = []
     for instrument in selected:
+        if cancelled and cancelled():
+            break
         product = instrument["feed_id"].removeprefix("coinbase:")
         if not re.fullmatch(r"[A-Z0-9]{2,12}-[A-Z]{3}", product):
             raise ValueError("Unsupported Coinbase product identifier")
@@ -90,8 +92,12 @@ def poll_crypto(book: PaperBook) -> list[dict]:
                 }
             fx = conversion[quote_currency]
             rate = number(fx["rate"], positive=True)
+        if cancelled and cancelled():
+            break
         url = f"https://api.exchange.coinbase.com/products/{product}/book?level=1"
         data, digest, observed = public_json(book.root, url)
+        if cancelled and cancelled():
+            break
         if not data["bids"] or not data["asks"]:
             raise ValueError("No executable top-of-book quote")
         snapshot = {
@@ -114,13 +120,15 @@ def poll_crypto(book: PaperBook) -> list[dict]:
     return result
 
 
-def poll_filings(book: PaperBook, cik: str, contact: str) -> list[dict]:
+def poll_filings(book: PaperBook, cik: str, contact: str, cancelled=None) -> list[dict]:
     if not re.fullmatch(r"\d{1,10}", cik) or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", contact):
         raise ValueError(
             "SEC access needs a numeric CIK and your real contact email for User-Agent"
         )
     url = f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json"
     data, digest, observed = public_json(book.root, url, f"V100 paper research {contact}")
+    if cancelled and cancelled():
+        return []
     recent = data["filings"]["recent"]
     seen = {
         event["payload"]["observation"].get("accession")
@@ -129,6 +137,8 @@ def poll_filings(book: PaperBook, cik: str, contact: str) -> list[dict]:
     }
     result = []
     for index, form in enumerate(recent["form"]):
+        if cancelled and cancelled():
+            break
         accession = recent["accessionNumber"][index]
         if form not in ("10-Q", "10-K", "8-K") or accession in seen:
             continue

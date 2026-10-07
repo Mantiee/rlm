@@ -28,6 +28,11 @@ def add_commands(sub) -> None:
         "paper-report", help="Write audited HTML/SVG, Markdown, JSON and trades CSV"
     )
     report.add_argument("--period", choices=("all", "daily", "weekly"), default="all")
+    status = sub.add_parser(
+        "paper-learning-status",
+        help="Inspect learning inputs without starting models or reading datasets",
+    )
+    status.add_argument("--datasets", type=Path)
     for name in ("paper-round", "paper-loop"):
         command = sub.add_parser(
             name, help="Financial A/B research and forward-only paper proposals"
@@ -53,6 +58,12 @@ def feed_arguments(parser) -> None:
 
 
 def handle(args, root: Path) -> None:
+    if args.command == "paper-learning-status":
+        from rlm.v100.paper_learning import readiness
+
+        profile = load_profile(args.profile or root / "research/v100.toml", root)
+        print(json.dumps(readiness(root, profile, args.datasets), ensure_ascii=False, indent=2))
+        return
     if args.command == "paper-source":
         from rlm.v100.research_tools import ResearchTools
 
