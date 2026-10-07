@@ -17,17 +17,29 @@ def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], li
     records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     if not records:
         raise ValueError("Empty dataset")
+    paper_labels = None
     for record in records:
         verification = record.get("verification", {})
         if verification.get("kind") == "deterministic_reference":
             from rlm.v100.insights import verify_record
 
             verify_record(record)
+        elif verification.get("kind") == "paper_outcome":
+            if ledger is None:
+                raise ValueError("Paper labels require a host split ledger and audited paper book")
+            from rlm.v100.paper_outcomes import records as outcome_records
+
+            if paper_labels is None:
+                paper_labels = {
+                    row["group"]: row for row in outcome_records(ledger.resolve().parents[2])
+                }
+            if record != paper_labels.get(record.get("group")):
+                raise ValueError("Paper training label differs from the audited realized outcome")
         elif (
             verification.get("kind") != "human_feedback" or verification.get("accepted") is not True
         ):
             raise ValueError(
-                "Only explicit verified feedback or independently checked formal tasks are supported"
+                "Only explicit verified feedback, checked formal tasks or audited paper outcomes are supported"
             )
         if not record.get("group") or record["messages"][-1]["role"] != "assistant":
             raise ValueError("Each record needs group and final assistant answer")
@@ -156,6 +168,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
                 "breeding.py",
                 "checkpointing.py",
                 "insights.py",
+                "paper_outcomes.py",
             )
         },
         "train_records": len(train),

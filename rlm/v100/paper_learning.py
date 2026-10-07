@@ -221,6 +221,9 @@ class PaperLearning:
                 income_research=self.settings["other_income_rnd"],
                 objective=self.settings["objective"],
             )
+            from rlm.v100.progress import report
+
+            report(self.root)
         finally:
             book.close()
 

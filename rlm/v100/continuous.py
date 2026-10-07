@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from rlm.v100.competition import evolve, helper_client, managed_server, require_
 from rlm.v100.experiments import SharedLab, load_duel
 from rlm.v100.insights import extend_pool
 from rlm.v100.protection import assert_candidate_output, file_hash
-from rlm.v100.researchers import research_task, review_research
+from rlm.v100.researchers import compact_result, research_task, review_research
 
 
 def learn_loop(
@@ -110,34 +111,51 @@ def learn_loop(
                             {
                                 "branch": row["branch"],
                                 "kind": row["kind"],
-                                "public_excerpt": json.dumps(row["payload"], ensure_ascii=False)[
-                                    :600
-                                ],
+                                "public_excerpt": json.dumps(
+                                    compact_result(row["payload"]), ensure_ascii=False
+                                )[:600],
                             }
                             for row in shared.recent(4)
                         ]
                     finally:
                         shared.close()
-                    for branch in ("A", "B"):
-                        try:
-                            result = research_task(
-                                helper_client(helper, root, branch),
-                                branch,
-                                {
-                                    "role": "researcher",
-                                    "brief": "Use public peer findings and available research tools to propose a NEW useful independently checkable learning challenge. Do not repeat old exercises.",
-                                },
-                                observations,
-                                root,
-                            )
-                            review_research(
-                                helper_client(current, root, branch), branch, [result], root
-                            )
-                        except (ValueError, RuntimeError, OSError) as error:
-                            atomic_json(
-                                output / f"research-error-{cycle:04d}-{branch}.json",
-                                {"error": type(error).__name__, "detail": str(error)[:400]},
-                            )
+
+                    def helper_work(branch, selected_helper=helper, data=observations):
+                        return research_task(
+                            helper_client(selected_helper, root, branch),
+                            branch,
+                            {
+                                "role": "researcher",
+                                "brief": "Use public peer findings and available research tools to propose a NEW useful independently checkable learning challenge. Do not repeat old exercises.",
+                            },
+                            data,
+                            root,
+                        )
+
+                    # Helper B can work while Gemma reviews A; the one remote slot
+                    # still processes only one helper request at a time.
+                    separate = helper["runtime"].get("base_url") != current["runtime"].get(
+                        "base_url"
+                    )
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        futures = (
+                            {branch: executor.submit(helper_work, branch) for branch in ("A", "B")}
+                            if separate
+                            else {}
+                        )
+                        for branch in ("A", "B"):
+                            try:
+                                result = (
+                                    futures[branch].result() if separate else helper_work(branch)
+                                )
+                                review_research(
+                                    helper_client(current, root, branch), branch, [result], root
+                                )
+                            except (ValueError, RuntimeError, OSError) as error:
+                                atomic_json(
+                                    output / f"research-error-{cycle:04d}-{branch}.json",
+                                    {"error": type(error).__name__, "detail": str(error)[:400]},
+                                )
                     if paper is not None:
                         try:
                             paper.research(current, helper)
@@ -171,7 +189,7 @@ def learn_loop(
                         history.append(
                             {"cycle": cycle, "status": "no new verified and admitted examples"}
                         )
-                        atomic_json(output / "state.json", state)
+                        save_progress(root, output, state)
                         if cycles == 0 or cycle < cycles:
                             deadline = time.monotonic() + interval
                             while time.monotonic() < deadline:
@@ -195,7 +213,7 @@ def learn_loop(
                         "reason": reason,
                     }
                 )
-                atomic_json(output / "state.json", state)
+                save_progress(root, output, state)
                 print("Upgrade deferred; originals retained:", reason, flush=True)
                 deadline = time.monotonic() + interval
                 while time.monotonic() < deadline:
@@ -227,7 +245,7 @@ def learn_loop(
                         "trial": str(trial),
                     }
                 )
-                atomic_json(output / "state.json", state)
+                save_progress(root, output, state)
                 print("Upgrade failed; serving previous version next cycle:", error, flush=True)
                 deadline = time.monotonic() + interval
                 while time.monotonic() < deadline:
@@ -266,7 +284,15 @@ def learn_loop(
                 {"cycle": cycle, "status": status, "trial": str(trial), "judgment": verdict}
             )
             atomic_json(live, current)
-            atomic_json(output / "state.json", state)
+            save_progress(root, output, state)
             if paper is not None:
                 paper.phase(status, cycle, current)
     return state
+
+
+def save_progress(root: Path, output: Path, state: dict) -> None:
+    atomic_json(output / "state.json", state)
+    if (root / "research/mission/active.json").exists():
+        from rlm.v100.progress import report
+
+        report(root)

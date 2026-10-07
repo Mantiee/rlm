@@ -1,5 +1,6 @@
 """Bounded public-source reads and isolated code checks; no paid API clients."""
 
+import copy
 import hashlib
 import ipaddress
 import json
@@ -26,9 +27,21 @@ COMPACT_CPU_TOOLS = {
     "paper_observed_results",
     "paper_test_position",
     "check_code_candidate",
+    "backtest_prices",
 }
 
 TOOLS = [
+    tool_schema(
+        "backtest_prices",
+        "Run chronological historical spot-price research on public JSON OHLC data. Choose instrument/source and rule. Official Coinbase candles work, e.g. https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600. Other sources need open_time, available_at, open, close fields per row. Optional event_url must return published_at and available_at per event; empty string disables event filter. Select lookback on first 70%, evaluate later 30% and double costs. Costs are assumptions, not certified fees. Not for sports odds or leverage. Results are exploratory hypotheses, never automatic profit labels.",
+        {
+            "price_url": {"type": "string"},
+            "event_url": {"type": "string"},
+            "rule": {"type": "string", "enum": ["momentum", "mean_reversion", "buy_hold"]},
+            "fee_bps": {"type": "number", "minimum": 0, "maximum": 1000},
+            "slippage_bps": {"type": "number", "minimum": 0, "maximum": 1000},
+        },
+    ),
     tool_schema(
         "search_memory",
         "Search preserved original research sources and public A/B findings.",
@@ -229,6 +242,15 @@ class ResearchTools:
         self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name == "backtest_prices":
+            from rlm.v100.backtesting import run
+
+            try:
+                return run(self.root, self.branch, arguments)
+            except (KeyError, TypeError, IndexError) as error:
+                raise ValueError(
+                    "Backtest source does not match the required timestamped schema"
+                ) from error
         if name in ("search_memory", "read_source"):
             from rlm.v100.mission_memory import store
 
@@ -239,7 +261,13 @@ class ResearchTools:
                     self.known_memory_sources.update(hit["id"] for hit in hits)
                     return {
                         "passages": [
-                            {"id": hit["id"], "preview": hit["text"][:300]} for hit in hits
+                            {
+                                "id": hit["id"],
+                                "preview": hit["text"][:300],
+                                "source": hit["source"],
+                                "provenance": hit["provenance"],
+                            }
+                            for hit in hits
                         ]
                     }
                 if (
@@ -248,7 +276,10 @@ class ResearchTools:
                     and arguments["source_id"] in self.known_memory_sources
                 ):
                     row = memory.node(arguments["source_id"])
-                    return {"id": row["id"], "text": row["text"], "document_id": row["document_id"]}
+                    return {
+                        key: row[key]
+                        for key in ("id", "text", "document_id", "source", "provenance")
+                    }
                 raise ValueError("Memory read must reference a previously retrieved passage")
             finally:
                 memory.close()
@@ -391,20 +422,36 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
         for tool in TOOLS
         if selected_names is None or tool["function"]["name"] in selected_names
     ]
-    for _ in range(2):
+    # Routing is a bounded read-only choice. Keep reasoning for the final analysis.
+    router = copy.copy(client)
+    router.sampling_args = dict(client.sampling_args)
+    router.sampling_args["max_tokens"] = min(1024, client.sampling_args.get("max_tokens", 512))
+    router.enable_thinking = False
+    for _ in range(3):
+        available_tools = copy.deepcopy(selected_tools)
+        for tool in available_tools:
+            if tool["function"]["name"] == "read_source":
+                tool["function"]["parameters"]["properties"]["source_id"]["enum"] = sorted(
+                    tools.known_memory_sources
+                )
+        available_tools = [
+            tool
+            for tool in available_tools
+            if tool["function"]["name"] != "read_source" or tools.known_memory_sources
+        ]
         turn = (
             tool_turn(
-                client,
+                router,
                 messages,
-                tools=selected_tools,
-                retry_output_limit=research_output_limit(client),
+                tools=available_tools,
+                retry_output_limit=2048,
             )
             if getattr(client, "tool_protocol", "native") == "json"
             else native_turn(
-                client,
+                router,
                 messages,
-                tools=selected_tools,
-                retry_output_limit=research_output_limit(client),
+                tools=available_tools,
+                retry_output_limit=2048,
             )
         )
         calls = turn.get("tool_calls") or []

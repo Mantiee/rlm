@@ -1,4 +1,4 @@
-# V100 continual learning, v100.16
+# V100 continual learning, v100.17
 
 ## Budżet thinking i większy kontekst, v100.16
 
@@ -683,3 +683,71 @@ Wersja v100.15 obsługuje izolowanego researchera Ollama na Windows/RTX 3090,
 również w czasie treningu V100. Instalacja i ograniczenia:
 [RTX3090_HELPER.md](RTX3090_HELPER.md). Aktualizacja pakietu sama nie podłącza
 zdalnego GPU; potrzebny jest udany smoke test i przygotowany profil z pełnym digestem.
+## V100 controller v100.17: parallel research and outcome learning
+
+The V100 master and the separate RTX helper now perform independent income research
+at the same time. The helper still runs one job per configured slot. During the
+continual loop, helper B can research while the V100 reviews helper A. V100 training
+remains exclusive because its existing profile requires 28 GiB free; the remote
+helper and read-only paper observer can continue alongside it. This is concurrency
+across separate GPUs, not two competing full model copies on the V100.
+
+Research routing uses a copied non-thinking client with 1024 output tokens and a
+bounded retry to 2048. The final reasoning analysis and curriculum planning start
+at 4096 and can retry to 8192. Fixed quality evaluations retain their original
+generation budget. Context capacity and output budget are separate. Larger output
+limits do not force more generation or guarantee lower latency. No new hardware
+speedup has been measured yet.
+
+Old recursive `worker:` transcripts and failed source reads remain in SQLite and
+the activity archive but no longer appear in retrieval or new summaries. Before a
+new mission starts, `repair-memory` preserves a SQLite backup. Compact worker memos
+are marked as unverified hypotheses. Original source text remains separate, and
+`read_source` IDs are constrained to passages actually retrieved during that job.
+
+`mission-watch` follows model/tool/metrics events, including endpoint and device,
+with Warsaw local times. `mission-report` prints the latest hypotheses, proposed
+tests, paper P&L after modeled costs, blockers, loss metrics when available, and
+accepted weight updates in the current run. Reports are also refreshed after an
+income round and each completed learning cycle in
+`research/mission/latest-report.json` and `latest-report.txt`. Model claims never
+become reported revenue. Personal income tax is reported separately as unconfigured.
+
+Closed paper fills now enter the verified pool as retrospective outcome tasks.
+They include the sealed decision, contemporaneous quote/fees when captured, later
+realized payout and allocation, and a host-calculated net result. Both profits and
+losses are included. The loader checks each label against the immutable paper audit
+chain; altered answers are rejected. Fills sharing an order or symbol/day stay
+together in training/validation splits. Original replay and prior quality gates
+remain active. This trains outcome accounting and review, not a proven profit
+policy or direct P&L reinforcement learning. Forward unseen paper performance must
+still establish a strategy's value. Older ledger decisions lack the new input
+snapshot and are explicitly marked as such. No outcomes exist until trades really
+resolve in the configured paper simulator; unknown instruments/fees/feeds remain
+blocked. Financial hypotheses alone never authorize training.
+
+
+## Historical development backtests
+
+Models can invoke `backtest_prices` themselves and select the public source,
+instrument, momentum/mean-reversion/buy-and-hold rule, and explicit cost assumptions.
+The first 70% of closed OHLC bars selects among bounded lookbacks; the later 30%
+is a chronological development test. A signal uses a completed prior candle and
+fills at the next open. Reports compare buy-and-hold and twice the assumed fees
+and slippage, retain original source bytes/SHA256, equity traces and limitations
+under `research/backtests/run-*/report.json`. No credentials or paid feeds are used.
+Coinbase public candles work directly; other public price sources need documented
+`open_time`, `available_at`, `open`, and `close` fields. Optional public event data
+needs `published_at` and `available_at`, and cannot activate a trade before that
+availability. Vendor timestamps remain claims; archived retrieval alone cannot
+prove historical point-in-time availability. Repeated tests on the same later
+segment can overfit, so these are development experiments, never hidden audits.
+
+The initial engine supports long-only spot-price strategies with fractional
+positions. It does not model sports odds/settlement, margin, shorting, corporate
+actions, taxes or intrabar liquidity. Such products require separate adapters and
+validated data; do not interpret their numbers as spot prices. Historical results
+are research evidence, not automatic outcome-training labels or promotion proof.
+Only independently audited forward paper resolutions enter outcome training.
+The model can choose useful markets and other income research instead; no actual
+trade, sale or paid service is enabled by a successful backtest.

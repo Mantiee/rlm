@@ -516,7 +516,16 @@ class PaperBook:
                 ):
                     raise ValueError("No closeable position; sports require independent settlement")
                 state["orders"].append(order)
-            event = self.record(state, "decision", {"proposal": order}, branch)
+            instrument = state["instruments"].get(proposal.get("symbol"), {})
+            decision_inputs = {
+                "quote": state["quotes"].get(proposal.get("symbol")),
+                "instrument": instrument,
+                "fee_profile": state["fee_profiles"].get(instrument.get("fee_profile")),
+                "risk": state["risk"],
+            }
+            event = self.record(
+                state, "decision", {"proposal": order, "decision_inputs": decision_inputs}, branch
+            )
         ActivityLog(self.root, branch, "model").write("decisions", "paper-decision", event)
         from rlm.v100.experiments import SharedLab
 

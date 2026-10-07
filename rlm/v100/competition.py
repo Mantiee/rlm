@@ -154,6 +154,8 @@ def helper_client(
         if profile.get("resources", {}).get("device") in ("cpu", "remote")
         else "model",
         activity_context={
+            "device": profile.get("resources", {}).get("device", "local GPU"),
+            "endpoint": settings["base_url"],
             "model_version": settings["model_version"],
             "target": profile["server"]["model"],
             "draft_model": profile["server"]["draft_model"],

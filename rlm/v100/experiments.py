@@ -116,6 +116,10 @@ def validate_parameters(values: dict, schema: dict) -> None:
 def choose_experiment(
     client, branch: str, records: list[dict], profile: dict, history: list[dict]
 ) -> dict:
+    client = copy.copy(client)
+    client.sampling_args = dict(getattr(client, "sampling_args", {}))
+    if getattr(client, "enable_thinking", None) is True:
+        client.sampling_args["max_tokens"] = max(4096, client.sampling_args.get("max_tokens", 512))
     client.research_owner = branch
     history = [
         {

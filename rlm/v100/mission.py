@@ -201,7 +201,7 @@ def previous_baseline(root: Path, profile: dict, suite: Path) -> tuple[dict, Pat
 
 def run(root: Path, profile: dict, directory: Path) -> None:
     from rlm.v100.continuous import learn_loop
-    from rlm.v100.mission_memory import archive, compress
+    from rlm.v100.mission_memory import archive, compress, repair
     from rlm.v100.paper import PaperBook
     from rlm.v100.paper_agents import financial_helper_profile
     from rlm.v100.paper_learning import PaperLearning
@@ -209,6 +209,7 @@ def run(root: Path, profile: dict, directory: Path) -> None:
     from rlm.v100.serving import assert_served_expert
 
     folder = root / "research/income-challenge-v1"
+    print("Memory retrieval repair:", json.dumps(repair(root)), flush=True)
     suite, pool = folder / "development.jsonl", folder / "pool.jsonl"
     manifest = json.loads((folder / "manifest.json").read_text())
     for path in (suite, pool):
@@ -216,10 +217,21 @@ def run(root: Path, profile: dict, directory: Path) -> None:
             raise ValueError("Mission curriculum or evaluation suite changed")
     goal = load_goal(root)
     goal = set_goal(root, goal["text"] if goal else OBJECTIVE, suite)
+    book = PaperBook(root)
+    try:
+        configured = book.state()
+        crypto_ready = any(
+            item["market"] == "crypto"
+            and item["product"] == "spot"
+            and item["feed_id"].startswith("coinbase:")
+            for item in configured["instruments"].values()
+        )
+    finally:
+        book.close()
     settings = {
         "schema": "v100-paper-learning-v1",
         "objective": goal["text"],
-        "crypto": False,
+        "crypto": crypto_ready,
         "ciks": [],
         "sec_contact": "",
         "observer_interval": 60,

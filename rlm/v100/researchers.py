@@ -19,6 +19,22 @@ FILENAME = "Qwen3-0.6B-Q8_0.gguf"
 MODEL_SHA256 = "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031"
 
 
+def compact_result(result: dict) -> dict:
+    return {
+        key: result[key]
+        for key in (
+            "observation",
+            "hypothesis",
+            "suggested_test",
+            "role",
+            "model",
+            "status",
+            "exercise_checks",
+        )
+        if key in result
+    }
+
+
 def prepare_researcher(profile: dict, root: Path) -> Path:
     import tomli_w
     from huggingface_hub import HfApi, hf_hub_download
@@ -93,6 +109,10 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
     from rlm.v100.goals import load_goal
     from rlm.v100.mission_memory import recall
 
+    client = copy.copy(client)
+    client.sampling_args = dict(client.sampling_args)
+    if getattr(client, "enable_thinking", None) is True:
+        client.sampling_args["max_tokens"] = max(4096, client.sampling_args.get("max_tokens", 512))
     observations = [*observations, {"persistent_research_memory": recall(root)}]
 
     client.research_owner = branch
@@ -125,7 +145,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
             {
                 "branch": event["branch"],
                 "kind": event["kind"],
-                "excerpt": json.dumps(event["payload"], ensure_ascii=False)[:600],
+                "excerpt": json.dumps(compact_result(event["payload"]), ensure_ascii=False)[:600],
             }
             for event in shared.recent(4)
         ]
@@ -183,8 +203,8 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
 
     archive(
         root,
-        f"worker:{branch}:{result['model']}:{digest(json.dumps(result))}",
-        json.dumps(result, ensure_ascii=False),
+        f"memo:{branch}:{result['model']}:{digest(json.dumps(compact_result(result)))}",
+        json.dumps(compact_result(result), ensure_ascii=False),
     )
     shared = SharedLab(root / "research/state/competition.sqlite3")
     try:
@@ -220,7 +240,10 @@ def review_research(client, branch: str, results: list[dict], root: Path) -> dic
             },
             {
                 "role": "user",
-                "content": json.dumps({"branch": branch, "results": results}, ensure_ascii=False),
+                "content": json.dumps(
+                    {"branch": branch, "results": [compact_result(row) for row in results]},
+                    ensure_ascii=False,
+                ),
             },
         ],
         response_format={"type": "json_object", "schema": schema},

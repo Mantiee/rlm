@@ -124,6 +124,13 @@ def main() -> None:
     mission_start.add_argument("--flash-attention", choices=("auto", "on", "off"))
     sub.add_parser("mission-status", help="Inspect the owned background mission")
     sub.add_parser("mission-stop", help="Stop only this mission and its owned children")
+    sub.add_parser(
+        "mission-report", help="Income hypotheses, paper results and actual weight updates"
+    )
+    sub.add_parser("mission-watch", help="Follow model and tool events, with local times")
+    sub.add_parser(
+        "repair-memory", help="Back up memory and exclude recursive transcripts from retrieval"
+    )
     mission = sub.add_parser("mission-loop", help="Owned background mission worker")
     mission.add_argument("--run", type=Path, required=True)
     objective = sub.add_parser(
@@ -292,6 +299,20 @@ def main() -> None:
     checks.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
+    if args.command in ("mission-report", "mission-watch", "repair-memory"):
+        if args.command == "repair-memory":
+            from rlm.v100.mission_memory import repair
+
+            print(json.dumps(repair(root), indent=2))
+        else:
+            from rlm.v100.progress import report, watch
+
+            if args.command == "mission-watch":
+                watch(root)
+            else:
+                report(root)
+                print((root / "research/mission/latest-report.txt").read_text())
+        return
     if args.command.startswith("paper-"):
         from rlm.v100.paper_cli import handle
 

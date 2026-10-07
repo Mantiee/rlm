@@ -16,7 +16,7 @@ from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import helper_client, managed_server
 from rlm.v100.paper import PaperBook, sha
 from rlm.v100.paper_reports import scheduled_reports, write_report
-from rlm.v100.researchers import research_task, review_research
+from rlm.v100.researchers import compact_result, research_task, review_research
 
 PAPER_PROMPT = (
     "You manage a PAPER portfolio, never a real account. Maximize repeatable return AFTER "
@@ -124,30 +124,30 @@ def paper_round(
             observe(book)
         client_profile = copy.deepcopy(parent_profile)
         client_profile["runtime"]["max_output_tokens"] = max(
-            1536, parent_profile["runtime"]["max_output_tokens"]
+            4096 if parent_profile["runtime"].get("enable_thinking") else 1536,
+            parent_profile["runtime"]["max_output_tokens"],
         )
         parent = helper_client(client_profile, book.root, branch)
         findings = []
-        if income_research:
-            findings.append(
-                research_task(
-                    parent,
-                    branch,
+        master_context = worker_context(compact_context(book.context(branch)), 0)
+
+        def master_research(selected_parent=parent, selected_branch=branch, data=master_context):
+            return research_task(
+                selected_parent,
+                selected_branch,
+                {
+                    "role": "researcher",
+                    "brief": "Research the actual income goal using primary public pages and preserved memory. Choose a useful market or zero-deposit income experiment. Identify missing fee/feed evidence before any paper trade. Propose a useful falsifiable self-upgrade; do not certify profit.",
+                },
+                [
                     {
-                        "role": "researcher",
-                        "brief": "Research the actual income goal using primary public pages and preserved memory. Choose a useful market or zero-deposit income experiment. Identify missing fee/feed evidence before any paper trade. Propose a useful falsifiable self-upgrade; do not certify profit.",
-                    },
-                    [
-                        {
-                            "income_objective": objective,
-                            "paper_context": worker_context(
-                                compact_context(book.context(branch)), 0
-                            ),
-                        }
-                    ],
-                    book.root,
-                )
+                        "income_objective": objective,
+                        "paper_context": data,
+                    }
+                ],
+                book.root,
             )
+
         for round_index in range(research_rounds):
             context = compact_context(book.context(branch))
             jobs = [
@@ -163,7 +163,7 @@ def paper_round(
             if income_research:
                 jobs[0]["brief"] = (
                     "Choose useful research for the fastest, largest lawful repeatable net income: "
-                    "market research, another zero-deposit income opportunity, or a learning/tool "
+                    "a chronological price/event backtest using backtest_prices, another zero-deposit income opportunity, or a learning/tool "
                     "upgrade. Compare time, resources, costs and independently testable evidence. "
                     "You may propose isolated CPU submodels within the fixed pilot budget. "
                     "No real sale, spending or guaranteed-profit claim."
@@ -201,6 +201,7 @@ def paper_round(
                     "paper_status",
                     "paper_test_position",
                     "paper_observed_results",
+                    "backtest_prices",
                     "list_free_models",
                     "consult_free_model",
                 }
@@ -218,23 +219,35 @@ def paper_round(
                     book.root,
                 )
 
-            # A single CPU slot queues concurrent jobs and evicts their prompt cache.
-            # Match workers to actual slots; one-slot CPU and shared GPU serialize.
-            if (
-                researcher_profile
-                and researcher_profile.get("server", {}).get("gpu_layers") == 0
-                and researcher_profile["server"].get("slots", 1) > 1
-            ):
-                with ThreadPoolExecutor(max_workers=2) as workers:
-                    current = list(workers.map(work, jobs))
+            separate_endpoint = (
+                researcher_profile is not None
+                and profile["runtime"].get("base_url")
+                and profile["runtime"].get("base_url") != parent_profile["runtime"].get("base_url")
+            )
+            # One job per remote slot; overlap independent master work on the V100.
+            if income_research and round_index == 0 and separate_endpoint:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(master_research)
+                    current = [work(job) for job in jobs]
+                    findings.append(future.result())
             else:
-                current = [work(job) for job in jobs]
+                if income_research and round_index == 0:
+                    findings.append(master_research())
+                if (
+                    researcher_profile
+                    and profile.get("server", {}).get("gpu_layers") == 0
+                    and profile["server"].get("slots", 1) > 1
+                ):
+                    with ThreadPoolExecutor(max_workers=2) as workers:
+                        current = list(workers.map(work, jobs))
+                else:
+                    current = [work(job) for job in jobs]
             findings.extend(current)
             book.note(
                 branch,
                 {
                     "research_round": round_index + 1,
-                    "findings": current,
+                    "findings": [compact_result(row) for row in current],
                     "worker_model": profile["runtime"]["model_version"],
                 },
             )
@@ -265,29 +278,41 @@ def paper_round(
             }
             for item in findings
         ]
-        message = native_turn(
-            parent,
-            [
-                {"role": "system", "content": PAPER_PROMPT},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "paper": context,
-                            "research": excerpts,
-                            "review": review,
-                            "persistent_research_memory": remembered,
-                            "income_objective": objective,
-                            "income_scope": "Only PAPER portfolio actions execute here; other income ideas are research, not real sales or verified revenue",
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            response_format={"type": "json_object", "schema": decision_schema()},
-            retry_output_limit=research_output_limit(parent),
-        )
-        proposal = json.loads(message["content"])
+        if not context["instruments"]:
+            proposal = {
+                "action": "hold",
+                "symbol": "CASH",
+                "side": "long",
+                "budget": 0,
+                "leverage": 1,
+                "accepted_research": [],
+                "rationale": "Host eligibility gate: no quoted registered instruments. Research continues; no trade can execute.",
+            }
+            book.note(branch, {"status": "host-hold", "reason": proposal["rationale"]})
+        else:
+            message = native_turn(
+                parent,
+                [
+                    {"role": "system", "content": PAPER_PROMPT},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "paper": context,
+                                "research": excerpts,
+                                "review": review,
+                                "persistent_research_memory": remembered,
+                                "income_objective": objective,
+                                "income_scope": "Only PAPER portfolio actions execute here; other income ideas are research, not real sales or verified revenue",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                response_format={"type": "json_object", "schema": decision_schema()},
+                retry_output_limit=research_output_limit(parent),
+            )
+            proposal = json.loads(message["content"])
         if set(proposal) != set(decision_schema()["properties"]) or any(
             type(index) is not int or not 0 <= index < len(findings)
             for index in proposal["accepted_research"]

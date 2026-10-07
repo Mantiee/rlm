@@ -71,6 +71,8 @@ class LlamaCppClient(BaseLM):
                 "message_count": len((data or {}).get("messages", [])),
                 "tools": [item["function"]["name"] for item in (data or {}).get("tools", [])],
                 "enable_thinking": self.enable_thinking,
+                "device": self.activity_context.get("device"),
+                "endpoint": self.base_url,
             },
             **self.activity_context,
         )
@@ -89,6 +91,9 @@ class LlamaCppClient(BaseLM):
             "decisions",
             "model-output",
             {
+                "model": self.model_name,
+                "device": self.activity_context.get("device"),
+                "endpoint": self.base_url,
                 "content": message.get("content"),
                 "tool_calls": message.get("tool_calls", []),
                 "finish_reason": result["choices"][0].get("finish_reason"),
@@ -99,6 +104,8 @@ class LlamaCppClient(BaseLM):
             "metrics",
             "inference-finished",
             {
+                "model": self.model_name,
+                "device": self.activity_context.get("device"),
                 "seconds": time.perf_counter() - started,
                 "usage": result.get("usage"),
                 "timings": result.get("timings"),
