@@ -32,6 +32,25 @@ $Origin = "http://${WindowsIp}:$Port"
 $Rule = "v100-helper-$Port-from-$DebianIp"
 $BlockRule = "$Rule-block-other-addresses"
 $OwnerPath = Join-Path $Root 'server-owner.json'
+function Stop-HelperProcesses([string]$RuntimePath) {
+    # A dead parent can leave llama-server.exe alive. This directory is reserved
+    # for this single helper, so include its orphan workers as well as Ollama.
+    # Never select a process merely by name or by a possibly reused parent PID.
+    $Prefix = [IO.Path]::GetFullPath($RuntimePath).TrimEnd('\') + '\'
+    $Members = @(Get-CimInstance Win32_Process -Filter "Name='ollama.exe' OR Name='llama-server.exe'" |
+        Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($Prefix, [StringComparison]::OrdinalIgnoreCase) } |
+        Sort-Object CreationDate)
+    foreach ($Member in $Members) {
+        $Candidate = Get-Process -Id $Member.ProcessId -ErrorAction SilentlyContinue
+        if (-not $Candidate) { continue }
+        $SamePath = [string]::Equals($Candidate.Path, $Member.ExecutablePath, [StringComparison]::OrdinalIgnoreCase)
+        $SameStart = [Math]::Abs(($Candidate.StartTime.ToUniversalTime() - $Member.CreationDate.ToUniversalTime()).TotalMilliseconds) -lt 1
+        if (-not $SamePath -or -not $SameStart) { throw 'Helper process identity changed during cleanup; no reused PID stopped.' }
+        Write-Host "Stopping isolated helper PID $($Candidate.Id): $($Candidate.Path)"
+        Stop-Process -InputObject $Candidate -Force -ErrorAction Stop
+        if (-not $Candidate.WaitForExit(5000)) { throw 'Helper process did not exit within 5 seconds.' }
+    }
+}
 if ($Stop) {
     if (Test-Path $OwnerPath) {
         $Owner = Get-Content -Raw $OwnerPath | ConvertFrom-Json
@@ -40,9 +59,9 @@ if ($Stop) {
             if ($Owned.StartTime.ToUniversalTime().ToString('o') -ne $Owner.started -or $Owned.Path -ne $Ollama) {
                 throw 'Helper process identity changed; no process stopped.'
             }
-            Stop-Process -Id $Owned.Id
         }
     }
+    Stop-HelperProcesses $RuntimeRoot
     Remove-NetFirewallRule -Name $Rule -ErrorAction SilentlyContinue
     Remove-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue
     Write-Host 'Isolated helper stopped. Model files retained.'
@@ -263,16 +282,13 @@ $Ready = $false
     $Receipt | ConvertTo-Json
     & nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.free --format=csv
 } catch {
-    # Stop only the helper created by this invocation, never the original app.
-    if (Test-Path $OwnerPath) {
-        $Owner = Get-Content -Raw $OwnerPath | ConvertFrom-Json
-        $Owned = Get-Process -Id $Owner.pid -ErrorAction SilentlyContinue
-        if ($Owned -and $Owned.StartTime.ToUniversalTime().ToString('o') -eq $Owner.started -and $Owned.Path -eq $Ollama) {
-            Stop-Process -Id $Owned.Id
-        }
-    }
+    # Stop the owned launcher first so it cannot spawn another helper during
+    # cleanup, then stop verified native workers including orphan GPU runners.
+    $LaunchError = $_
     if ($Worker -and -not $Worker.HasExited) { $Worker.Kill() }
+    try { Stop-HelperProcesses $RuntimeRoot }
+    catch { Write-Warning "Helper cleanup failed: $($_.Exception.Message)" }
     Remove-NetFirewallRule -Name $Rule -ErrorAction SilentlyContinue
     Remove-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue
-    throw
+    throw $LaunchError
 }

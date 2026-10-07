@@ -58,6 +58,12 @@ Zatrzymanie bez usuwania pobranego modelu:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-rtx3090-helper.ps1 -Stop
 ```
 
+Zatrzymanie obejmuje też osierocone `llama-server.exe` po zamknięciu serwera
+Ollamy. Wybieramy wyłącznie procesy z wydzielonego katalogu runtime tego
+pomocnika, sprawdzamy ścieżkę i czas uruchomienia przed zatrzymaniem i czekamy
+na wyjście. To katalog przeznaczony dla jednego helpera, nie współdzielony
+runtime innych serwerów. Ollama z `AppData\Local\Programs\Ollama` jest pomijana.
+
 ## Debian, po udanym teście Windows
 
 Po zainstalowaniu tej wersji forka przepisz **pełny digest i kontekst z wyniku
