@@ -25,6 +25,10 @@ class LlamaCppClient(BaseLM):
         timeout: float = 600,
         metrics_path: str | None = None,
         enable_thinking: bool | None = None,
+        activity_root: str | None = None,
+        activity_branch: str = "controller",
+        activity_actor: str = "model",
+        activity_context: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         super().__init__(model_name=model_name, sampling_args=sampling_args, timeout=timeout)
@@ -38,6 +42,10 @@ class LlamaCppClient(BaseLM):
         if enable_thinking is not None and not isinstance(enable_thinking, bool):
             raise ValueError("enable_thinking must be boolean or None")
         self.enable_thinking = enable_thinking
+        self.activity_root = Path(activity_root) if activity_root else None
+        self.research_owner = activity_branch
+        self.activity_actor = activity_actor
+        self.activity_context = activity_context or {}
         self.metrics_path = Path(metrics_path) if metrics_path else None
         self.lock = threading.Lock()
         self.thread_state = threading.local()
@@ -46,6 +54,57 @@ class LlamaCppClient(BaseLM):
             self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
 
     def request(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        if endpoint != "/v1/chat/completions" or not self.activity_root:
+            return self.http_request(endpoint, data)
+        from rlm.v100.activity import ActivityLog
+
+        journal = ActivityLog(self.activity_root, self.research_owner, self.activity_actor)
+        request_id = journal.write(
+            "steps",
+            "inference-start",
+            {
+                "model": (data or {}).get("model"),
+                "max_tokens": (data or {}).get("max_tokens"),
+                "message_count": len((data or {}).get("messages", [])),
+                "tools": [item["function"]["name"] for item in (data or {}).get("tools", [])],
+                "enable_thinking": self.enable_thinking,
+            },
+            **self.activity_context,
+        )
+        started = time.perf_counter()
+        try:
+            result = self.http_request(endpoint, data)
+        except Exception as error:
+            journal.write(
+                "errors", "inference-failed", {"error": type(error).__name__}, request_id=request_id
+            )
+            raise
+        message = result["choices"][0]["message"]
+        # Do not log request prompts or raw reasoning_content. Structured rationale in
+        # final content and observable tool choices are the reviewable decision record.
+        journal.write(
+            "decisions",
+            "model-output",
+            {
+                "content": message.get("content"),
+                "tool_calls": message.get("tool_calls", []),
+                "finish_reason": result["choices"][0].get("finish_reason"),
+            },
+            request_id=request_id,
+        )
+        journal.write(
+            "metrics",
+            "inference-finished",
+            {
+                "seconds": time.perf_counter() - started,
+                "usage": result.get("usage"),
+                "timings": result.get("timings"),
+            },
+            request_id=request_id,
+        )
+        return result
+
+    def http_request(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         # No environment proxy routing for local model traffic.
         with requests.Session() as session:
             session.trust_env = False

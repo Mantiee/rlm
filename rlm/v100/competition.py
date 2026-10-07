@@ -104,7 +104,9 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
                     process.wait()
 
 
-def helper_client(profile: dict) -> LlamaCppClient:
+def helper_client(
+    profile: dict, root: Path | None = None, branch: str = "controller"
+) -> LlamaCppClient:
     settings = profile["runtime"]
     client = LlamaCppClient(
         model_name=settings["model_name"],
@@ -113,6 +115,15 @@ def helper_client(profile: dict) -> LlamaCppClient:
         timeout=settings["max_timeout"],
         sampling_args={"max_tokens": settings["max_output_tokens"]},
         enable_thinking=False,
+        activity_root=str(root) if root else None,
+        activity_branch=branch,
+        activity_actor="tester" if profile.get("resources", {}).get("device") == "cpu" else "model",
+        activity_context={
+            "model_version": settings["model_version"],
+            "target": profile["server"]["model"],
+            "draft_model": profile["server"]["draft_model"],
+            "draft_tokens": profile["server"]["draft_tokens"],
+        },
     )
     client.research_config = profile.get("research", {})
     return client
@@ -214,7 +225,12 @@ def train_branch(
                             shared.close()
                         submitted += 1
                         future = workers.submit(
-                            research_task, helper_client(researcher), branch, job, observed, root
+                            research_task,
+                            helper_client(researcher, root, branch),
+                            branch,
+                            job,
+                            observed,
+                            root,
                         )
                 time.sleep(0.5)
             if process.returncode:
@@ -360,7 +376,7 @@ def run_branches(
         atomic_json(serving_path, serving)
         started = time.monotonic()
         with managed_server(serving_path, root, output / branch / "server.log"):
-            client = helper_client(serving)
+            client = helper_client(serving, root, branch)
             assert_served_expert(client, serving, root)
             report_path = output / branch / "development-quality.json"
             reports[branch] = evaluate_suite(client, serving, suite, report_path)
@@ -453,7 +469,13 @@ def evolve(
         # before GPU training. CPU research is concurrent with the training itself.
         with managed_server(planning_profile, root, output / f"planner-{generation:02d}.log"):
             plan_duel(
-                helper_client(planner), current, pool, directory, root, replay=replay, recent=True
+                helper_client(planner, root),
+                current,
+                pool,
+                directory,
+                root,
+                replay=replay,
+                recent=True,
             )
         verdict = run_duel(directory, root, suite, gates, researcher_path, train_timeout)
         rounds.append({"directory": str(directory), "judgment": verdict})

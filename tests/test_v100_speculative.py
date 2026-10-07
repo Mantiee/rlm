@@ -14,6 +14,7 @@ from rlm.v100.speculative import (
     compare_reports,
     mtp_profile_text,
     prepare_mtp,
+    recommend_mtp,
 )
 from rlm.v100.speculative import (
     test_mtp as run_mtp,
@@ -96,6 +97,29 @@ def test_comparison_refuses_missing_drafts_and_changed_target(tmp_path):
     new["runs"][0]["timings"] = {}
     with pytest.raises(ValueError, match="activation"):
         compare_reports(old, new)
+
+
+def test_recommendation_uses_measurement_not_largest_draft(tmp_path):
+    baseline = benchmark(tmp_path)
+    comparison = {}
+    for name, speed in (("mtp2", 72), ("mtp8", 80), ("mtp16", 40)):
+        candidate = copy.deepcopy(baseline)
+        candidate["cases"]["short"]["median_tokens_per_second"] = speed
+        comparison[name] = compare_reports(baseline, candidate)
+    result = recommend_mtp(comparison)
+    assert result["recommended_speed_profile"] == "mtp8"
+    assert result["promote_automatically"] is False
+    assert result["quality_evaluated"] is False
+    comparison["mtp8"]["answers_exact_match"] = False
+    assert recommend_mtp(comparison)["recommended_speed_profile"] == "mtp2"
+    comparison["mtp2"]["cases"]["short"]["latency_ratio"] = 0.8
+    assert recommend_mtp(comparison)["recommended_speed_profile"] == "baseline"
+
+
+@pytest.mark.parametrize("tokens", [(0,), (17,), (2, 2), ()])
+def test_runner_validates_sweep_before_loading_models(tmp_path, tokens):
+    with pytest.raises(ValueError, match="distinct"):
+        run_mtp(tmp_path, 3, tokens)
 
 
 def prepare_fixture(tmp_path):
@@ -181,6 +205,14 @@ def test_preparation_atomic_export_provenance_and_profile_preservation(tmp_path,
     assert not list(output.parent.glob("*.partial.gguf"))
     assert profile_path.read_text() == baseline_text
     assert existing.read_text() == "user-owned profile"
+    assert (
+        tomllib.loads((tmp_path / "research/v100-mtp8.toml").read_text())["server"]["draft_tokens"]
+        == 8
+    )
+    assert (
+        tomllib.loads((tmp_path / "research/v100-mtp16.toml").read_text())["server"]["draft_tokens"]
+        == 16
+    )
     prepare_mtp(profile_path, tmp_path)
     assert sum("--outtype" in c for c in commands) == 1
     output.write_bytes(b"GGUF" + b"corrupt" * 300)
@@ -228,7 +260,7 @@ def test_runner_refuses_busy_gpu_without_starting_processes(tmp_path, monkeypatc
         lambda *a, **kw: pytest.fail("Must not start a child on a busy GPU"),
     )
     with pytest.raises(ValueError, match="Stop the inference server"):
-        run_mtp(tmp_path, 3)
+        run_mtp(tmp_path, 3, (2, 4))
 
 
 def test_runner_cleans_up_only_own_children_after_benchmark_failure(tmp_path, monkeypatch):
@@ -272,7 +304,68 @@ def test_runner_cleans_up_only_own_children_after_benchmark_failure(tmp_path, mo
         lambda *a, **kw: type("Response", (), {"status_code": 200})(),
     )
     with pytest.raises(subprocess.CalledProcessError):
-        run_mtp(tmp_path, 3)
+        run_mtp(tmp_path, 3, (2, 4))
     assert len(children) == 2
     assert all(child.terminated for child in children)
+    assert profile_path.read_text() == source
+
+
+def test_large_draft_failure_preserves_logs_and_continues_sweep(tmp_path, monkeypatch):
+    profile_path = prepare_fixture(tmp_path)
+    source = profile_path.read_text()
+    draft = tmp_path / "draft.gguf"
+    draft.write_text("draft")
+    for name, size in (("baseline", 2), ("mtp2", 2), ("mtp4", 4), ("mtp8", 8), ("mtp16", 16)):
+        (tmp_path / f"research/v100-{name}.toml").write_text(
+            mtp_profile_text(source, None if name == "baseline" else draft, size)
+        )
+    children = []
+
+    class Child:
+        def __init__(self, *args, **kwargs):
+            self.terminated = False
+            children.append(self)
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_run(cmd, **kwargs):
+        if "--query-gpu=memory.used" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "1\n", "")
+        output = Path(cmd[cmd.index("--output") + 1])
+        name = output.stem
+        if name == "mtp8":
+            raise subprocess.CalledProcessError(1, cmd)
+        report = benchmark(tmp_path)
+        report["profile"] = load_profile(Path(cmd[cmd.index("--profile") + 1]), tmp_path)
+        report["cases"]["short"]["median_tokens_per_second"] = {
+            "baseline": 48,
+            "mtp2": 65,
+            "mtp4": 70,
+            "mtp16": 60,
+        }[name]
+        output.write_text(json.dumps(report))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(speculative.subprocess, "run", fake_run)
+    monkeypatch.setattr(speculative.subprocess, "Popen", Child)
+    monkeypatch.setattr(
+        speculative.requests.Session,
+        "get",
+        lambda *a, **kw: type("Response", (), {"status_code": 200})(),
+    )
+    run_mtp(tmp_path, 3)
+    directory = next((tmp_path / "research/logs").glob("mtp-ab-*"))
+    assert set(json.loads((directory / "comparison.json").read_text())) == {"mtp2", "mtp4", "mtp16"}
+    assert set(json.loads((directory / "failures.json").read_text())) == {"mtp8"}
+    result = json.loads((directory / "recommendation.json").read_text())
+    assert result["recommended_speed_profile"] == "mtp4"
+    assert result["promote_automatically"] is False
+    assert len(children) == 10 and all(child.terminated for child in children)
     assert profile_path.read_text() == source

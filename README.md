@@ -1,7 +1,7 @@
 
 ---
 
-> **V100 fork, v100.7:** the local workflow uses your own llama.cpp server, no paid API.
+> **V100 fork, v100.8:** the local workflow uses your own llama.cpp server, no paid API.
 > It adds A/B learning, persistent shared memory, verified-data learning cycles and
 > isolated full-weight submodel experiments. Read [CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md)
 > for installation, capabilities and limits. The upstream API examples below are

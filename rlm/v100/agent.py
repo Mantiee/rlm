@@ -175,6 +175,17 @@ def answer_with_tools(client, question: str, retrieve, max_turns: int = 6) -> di
             else:
                 raise ValueError(f"Tool is not allowed: {name}")
             trace.append({"tool": name, "arguments": arguments})
+            if getattr(client, "activity_root", None):
+                from rlm.v100.activity import ActivityLog
+
+                ActivityLog(
+                    client.activity_root, client.research_owner, client.activity_actor
+                ).write(
+                    "tools",
+                    "memory-tool-result",
+                    {"tool": name, "arguments": arguments, "result": result},
+                    tool_call_id=call["id"],
+                )
             messages.append(
                 {
                     "role": "tool",

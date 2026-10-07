@@ -88,6 +88,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
     from rlm.v100.goals import load_goal
 
     client.research_owner = branch
+    client.activity_actor = job["role"]
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -179,6 +180,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
 
 
 def review_research(client, branch: str, results: list[dict], root: Path) -> dict:
+    client.research_owner = branch
     if not results or len(results) > 4:
         raise ValueError("Review needs 1-4 worker results")
     schema = {

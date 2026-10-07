@@ -18,6 +18,7 @@ from rlm.v100.common import atomic_json, load_profile
 
 ASSISTANT_MODEL = "google/gemma-4-12B-it-assistant"
 ASSISTANT_REVISION = "46d4c6f13f0ac0ad827b915669b8df9b81c64c51"
+DEFAULT_DRAFT_TOKENS = (2, 4, 8, 16)
 
 
 def file_digest(path: Path) -> str:
@@ -48,6 +49,8 @@ def benchmark_prompts() -> list[tuple[str, str]]:
 
 
 def mtp_profile_text(source: str, draft_model: Path | None, tokens: int) -> str:
+    if type(tokens) is not int or not 1 <= tokens <= 16:
+        raise ValueError("draft_tokens must be between 1 and 16")
     # Preserve the user's comments, settings and formatting. Change only isolated experiment fields.
     lines = source.splitlines(keepends=True)
     section = ""
@@ -140,12 +143,43 @@ def compare_reports(baseline: dict, candidate: dict) -> dict:
     }
 
 
-def test_mtp(root: Path, repeats: int) -> None:
+def recommend_mtp(comparison: dict) -> dict:
+    # Conservative speed candidate only; fixed text equality is not a quality suite.
+    eligible = {
+        name: result
+        for name, result in comparison.items()
+        if result["answers_exact_match"]
+        and result["median_case_throughput_ratio"] >= 1.05
+        and all(c["latency_ratio"] >= 0.95 for c in result["cases"].values())
+    }
+    selected = (
+        max(eligible, key=lambda name: eligible[name]["median_case_throughput_ratio"])
+        if eligible
+        else "baseline"
+    )
+    return {
+        "recommended_speed_profile": selected,
+        "quality_evaluated": False,
+        "promote_automatically": False,
+        "requires": "Independent quality gate before serving; repeat sweep after target weights, draft or runtime changes",
+    }
+
+
+def test_mtp(
+    root: Path, repeats: int, draft_tokens: tuple[int, ...] = DEFAULT_DRAFT_TOKENS
+) -> None:
     from rlm.v100.cli import server_command
 
     if repeats < 1:
         raise ValueError("repeats must be positive")
-    profiles = {name: root / f"research/v100-{name}.toml" for name in ("baseline", "mtp2", "mtp4")}
+    if (
+        not draft_tokens
+        or len(set(draft_tokens)) != len(draft_tokens)
+        or any(type(n) is not int or not 1 <= n <= 16 for n in draft_tokens)
+    ):
+        raise ValueError("Choose distinct draft token counts between 1 and 16")
+    names = ("baseline", *(f"mtp{n}" for n in draft_tokens))
+    profiles = {name: root / f"research/v100-{name}.toml" for name in names}
     loaded = {name: load_profile(path, root) for name, path in profiles.items()}
     for name, profile in loaded.items():
         if profile["runtime"]["base_url"] != "http://127.0.0.1:8089":
@@ -154,6 +188,8 @@ def test_mtp(root: Path, repeats: int) -> None:
             raise ValueError("Baseline must have no draft, MTP profiles must have a draft")
         if name != "baseline" and profile["server"].get("spec_type") != "draft-mtp":
             raise ValueError("MTP experiment profile must specify draft-mtp")
+        if name != "baseline" and profile["server"]["draft_tokens"] != int(name[3:]):
+            raise ValueError("MTP profile name and draft_tokens differ")
         for key in ("binary", "model", "draft_model"):
             value = profile["server"][key]
             if value and not Path(value).is_file():
@@ -181,6 +217,7 @@ def test_mtp(root: Path, repeats: int) -> None:
     )
     destination.mkdir(parents=True)
     reports = {}
+    failures = {}
     for name, profile in loaded.items():
         log_path = destination / f"{name}.server.log"
         report_path = destination / f"{name}.json"
@@ -243,6 +280,15 @@ def test_mtp(root: Path, repeats: int) -> None:
                     check=True,
                 )
                 reports[name] = json.loads(report_path.read_text())
+            except (RuntimeError, TimeoutError, OSError, subprocess.CalledProcessError) as error:
+                if name == "baseline":
+                    raise
+                failures[name] = {
+                    "error": type(error).__name__,
+                    "detail": str(error)[:400],
+                    "server_log": str(log_path),
+                }
+                print(f"{name} failed; retaining logs and testing remaining sizes", flush=True)
             finally:
                 # Terminate only child processes created by this runner, never another user's server.
                 for child in (monitor, process):
@@ -253,10 +299,21 @@ def test_mtp(root: Path, repeats: int) -> None:
                         except subprocess.TimeoutExpired:
                             child.kill()
                             child.wait()
-    comparison = {
-        name: compare_reports(reports["baseline"], reports[name]) for name in ("mtp2", "mtp4")
-    }
+    comparison = {}
+    for name, report in reports.items():
+        if name == "baseline":
+            continue
+        try:
+            comparison[name] = compare_reports(reports["baseline"], report)
+        except ValueError as error:
+            failures[name] = {"error": type(error).__name__, "detail": str(error)[:400]}
     atomic_json(destination / "comparison.json", comparison)
+    atomic_json(destination / "failures.json", failures)
+    recommendation = recommend_mtp(comparison)
+    selected = recommendation["recommended_speed_profile"]
+    recommendation["profile_path"] = str(profiles[selected])
+    recommendation["target_sha256"] = file_digest(Path(loaded[selected]["server"]["model"]))
+    atomic_json(destination / "recommendation.json", recommendation)
     print(json.dumps(comparison, ensure_ascii=False, indent=2), flush=True)
     print("MTP TEST OK. Reports:", destination)
     print("No profile was promoted. Restore the usual server with v100-lab serve.")
@@ -420,7 +477,10 @@ def prepare_mtp(profile_path: Path, root: Path) -> None:
         quantized.replace(output)
         full.unlink()
     original = profile_path.read_text()
-    for name, draft, tokens in (("baseline", None, 2), ("mtp2", output, 2), ("mtp4", output, 4)):
+    for name, draft, tokens in (
+        ("baseline", None, 2),
+        *((f"mtp{n}", output, n) for n in DEFAULT_DRAFT_TOKENS),
+    ):
         experiment = root / f"research/v100-{name}.toml"
         if not experiment.exists():
             text = mtp_profile_text(original, draft, tokens)

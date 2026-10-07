@@ -1,4 +1,4 @@
-# V100 continual learning, v100.7
+# V100 continual learning, v100.8
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,9 +6,63 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
-Kod v100.7 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Kod v100.8 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
 Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
 pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
+
+## Czytelny dziennik pracy, v100.8
+
+Logi powstają w `research/logs/activity/RRRR-MM-DD/`. `timeline.jsonl` zawiera
+wspólną chronologię. Osobne katalogi `A`, `B`, `shared`, `controller` zawierają
+podkatalogi `model`, `trainer` oraz `researcher`, `tester` lub `critic`, zależnie
+od uczestnika. Pliki `decisions`, `steps`, `tools`, `research`, `training`,
+`metrics`, `errors` mają wersję JSONL do analizy oraz Markdown do czytania.
+Powstają tylko pliki kategorii, w których wystąpiły zdarzenia.
+
+Dziennik obejmuje jawne uzasadnienia wyboru danych/hiperparametrów, wyniki
+testerów, akceptacje i odrzucenia, start/wynik narzędzia, czas inferencji,
+zużycie tokenów i natywne liczniki draftu. Kroki mają czas UTC, identyfikatory
+i powiązania request/step; wpisy pamięci publicznej mają numer sekwencji SQLite.
+Kontekst inferencji wskazuje wersję modelu, docelowy plik i draft. Trening ma
+osobny dziennik loss/eval_loss, KL, LR, grad_norm i VRAM, gdy metrykę poda Trainer,
+oraz ukończone checkpointy i najlepszy checkpoint na końcu treningu.
+Oryginalny `metrics.jsonl` w katalogu danego treningu nadal pozostaje źródłem.
+
+To jawne decyzje i obserwowalne kroki, nie zapis prywatnego toku rozumowania.
+Logger nie zapisuje promptów żądań, system promptów, nagłówków HTTP, kluczy
+z konfiguracji ani `reasoning_content`. Znane formaty sekretów w treści są
+maskowane; nie umieszczaj haseł w danych/modelowych odpowiedziach. Wpisy są
+ograniczone objętościowo, rozdzielane dziennie, a zapis współbieżny blokowany
+na czas dopisania. Pliki tworzone są z uprawnieniami 0600. Nie są automatycznie
+usuwane: archiwizuj starsze dni. Dzienniki nie stają się danymi treningowymi
+ani publiczną pamięcią modelu. Eksport dziennika pamięci publicznej następuje
+po zatwierdzeniu SQLite; przerwanie między zapisami może pozostawić lukę w eksporcie.
+
+## Speculative decoding i większy draft
+
+`prepare-mtp` zachowuje oryginalny profil i tworzy osobne profile baseline,
+MTP2, MTP4, MTP8 i MTP16 z przypiętym kompatybilnym asystentem Gemma Q8_0.
+Dotychczasowe profile nie są nadpisywane. `test-mtp` domyślnie mierzy wszystkie
+te rozmiary sekwencyjnie; `--draft-tokens` ogranicza sweep do wybranych rozmiarów.
+Wymaga wolnej GPU i portu 8089, zapisuje natywny log serwera, CSV GPU i raport
+każdej próby. Błąd większego draftu zachowuje logi i pozwala sprawdzić następny.
+
+`comparison.json` pokazuje szybkość i zaakceptowane drafty; wariant bez natywnych
+liczników draftu nie jest uznawany za działające MTP. `failures.json` zbiera
+nieudane warianty. `recommendation.json` wskazuje kandydata szybszego o minimum
+5%, z identycznymi odpowiedziami w tym benchmarku i bez spowolnienia żadnego
+przypadku o więcej niż 5%. To kandydat wydajnościowy, nie certyfikat jakości:
+wymaga osobnej bramki jakości przed uruchomieniem. Nie ma automatycznej promocji.
+Większy draft nie musi przyspieszać: koszt odrzuconych tokenów i VRAM może rosnąć.
+
+Po zmianie wag, architektury, draftu lub runtime przygotuj osobne profile testowe
+z nowym targetem i powtórz test. Dotychczasowe profile nie są automatycznie
+przepisywane na nowe wagi. Podczas eksportu i oceny nowego adaptera draft nadal jest
+wyłączany do czasu ponownego sprawdzenia zgodności/wydajności. MTP przyspiesza
+inferencję; nie zastępuje ani nie przyspiesza samo w sobie backward treningu.
+Ta wersja nie została uruchomiona na Twojej V100: wynik wymaga pomiaru na Debianie.
+Zmiana kodu treningu zmienia manifest wznowienia; starego checkpointu poprzedniej
+wersji nie wznawiaj nowym kodem, rozpocznij nową rundę z zaakceptowanego adaptera.
 
 ## Twój cel i współpraca A/B
 
@@ -389,6 +443,10 @@ sprawdzają aktualność źródeł, zmianę wyboru usług, filtrowanie cen, odmo
 finansowanego konta, wspólny limit konsultacji, brak płatnego fallbacku i
 blokadę dalszych wywołań po naruszeniu kontroli kosztu. Transport jest zastępczy;
 nie wykonano konsultacji z prawdziwym kluczem ani rejestracji kont.
+Wynik v100.8: 416 zaliczone, 63 pominięte; hooki ruff, formatter i ty zaliczone.
+Nowe testy obejmują rozdzielenie dzienników, maskowanie znanych sekretów,
+współbieżny zapis, powiązania kroków, MTP8/MTP16 i kontynuowanie sweepu po błędzie.
+Pomiary serwerów MTP są zastępcze; nie dowodzą przyspieszenia na V100.
 Nowe testy sprawdzają rzeczywiste zmiany LoRA od automatycznie wyliczonych etykiet
 oraz zmianę wszystkich parametrów zaufanej małej sieci CPU. Orkiestracja loopu
 jest testowana na zastępczych serwerach; ocena nowych architektur sprawdza oddzielenie

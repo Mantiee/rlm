@@ -100,7 +100,7 @@ def learn_loop(
                 for branch in ("A", "B"):
                     try:
                         result = research_task(
-                            helper_client(helper),
+                            helper_client(helper, root, branch),
                             branch,
                             {
                                 "role": "researcher",
@@ -109,7 +109,9 @@ def learn_loop(
                             observations,
                             root,
                         )
-                        review_research(helper_client(current), branch, [result], root)
+                        review_research(
+                            helper_client(current, root, branch), branch, [result], root
+                        )
                     except (ValueError, RuntimeError, OSError) as error:
                         atomic_json(
                             output / f"research-error-{cycle:04d}-{branch}.json",

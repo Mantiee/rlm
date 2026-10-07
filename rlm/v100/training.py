@@ -6,6 +6,7 @@ import subprocess
 from importlib.metadata import version
 from pathlib import Path
 
+from rlm.v100.activity import ActivityLog
 from rlm.v100.breeding import base_signature, parent_exports, record_adapter, verified_adapter
 from rlm.v100.checkpointing import best_model_arguments, record_best
 from rlm.v100.common import atomic_json
@@ -126,6 +127,12 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     if not resume and output.exists() and any(output.iterdir()):
         raise FileExistsError("New training round requires an empty, separate output directory")
     output.mkdir(parents=True, exist_ok=True)
+    journal = ActivityLog(root, profile["runtime"].get("activity_branch", "controller"), "trainer")
+    journal.write(
+        "training",
+        "training-start",
+        {"output": str(output), "resume": resume, "settings": settings},
+    )
     indices = sorted(base.glob("*.safetensors"))
     if not indices:
         raise ValueError("Missing local base safetensors")
@@ -265,6 +272,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
             with (output / "metrics.jsonl").open("a") as handle:
                 handle.write(json.dumps(row) + "\n")
             print(json.dumps(row), flush=True)
+            journal.write("metrics", "training-progress", row, output=str(output))
 
         def on_save(self, args, state, control, **kwargs):
             manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
@@ -275,7 +283,27 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
                     "manifest_sha256": manifest_sha256,
                 },
             )
+            journal.write(
+                "training",
+                "checkpoint-complete",
+                {
+                    "step": state.global_step,
+                    "checkpoint": str(output / f"checkpoint-{state.global_step}"),
+                },
+            )
             record_best(output, state, manifest_sha256)
+
+        def on_train_end(self, args, state, control, **kwargs):
+            journal.write(
+                "training",
+                "training-finished",
+                {
+                    "step": state.global_step,
+                    "best_checkpoint": state.best_model_checkpoint,
+                    "best_metric": state.best_metric,
+                    "output": str(output),
+                },
+            )
 
     args = TrainingArguments(
         output_dir=str(output),

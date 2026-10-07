@@ -7,6 +7,7 @@ import math
 import sqlite3
 from pathlib import Path
 
+from rlm.v100.activity import public_event_log
 from rlm.v100.agent import native_turn
 from rlm.v100.common import atomic_json
 from rlm.v100.efficiency import continuation, load_performance
@@ -18,6 +19,11 @@ class SharedLab:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
+        self.activity_root = (
+            path.parent.parent.parent
+            if path.parent.name == "state" and path.parent.parent.name == "research"
+            else path.parent
+        )
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("""CREATE TABLE IF NOT EXISTS events(
             sequence INTEGER PRIMARY KEY, branch TEXT NOT NULL,
@@ -43,10 +49,12 @@ class SharedLab:
         ):
             raise ValueError("Only public development observations can enter shared lab memory")
         with self.db:
-            self.db.execute(
+            cursor = self.db.execute(
                 "INSERT INTO events(branch,kind,payload) VALUES(?,?,?)",
                 (branch, kind, json.dumps(payload, ensure_ascii=False, allow_nan=False)),
             )
+        assert cursor.lastrowid is not None
+        public_event_log(self.activity_root, branch, kind, payload, cursor.lastrowid)
 
     def recent(self, count: int = 12) -> list[dict]:
         if not 1 <= count <= 64:
@@ -108,6 +116,7 @@ def validate_parameters(values: dict, schema: dict) -> None:
 def choose_experiment(
     client, branch: str, records: list[dict], profile: dict, history: list[dict]
 ) -> dict:
+    client.research_owner = branch
     history = [
         {
             "branch": event["branch"],
@@ -304,6 +313,7 @@ def plan_duel(
                 )
             )
             chosen = copy.deepcopy(profile)
+            chosen["runtime"]["activity_branch"] = branch
             chosen["training"].update(decision["parameters"])
             chosen["training"].update(
                 output=str(branch_path / "training"),

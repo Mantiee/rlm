@@ -58,7 +58,7 @@ def test_queue_requires_both_reference_check_and_parent_admission(tmp_path, monk
         "native_turn",
         lambda *a, **k: {"content": json.dumps({"useful_indices": [], "conclusion": "Reject"})},
     )
-    researchers.review_research(None, "A", [worker], tmp_path)
+    researchers.review_research(SimpleNamespace(), "A", [worker], tmp_path)
     queue = insights.InsightQueue(tmp_path)
     assert queue.records() == []
     queue.close()
@@ -71,7 +71,7 @@ def test_queue_requires_both_reference_check_and_parent_admission(tmp_path, monk
             )
         },
     )
-    researchers.review_research(None, "A", [worker], tmp_path)
+    researchers.review_research(SimpleNamespace(), "A", [worker], tmp_path)
     queue = insights.InsightQueue(tmp_path)
     assert len(queue.records()) == 1
     queue.close()
@@ -270,7 +270,7 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
     monkeypatch.setattr(continuous, "managed_server", server)
     monkeypatch.setattr(continuous, "require_idle_gpu", lambda: None)
     monkeypatch.setattr(architectures, "prepare_inputs", lambda *a: None)
-    monkeypatch.setattr(continuous, "helper_client", lambda p: None)
+    monkeypatch.setattr(continuous, "helper_client", lambda p, *a: None)
     monkeypatch.setattr(
         continuous.shutil, "disk_usage", lambda p: SimpleNamespace(free=200 * 2**30)
     )

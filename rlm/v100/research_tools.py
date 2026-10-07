@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 import urllib3
 
+from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn, tool_schema
 
 TOOLS = [
@@ -295,6 +296,8 @@ class ResearchTools:
 
 
 def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dict:
+    owner = getattr(client, "research_owner", "A")
+    journal = ActivityLog(root, owner, getattr(client, "activity_actor", "tester"))
     tools = ResearchTools(
         root, getattr(client, "research_config", {}), getattr(client, "research_owner", "A")
     )
@@ -307,6 +310,15 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
         if len(calls) != 1:
             raise ValueError("Research tools run sequentially within their budget")
         call = calls[0]
+        step_id = journal.write(
+            "tools",
+            "tool-start",
+            {
+                "tool": call["function"]["name"],
+                "arguments": json.loads(call["function"]["arguments"]),
+            },
+            tool_call_id=call["id"],
+        )
         try:
             result = tools.execute(
                 call["function"]["name"], json.loads(call["function"]["arguments"])
@@ -326,6 +338,7 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
                 "result": result,
             }
         )
+        journal.write("tools", "tool-result", trace[-1], step_id=step_id)
         messages = [
             *messages,
             turn,

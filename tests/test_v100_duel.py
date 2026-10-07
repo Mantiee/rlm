@@ -122,12 +122,13 @@ def test_native_planner_rejects_unknown_examples_and_does_not_expose_answers(tmp
 
     monkeypatch.setattr(experiments, "native_turn", turn)
     assert (
-        experiments.choose_experiment(None, "A", records()[:2], profile(tmp_path), []) == proposed
+        experiments.choose_experiment(SimpleNamespace(), "A", records()[:2], profile(tmp_path), [])
+        == proposed
     )
     assert "Verified answer" not in seen[0][1]["content"]
     proposed["selected_ids"] = ["unknown"]
     with pytest.raises(ValueError, match="unknown"):
-        experiments.choose_experiment(None, "A", records()[:2], profile(tmp_path), [])
+        experiments.choose_experiment(SimpleNamespace(), "A", records()[:2], profile(tmp_path), [])
 
 
 def test_helpers_can_be_discarded_and_failures_are_recorded(tmp_path, monkeypatch):
@@ -138,7 +139,9 @@ def test_helpers_can_be_discarded_and_failures_are_recorded(tmp_path, monkeypatc
             "content": json.dumps({"useful_indices": [], "conclusion": "No evidence"})
         },
     )
-    result = researchers.review_research(None, "A", [{"hypothesis": "maybe"}], tmp_path)
+    result = researchers.review_research(
+        SimpleNamespace(), "A", [{"hypothesis": "maybe"}], tmp_path
+    )
     assert result["useful_indices"] == []
     future = Future()
     future.set_exception(TimeoutError("assistant too slow"))
@@ -175,7 +178,7 @@ def test_cpu_worker_really_runs_while_training_process_is_alive(tmp_path, monkey
     process = FakeTraining()
     monkeypatch.setattr(competition.subprocess, "Popen", lambda *a, **k: process)
     monkeypatch.setattr(competition, "available_ram_gib", lambda: 12)
-    monkeypatch.setattr(competition, "helper_client", lambda p: None)
+    monkeypatch.setattr(competition, "helper_client", lambda p, *a: None)
 
     def observe(*args):
         assert process.alive and process.returncode is None
@@ -406,7 +409,7 @@ def test_evolution_preserves_all_eligible_reports_replays_and_stops_on_failure(
         yield None
 
     monkeypatch.setattr(competition, "managed_server", server)
-    monkeypatch.setattr(competition, "helper_client", lambda p: None)
+    monkeypatch.setattr(competition, "helper_client", lambda p, *a: None)
     monkeypatch.setattr(competition, "require_idle_gpu", lambda: None)
     plans, gate_counts = [], []
     real_plan = experiments.plan_duel

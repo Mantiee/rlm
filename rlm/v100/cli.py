@@ -82,6 +82,14 @@ def client_for(
         sampling_args={"max_tokens": max_tokens or r["max_output_tokens"]},
         metrics_path=str(root / "research/logs/inference.jsonl"),
         enable_thinking=enable_thinking,
+        activity_root=str(root),
+        activity_branch=r.get("activity_branch", "controller"),
+        activity_context={
+            "model_version": r["model_version"],
+            "target": profile["server"]["model"],
+            "draft_model": profile["server"]["draft_model"],
+            "draft_tokens": profile["server"]["draft_tokens"],
+        },
     )
 
 
@@ -117,9 +125,10 @@ def main() -> None:
         help="Download/convert the pinned Gemma 12B assistant; create separate profiles",
     )
     experiment = sub.add_parser(
-        "test-mtp", help="Measure baseline, MTP2 and MTP4 sequentially on an idle GPU"
+        "test-mtp", help="Measure baseline and MTP 2/4/8/16 sequentially on an idle GPU"
     )
     experiment.add_argument("--repeats", type=int, default=3)
+    experiment.add_argument("--draft-tokens", type=int, nargs="+", default=[2, 4, 8, 16])
     bench = sub.add_parser("bench")
     bench.add_argument("--repeats", type=int, default=3)
     bench.add_argument("--output", type=Path, help="Separate report path; refuses to overwrite")
@@ -439,7 +448,7 @@ def main() -> None:
     if args.command == "test-mtp":
         from rlm.v100.speculative import test_mtp
 
-        test_mtp(root, args.repeats)
+        test_mtp(root, args.repeats, tuple(args.draft_tokens))
         return
     if args.command == "doctor":
         for key in ("binary", "model", "draft_model"):
