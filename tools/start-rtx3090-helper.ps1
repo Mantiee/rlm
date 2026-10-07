@@ -24,7 +24,9 @@ if ($Port -ne 11435 -or $Context -notin @(8192, 16384, 32768)) {
     throw 'Use the isolated port 11435 and context 8192, 16384 or 32768.'
 }
 $Root = Join-Path $env:USERPROFILE 'ai-v100-helper'
-$Ollama = (Get-Command ollama -ErrorAction Stop).Source
+$RuntimeVersion = '0.40.0'
+$RuntimeRoot = Join-Path $Root "runtime\ollama-$RuntimeVersion"
+$Ollama = Join-Path $RuntimeRoot 'ollama.exe'
 $Model = 'qwen3.5:9b-q8_0'
 $Origin = "http://${WindowsIp}:$Port"
 $Rule = "v100-helper-$Port-from-$DebianIp"
@@ -56,13 +58,55 @@ if ($LASTEXITCODE -ne 0 -or $GpuRows.Count -ne 1 -or $GpuRows[0] -notmatch '3090
 $FreeMiB = [int](($GpuRows[0] -split ',')[-1].Trim())
 if ($FreeMiB -lt 14336) { throw 'Need at least 14 GiB free before the helper smoke test.' }
 $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($Root).Substring(0, 1))
-if ($drive.Free -lt 20GB) { throw 'Need 20 GiB free disk for the isolated model download.' }
+if ($drive.Free -lt 28GB) { throw 'Need 28 GiB free disk for the isolated runtime and model download.' }
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Root 'models') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Root 'logs') -Force | Out-Null
 
 $ExistingRule = Get-NetFirewallRule -Name $Rule -ErrorAction SilentlyContinue
 if ($ExistingRule -or (Get-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue)) { throw "Helper firewall rule already exists; inspect it before restarting." }
+
+# The current model manifest rejects the user's installed Ollama 0.21.2.
+# Use the official standalone runtime, including optional NVIDIA MLX libraries,
+# in a version-specific directory. Never run the global installer or change PATH.
+$RuntimeReceipt = Join-Path $RuntimeRoot 'runtime-ready.json'
+$Assets = @(
+    @{ name = 'ollama-windows-amd64.zip'; sha256 = '3623e256762ca89bd6fa99b0cc4106401919ce9df926411673e632e3ea287bb5' },
+    @{ name = 'ollama-windows-amd64-mlx.zip'; sha256 = 'c0ea38f2e42e298bf023f6ce1e48dcf9dc2b757d1e72f281dc0e2092ca6388d1' }
+)
+if (Test-Path $RuntimeReceipt) {
+    $Installed = Get-Content -Raw $RuntimeReceipt | ConvertFrom-Json
+    if ($Installed.version -ne $RuntimeVersion -or -not (Test-Path $Ollama) -or
+        (Get-FileHash -Algorithm SHA256 $Ollama).Hash.ToLowerInvariant() -ne $Installed.executable_sha256) {
+        throw 'Isolated runtime changed or is incomplete. Inspect its directory before replacing it.'
+    }
+} else {
+    $Downloads = Join-Path $Root 'downloads'
+    New-Item -ItemType Directory -Path $Downloads -Force | Out-Null
+    New-Item -ItemType Directory -Path $RuntimeRoot -Force | Out-Null
+    foreach ($Asset in $Assets) {
+        $Archive = Join-Path $Downloads "v$RuntimeVersion-$($Asset.name)"
+        if (-not (Test-Path $Archive)) {
+            $Partial = "$Archive.partial"
+            $DownloadUrl = "https://github.com/ollama/ollama/releases/download/v$RuntimeVersion/$($Asset.name)"
+            Write-Host "Downloading isolated Ollama $RuntimeVersion: $($Asset.name) ..."
+            Invoke-WebRequest -UseBasicParsing -Uri $DownloadUrl -OutFile $Partial -TimeoutSec 7200
+            if ((Get-FileHash -Algorithm SHA256 $Partial).Hash.ToLowerInvariant() -ne $Asset.sha256) {
+                throw "Runtime download checksum mismatch: $($Asset.name). Nothing started."
+            }
+            Move-Item -LiteralPath $Partial -Destination $Archive
+        }
+        if ((Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant() -ne $Asset.sha256) {
+            throw "Runtime cache checksum mismatch: $Archive. Nothing started."
+        }
+        Write-Host "Extracting $($Asset.name) ..."
+        Expand-Archive -LiteralPath $Archive -DestinationPath $RuntimeRoot -Force
+    }
+    if (-not (Test-Path $Ollama)) { throw 'Standalone archive did not contain ollama.exe.' }
+    @{ version = $RuntimeVersion; executable_sha256 = (Get-FileHash -Algorithm SHA256 $Ollama).Hash.ToLowerInvariant(); assets = $Assets } |
+        ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $RuntimeReceipt
+}
+Write-Host "Using isolated Ollama $RuntimeVersion: $Ollama"
 # Explicit port-specific blocks also protect against a pre-existing broad
 # application allow rule. Keep the Windows self-test address accessible.
 function Ip-Number([string]$Address) {
@@ -127,7 +171,8 @@ $Ready = $false
     for ($i = 0; $i -lt 60; $i++) {
         if ($Worker.HasExited) { throw "Helper startup failed. Inspect $Root\logs." }
         try {
-            $null = Invoke-RestMethod "$Origin/api/version" -TimeoutSec 2
+            $ServerVersion = Invoke-RestMethod "$Origin/api/version" -TimeoutSec 2
+            if ($ServerVersion.version -ne $RuntimeVersion) { throw 'Unexpected helper server version.' }
             $Ready = $true
             break
         } catch { Start-Sleep -Seconds 1 }
@@ -162,6 +207,7 @@ $Ready = $false
     }
     $Receipt = @{
         model = $Model; digest = $Item.digest; context = $Context; result = $Answer.result
+        ollama_version = $RuntimeVersion; runtime = $Ollama
         origin = $Origin; debian = $DebianIp; vram_gib = [Math]::Round($Item.size_vram / 1GB, 2)
         seconds = [Math]::Round(((Get-Date) - $Started).TotalSeconds, 2)
         generation_tps = [Math]::Round($Response.eval_count * 1e9 / [Math]::Max(1, $Response.eval_duration), 2)

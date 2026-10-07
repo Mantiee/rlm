@@ -7,7 +7,7 @@ Nie dzielimy jednego modelu przez LAN ani nie używamy płatnej/cloud API.
 
 ## Windows, pierwszy krok
 
-Ollama musi już być zainstalowana. Uruchom PowerShell jako administrator
+Uruchom PowerShell jako administrator
 (tylko dodanie/usunięcie własnych reguł zapory wymaga tych uprawnień):
 
 ```powershell
@@ -19,6 +19,16 @@ pozostałe adresy na tym porcie, zachowuje istniejący serwer 11434 i ustawia
 zmienne środowiska wyłącznie dla nowego procesu. Model
 `qwen3.5:9b-q8_0` pobiera do `%USERPROFILE%\ai-v100-helper\models`.
 Pobranie ma około 10 GB; nie jest to pomiar zużycia VRAM.
+
+Pomocnik używa osobnej **Ollamy 0.40.0** z oficjalnych archiwów standalone
+Windows amd64 i MLX CUDA, w `ai-v100-helper\runtime\ollama-0.40.0`.
+Oba archiwa są przypięte do sum SHA-256 z oficjalnego wydania. Instalator nie
+używa `ollama` znalezionej przez PATH, nie uruchamia globalnego instalatora
+i nie aktualizuje aplikacji desktopowej. Wymagane 28 GiB wolnego miejsca;
+archiwa pobrania są zachowane do ponownego użycia. Aktualny manifest Qwen3.5
+zwrócił HTTP 412 przy Ollamie 0.21.2, dlatego ta wersja nie jest używana.
+Po starcie sprawdzamy też wersję `/api/version`; rzeczywista zgodność modelu
+i GPU nadal wymaga zakończenia smoke testu na Windowsie.
 
 Jeden slot, kontekst początkowo 32768, Flash Attention i KV Q8. Rezerwacja
 pozostałej pamięci jest wskazówką dla schedulera, **nie twardym limitem**.
