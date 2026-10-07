@@ -48,10 +48,16 @@ def generation_conditions(profile: dict) -> dict:
         context_window=profile["runtime"]["context_window"],
         thinking=thinking_enabled(profile),
     )
+    if "tool_protocol" in profile["runtime"]:
+        result["tool_protocol"] = profile["runtime"]["tool_protocol"]
     return result
 
 
 def assert_client_conditions(client, profile: dict) -> None:
+    if getattr(client, "tool_protocol", "native") != profile["runtime"].get(
+        "tool_protocol", "native"
+    ):
+        raise ValueError("Quality client tool protocol differs from its recorded profile")
     intended = sampling_settings(profile)
     if hasattr(client, "sampling_args"):
         actual = {"temperature": 0.0, "max_tokens": 512, "seed": 42, **client.sampling_args}

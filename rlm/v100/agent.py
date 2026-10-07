@@ -121,6 +121,20 @@ def select_expert(client, question: str, experts: list[dict]) -> dict:
     }
 
 
+def tool_turn(
+    client, messages: list[dict], tools=None, response_format=None, response_info=None
+) -> dict:
+    if getattr(client, "tool_protocol", "native") == "json" and tools:
+        from rlm.v100.tool_protocol import json_tool_turn
+
+        return json_tool_turn(client, messages, tools, response_info)
+    if getattr(client, "tool_protocol", "native") == "json":
+        from rlm.v100.tool_protocol import action_history
+
+        messages = action_history(messages)
+    return native_turn(client, messages, tools, response_format, response_info)
+
+
 def answer_with_tools(client, question: str, retrieve, max_turns: int = 6) -> dict:
     if not 1 <= max_turns <= 16:
         raise ValueError("Tool turn limit must be 1-16")
@@ -134,7 +148,7 @@ def answer_with_tools(client, question: str, retrieve, max_turns: int = 6) -> di
     known, trace = {}, []
     for turn in range(max_turns):
         # Last turn must be an answer, so a looping model cannot call tools forever.
-        message = native_turn(client, messages, TOOLS if turn < max_turns - 1 else None)
+        message = tool_turn(client, messages, TOOLS if turn < max_turns - 1 else None)
         calls = message.get("tool_calls") or []
         if not calls:
             answer = message.get("content")

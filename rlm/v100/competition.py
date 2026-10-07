@@ -128,6 +128,7 @@ def helper_client(
         },
     )
     client.research_config = profile.get("research", {})
+    client.tool_protocol = settings.get("tool_protocol", "native")
     return client
 
 

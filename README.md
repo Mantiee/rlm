@@ -1,7 +1,12 @@
 
 ---
 
-> **V100 fork, v100.12:** the local workflow uses your own llama.cpp server, no paid API.
+> **V100 fork, v100.13:** the local workflow uses your own llama.cpp server, no paid API.
+> v100.13 adds background `mission-start/status/stop`, income R&D before automatic
+> evaluation and repeated verified-data A/B updates, schema-constrained JSON tools,
+> adaptive 32k/16k/8k context and source-preserving hierarchical research memory.
+> Fees and feeds remain mandatory for paper orders; speculative decoding is not
+> enabled by this mission. Hardware behavior must be confirmed on the user's V100.
 > v100.12 adds `prepare-challenge`, `challenge-smoke` and `challenge-baseline`:
 > 81 offline development cases, bounded calculator/source tools, and a disjoint
 > verified curriculum with replay. Preparation and evaluation do not train weights.

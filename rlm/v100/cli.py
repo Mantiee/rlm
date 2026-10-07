@@ -52,6 +52,8 @@ def server_command(profile: dict) -> list[str]:
         s["cache_type"],
         "--no-context-shift",
     ]
+    if s.get("jinja") is True:
+        command.append("--jinja")
     if s["draft_model"]:
         spec_type = s.get("spec_type", "draft-simple")
         if spec_type not in ("draft-simple", "draft-mtp"):
@@ -75,7 +77,7 @@ def client_for(
     profile: dict, root: Path, max_tokens: int | None = None, enable_thinking: bool | None = None
 ) -> LlamaCppClient:
     r = profile["runtime"]
-    return LlamaCppClient(
+    client = LlamaCppClient(
         model_name=r["model_name"],
         base_url=r["base_url"],
         context_window=r["context_window"],
@@ -92,6 +94,8 @@ def client_for(
             "draft_tokens": profile["server"]["draft_tokens"],
         },
     )
+    client.tool_protocol = r.get("tool_protocol", "native")
+    return client
 
 
 def main() -> None:
@@ -109,6 +113,11 @@ def main() -> None:
     )
     sub.add_parser("challenge-smoke", help="Run two isolated offline tool cases, without training")
     sub.add_parser("challenge-baseline", help="Evaluate all 81 prepared cases, without training")
+    sub.add_parser("mission-start", help="Start income research and guarded learning in background")
+    sub.add_parser("mission-status", help="Inspect the owned background mission")
+    sub.add_parser("mission-stop", help="Stop only this mission and its owned children")
+    mission = sub.add_parser("mission-loop", help="Owned background mission worker")
+    mission.add_argument("--run", type=Path, required=True)
     objective = sub.add_parser(
         "set-goal",
         help="Set the user-owned shared A/B objective and bind its fixed development suite",
@@ -274,6 +283,21 @@ def main() -> None:
         return
     profile = load_profile(args.profile or root / "research/v100.toml", root)
     registry = ExpertRegistry(root / "research/experts")
+    if args.command.startswith("mission-"):
+        from rlm.v100.mission import start, status, stop, worker
+
+        if args.command == "mission-loop":
+            worker(root, profile, args.run)
+            return
+        result = (
+            status(root)
+            if args.command == "mission-status"
+            else stop(root)
+            if args.command == "mission-stop"
+            else start(root, args.profile or root / "research/v100.toml")
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+        return
     if args.command == "prepare-thinking":
         print("Thinking profile:", prepare_thinking(profile, root))
         return

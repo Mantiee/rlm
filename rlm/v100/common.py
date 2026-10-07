@@ -25,6 +25,8 @@ def load_profile(path: Path, root: Path) -> dict[str, Any]:
 
     sampling_settings(profile)
     thinking_enabled(profile)
+    if runtime.get("tool_protocol", "native") not in ("native", "json"):
+        raise ValueError("tool_protocol must be native or json")
     if runtime["context_window"] != server["context_per_slot"]:
         raise ValueError("Client context_window must equal context_per_slot")
     if server["slots"] < 1 or server["context_per_slot"] < 512:

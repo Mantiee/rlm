@@ -9,6 +9,7 @@ from rlm.v100.agent import native_turn
 from rlm.v100.common import atomic_json
 from rlm.v100.experiments import SharedLab
 from rlm.v100.insights import InsightQueue
+from rlm.v100.memory import digest
 from rlm.v100.protection import file_hash
 from rlm.v100.research_tools import research_turn
 from rlm.v100.speculative import validate_gguf
@@ -90,6 +91,9 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
     if not job["brief"].strip() or len(job["brief"]) > 400:
         raise ValueError("Research assignment exceeds its budget")
     from rlm.v100.goals import load_goal
+    from rlm.v100.mission_memory import recall
+
+    observations = [*observations, {"persistent_research_memory": recall(root)}]
 
     client.research_owner = branch
     client.activity_actor = job["role"]
@@ -175,6 +179,13 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
     result["exercise_checks"] = checks
     result["research_trace"] = message.get("research_trace", [])
     result.update(status="unverified hypothesis", role=job["role"], model=client.model_name)
+    from rlm.v100.mission_memory import archive
+
+    archive(
+        root,
+        f"worker:{branch}:{result['model']}:{digest(json.dumps(result))}",
+        json.dumps(result, ensure_ascii=False),
+    )
     shared = SharedLab(root / "research/state/competition.sqlite3")
     try:
         shared.append(branch, "worker-result", result)

@@ -3,6 +3,7 @@
 import copy
 import json
 import shutil
+import subprocess
 import time
 from contextlib import ExitStack
 from pathlib import Path
@@ -27,6 +28,7 @@ def learn_loop(
     interval: int = 600,
     train_timeout: int = 7200,
     paper_config: Path | None = None,
+    initial_update: bool = False,
 ) -> dict:
     """Zero cycles means run until interrupted; never runs on mere self-agreement."""
     from rlm.v100.architectures import prepare_inputs
@@ -137,9 +139,34 @@ def learn_loop(
                                 {"error": type(error).__name__, "detail": str(error)[:400]},
                             )
                     if paper is not None:
-                        paper.research(current, helper)
+                        try:
+                            paper.research(current, helper)
+                        except (ValueError, RuntimeError, OSError) as error:
+                            atomic_json(
+                                output / f"income-error-{cycle:04d}.json",
+                                {"detail": str(error)[:400]},
+                            )
+                            print(
+                                "Income research failed; previous version retained:",
+                                error,
+                                flush=True,
+                            )
+                    if current["runtime"].get("tool_protocol") == "json":
+                        from rlm.v100.mission_memory import compress
+
+                        try:
+                            print("Memory summaries created:", compress(root, current), flush=True)
+                        except (ValueError, RuntimeError, OSError) as error:
+                            print(
+                                "Memory compression deferred; originals retained:",
+                                error,
+                                flush=True,
+                            )
                     expanded = output / f"pool-{cycle:04d}.jsonl"
                     changed = extend_pool(current_pool, root, expanded)
+                    if initial_update and cycle == 1 and not changed:
+                        expanded.write_bytes(current_pool.read_bytes())
+                        changed = True
                     if not changed:
                         history.append(
                             {"cycle": cycle, "status": "no new verified and admitted examples"}
@@ -155,27 +182,59 @@ def learn_loop(
             # Avoid training indefinitely on a stale dataset. Its immutable prior
             # snapshots and complete optimizer checkpoints are never overwritten.
             if len(expanded.read_text().splitlines()) > 10000:
-                raise ValueError(
-                    "Automatic replay exceeds 10000 records; stop and revise the data pipeline before expanding further"
+                reason = "verified replay exceeds 10000 records"
+            elif shutil.disk_usage(output).free < 160 * 2**30:
+                reason = "less than 160 GiB free disk for independent A/B exports"
+            else:
+                reason = None
+            if reason:
+                history.append(
+                    {
+                        "cycle": cycle,
+                        "status": "upgrade deferred; research continues",
+                        "reason": reason,
+                    }
                 )
-            if shutil.disk_usage(output).free < 160 * 2**30:
-                raise ValueError(
-                    "Need 160 GiB free disk for two independent FP16/GGUF exports and checkpoints; prior versions were retained"
-                )
+                atomic_json(output / "state.json", state)
+                print("Upgrade deferred; originals retained:", reason, flush=True)
+                deadline = time.monotonic() + interval
+                while time.monotonic() < deadline:
+                    if paper is not None:
+                        paper.check()
+                    time.sleep(max(0, min(1, deadline - time.monotonic())))
+                continue
             trial = output / f"update-{cycle:04d}"
             if paper is not None:
                 paper.phase("training-started", cycle, current)
-            result = evolve(
-                current,
-                root,
-                expanded,
-                trial,
-                suite,
-                gates,
-                researcher_path,
-                generations=1,
-                train_timeout=train_timeout,
-            )
+            try:
+                result = evolve(
+                    current,
+                    root,
+                    expanded,
+                    trial,
+                    suite,
+                    gates,
+                    researcher_path,
+                    generations=1,
+                    train_timeout=train_timeout,
+                )
+            except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                history.append(
+                    {
+                        "cycle": cycle,
+                        "status": "upgrade failed; previous version retained",
+                        "detail": str(error)[:400],
+                        "trial": str(trial),
+                    }
+                )
+                atomic_json(output / "state.json", state)
+                print("Upgrade failed; serving previous version next cycle:", error, flush=True)
+                deadline = time.monotonic() + interval
+                while time.monotonic() < deadline:
+                    if paper is not None:
+                        paper.check()
+                    time.sleep(max(0, min(1, deadline - time.monotonic())))
+                continue
             generation = result["rounds"][-1]
             verdict = generation["judgment"]
             directory = Path(generation["directory"])

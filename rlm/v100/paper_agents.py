@@ -128,6 +128,26 @@ def paper_round(
         )
         parent = helper_client(client_profile, book.root, branch)
         findings = []
+        if income_research:
+            findings.append(
+                research_task(
+                    parent,
+                    branch,
+                    {
+                        "role": "researcher",
+                        "brief": "Research the actual income goal using primary public pages and preserved memory. Choose a useful market or zero-deposit income experiment. Identify missing fee/feed evidence before any paper trade. Propose a useful falsifiable self-upgrade; do not certify profit.",
+                    },
+                    [
+                        {
+                            "income_objective": objective,
+                            "paper_context": worker_context(
+                                compact_context(book.context(branch)), 0
+                            ),
+                        }
+                    ],
+                    book.root,
+                )
+            )
         for round_index in range(research_rounds):
             context = compact_context(book.context(branch))
             jobs = [
@@ -174,6 +194,8 @@ def paper_round(
             def work(job, selected_profile=profile, selected_branch=branch, data=observations):
                 worker = helper_client(selected_profile, book.root, selected_branch)
                 worker.research_tool_names = {
+                    "search_memory",
+                    "read_source",
                     "read_public_page",
                     "paper_status",
                     "paper_test_position",
@@ -223,6 +245,9 @@ def paper_round(
         if observe:
             observe(book)
         context = compact_context(book.context(branch))
+        from rlm.v100.mission_memory import recall
+
+        remembered = recall(book.root)
         excerpts = [
             {
                 "role": item["role"],
@@ -243,6 +268,7 @@ def paper_round(
                             "paper": context,
                             "research": excerpts,
                             "review": review,
+                            "persistent_research_memory": remembered,
                             "income_objective": objective,
                             "income_scope": "Only PAPER portfolio actions execute here; other income ideas are research, not real sales or verified revenue",
                         },

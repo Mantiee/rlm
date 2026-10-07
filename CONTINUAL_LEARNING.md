@@ -1,4 +1,4 @@
-# V100 continual learning, v100.12
+# V100 continual learning, v100.13
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,9 +6,75 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
-Kod v100.12 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Kod v100.13 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
 Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
 pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
+
+## Research celu i uczenie w tle, v100.13
+
+Po przygotowaniu `income-challenge-v1` i CPU researchera uruchom
+`--profile research/v100-thinking.json mission-start`. Startuje osobny proces
+w tle, który działa po zamknięciu terminala. `mission-status` podaje PID, fazę,
+wybrany kontekst, katalog logów i ukończone cykle. `mission-stop` kończy tylko
+zweryfikowaną sesję tej misji i jej procesy potomne; zachowuje wyniki i checkpointy.
+Nie jest to usługa systemowa: po restarcie maszyny trzeba uruchomić proces ponownie.
+Nowe `mission-start` tworzy nowy eksperyment, a nie automatycznie wznawia optymalizator
+lub wybiera zwycięzcę z poprzedniego katalogu. Istniejący trening można wznawiać
+osobnym mechanizmem kompletnych checkpointów opisanym poniżej.
+
+Misja zapisuje wskazany cel albo domyślny cel legalnego, powtarzalnego dochodu
+netto bez wpłat i płatnych API. Archiwizuje początkowe publiczne źródła opłat i
+crypto, uruchamia research Gemmy oraz małych pomocników CPU, następnie samodzielnie
+wykonuje baseline 81 przypadków. Nie wymaga kolejnego ręcznie uruchamianego testu.
+Później powtarza research, propozycje ćwiczeń, niezależną weryfikację, trening A/B,
+ocenę oraz przyjęcie lub odrzucenie kandydata. Pierwsza aktualizacja może użyć
+gotowego zweryfikowanego curriculum. Kolejne wymagają nowych zweryfikowanych i
+zaakceptowanych przykładów; nie trenuje stale na tych samych rekordach dla samego
+zapełnienia GPU. Modele wybierają ograniczone hiperparametry i dane, natomiast
+kontroler zachowuje źródła referencyjne, kryteria oceny i poprzednie wersje.
+
+Błąd natywnych wywołań narzędzi z v100.12 nie ustalał, czy niepoprawny JSON był
+w odpowiedzi końcowej, czy w argumentach narzędzia. Nowa misja używa akcji JSON
+z wymuszonym schematem i walidacją nazw/argumentów po stronie kontrolera. Historia
+narzędzi trafia jako zwykłe dane, bez zależności od natywnych znaczników Gemmy.
+Stare profile i raporty nie są zmieniane. Kontroler jest testowany z atrapą modelu;
+rzeczywiste wykonanie Gemmy na V100 potwierdza raport misji, nie testy jednostkowe.
+
+Kontekst roboczy dobierany jest kolejno jako 32768, 16384 albo 8192 tokenów:
+profil musi się załadować i pozostawić co najmniej 4 GiB wolnego VRAM. To zapas
+po załadowaniu, nie gwarancja dowolnego obciążenia przy pełnym oknie. Faktyczny
+tokenizer sprawdza budżet każdego żądania. Nie ma dwóch pełnych modeli GPU
+jednocześnie; A/B to kolejne kandydaty i osobne role/portfele. CPU helper ma
+8192 kontekstu i osobny budżet wyjścia 768 tokenów.
+
+`research/state/mission-memory.sqlite3` przechowuje pełne odczytane źródła oraz
+publiczne wyniki researchu. Hierarchiczne streszczenia grupują po cztery fragmenty,
+z budżetem czterech nowych streszczeń na cykl i kontynuacją częściowego drzewa.
+R&D otrzymuje wybrane trafienia, a narzędzia mogą odczytać oryginalny fragment.
+To selektywny dostęp do dużego archiwum poza VRAM; nie pełna uwaga nad całym
+archiwum. Streszczenia mogą pominąć istotny szczegół, dlatego oryginały pozostają.
+Ta pamięć nie aktualizuje wag. Wagi adaptera zmieniają wyłącznie kroki treningu
+na dopuszczonych danych, obecnie formalnych ćwiczeniach albo zweryfikowanym feedbacku.
+
+Log kontrolera jest w `research/mission/run-*/controller.log`; logi modeli,
+baseline, `learning/state.json`, próby A/B i metryki loss/eval_loss mają osobne
+pliki. Błąd pojedynczego researchu, nieudany upgrade, limit danych lub brak miejsca
+na eksport odkłada aktualizację i zachowuje poprzednią wersję. Awaria kontrolera
+lub obserwatora jest jawnie zapisana; nie jest raportowana jako sukces.
+
+Misja wykonuje research dochodu, lecz transakcje paper nadal wymagają
+zarejestrowanych, zweryfikowanych opłat, instrumentów i świeżych feedów. Nie
+dopowiada zerowych opłat i nie zakłada kont, nie realizuje sprzedaży ani zleceń
+za prawdziwe pieniądze. Obecny reader czyta publiczne URL-e, nie ma pełnej
+wyszukiwarki ani automatyzacji logowania. Nie jest to nieograniczona przebudowa
+architektury, dowód wzrostu inteligencji ani gwarancja braku zapominania/zysku.
+Speculative decoding pozostaje wyłączone w profilu misji do osobnego sprawdzenia
+kompatybilności i przyspieszenia po zmianach wag.
+
+Walidacja kontrolera v100.13: 514 testów zaliczonych, 63 pominięte; lint,
+formatter, hooki i dodatkowe sprawdzenie typów nowych modułów przeszły. Testy
+obejmują oba przypadki narzędzi przez akcje JSON, zachowanie oryginałów podczas
+kompresji, automatyczny wybór kontekstu i odrzucenie nieudanego upgrade'u.
 
 ## Trudniejsze ćwiczenia i rzeczywiste wywołania narzędzi, v100.12
 

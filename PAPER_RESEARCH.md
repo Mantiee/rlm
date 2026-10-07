@@ -1,4 +1,10 @@
-# Forward paper research, v100.12
+# Forward paper research, v100.13
+
+v100.13 dodaje `mission-start`, `mission-status` i `mission-stop`: background
+research celu, trwałe źródła i streszczenia oraz automatyczną kalibrację przed
+ciągłym uczeniem A/B. Szczegóły są w [CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md).
+Z pustą konfiguracją opłat/feedów prowadzi research i raportuje hold; nie wykonuje
+transakcji. Nie uznaje zysku paper ani modelowej opinii za etykietę do treningu.
 
 v100.12 dodaje offline `prepare-challenge` oraz osobny test użycia narzędzi.
 Ćwiczenia kosztowe mają fikcyjne wartości opłat, funding i slippage w groszach;

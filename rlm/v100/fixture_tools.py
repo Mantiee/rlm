@@ -5,9 +5,10 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from rlm.v100.agent import TOOLS, native_turn, tool_schema
+from rlm.v100.agent import TOOLS, tool_schema, tool_turn
 from rlm.v100.insights import reference
 from rlm.v100.memory import Memory
+from rlm.v100.tool_protocol import json_object
 
 FIXTURE_TOOLS = TOOLS + [
     tool_schema(
@@ -87,7 +88,7 @@ def fixture_answer(client, row: dict) -> dict:
         try:
             for turn in range(6):
                 response_info = {}
-                message = native_turn(
+                message = tool_turn(
                     client,
                     messages,
                     tools=FIXTURE_TOOLS if turn < 5 else None,
@@ -100,7 +101,11 @@ def fixture_answer(client, row: dict) -> dict:
                     content = message.get("content")
                     if not isinstance(content, str) or not content.strip():
                         raise ValueError("Fixture returned no final answer")
-                    data = json.loads(content)
+                    data = (
+                        {"answer": content}
+                        if message.get("json_action")
+                        else json_object(content, "Fixture final answer")
+                    )
                     if (
                         not isinstance(data, dict)
                         or set(data) != {"answer"}
@@ -129,7 +134,7 @@ def fixture_answer(client, row: dict) -> dict:
                     function = call["function"]
                     name = function["name"]
                     arguments = function["arguments"]
-                    arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+                    arguments = json_object(arguments, "Fixture tool arguments")
                     if not isinstance(arguments, dict):
                         raise ValueError("Fixture tool arguments must be an object")
                     if name == "calculate" and set(arguments) == {"expression"}:

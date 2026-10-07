@@ -15,9 +15,20 @@ import requests
 import urllib3
 
 from rlm.v100.activity import ActivityLog
-from rlm.v100.agent import native_turn, tool_schema
+from rlm.v100.agent import native_turn, tool_schema, tool_turn
+from rlm.v100.tool_protocol import json_object
 
 TOOLS = [
+    tool_schema(
+        "search_memory",
+        "Search preserved original research sources and public A/B findings.",
+        {"query": {"type": "string"}},
+    ),
+    tool_schema(
+        "read_source",
+        "Read an original research passage previously returned by search_memory.",
+        {"source_id": {"type": "string"}},
+    ),
     tool_schema(
         "paper_status",
         "Inspect your current forward paper portfolio and fixed risk budget. Read-only, no real money.",
@@ -205,8 +216,32 @@ class ResearchTools:
     def __init__(self, root: Path, settings: dict, branch: str = "A"):
         self.root, self.settings, self.sources = root, settings, []
         self.branch = branch
+        self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name in ("search_memory", "read_source"):
+            from rlm.v100.mission_memory import store
+
+            memory = store(self.root)
+            try:
+                if name == "search_memory" and set(arguments) == {"query"}:
+                    hits = memory.retrieve(arguments["query"], 4)
+                    self.known_memory_sources.update(hit["id"] for hit in hits)
+                    return {
+                        "passages": [
+                            {"id": hit["id"], "preview": hit["text"][:300]} for hit in hits
+                        ]
+                    }
+                if (
+                    name == "read_source"
+                    and set(arguments) == {"source_id"}
+                    and arguments["source_id"] in self.known_memory_sources
+                ):
+                    row = memory.node(arguments["source_id"])
+                    return {"id": row["id"], "text": row["text"], "document_id": row["document_id"]}
+                raise ValueError("Memory read must reference a previously retrieved passage")
+            finally:
+                memory.close()
         if name in ("paper_status", "paper_observed_results", "paper_test_position"):
             from rlm.v100.paper_tools import execute
 
@@ -274,7 +309,6 @@ class ResearchTools:
             parser = TextOnly()
             parser.feed(body)
             text = "\n".join(parser.parts) if parser.parts else body
-            text = text[:40000]
             sha = hashlib.sha256(text.encode()).hexdigest()
             directory = self.root / "research/web-sources"
             directory.mkdir(parents=True, exist_ok=True)
@@ -292,6 +326,18 @@ class ResearchTools:
                 "fetched_at": datetime.now(UTC).isoformat(),
             }
             self.sources.append(source)
+            from rlm.v100.mission_memory import archive
+
+            source["memory_document_id"] = archive(
+                self.root,
+                url + "#" + sha,
+                "Public research source. URL: "
+                + url
+                + "\nFetched at: "
+                + source["fetched_at"]
+                + "\n"
+                + text,
+            )
             from rlm.v100.free_services import ServiceBook
 
             book = ServiceBook(self.root)
@@ -336,7 +382,11 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
         if selected_names is None or tool["function"]["name"] in selected_names
     ]
     for _ in range(2):
-        turn = native_turn(client, messages, tools=selected_tools)
+        turn = (
+            tool_turn(client, messages, tools=selected_tools)
+            if getattr(client, "tool_protocol", "native") == "json"
+            else native_turn(client, messages, tools=selected_tools)
+        )
         calls = turn.get("tool_calls") or []
         if not calls:
             break
@@ -379,8 +429,13 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
             turn,
             {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result)},
         ]
-    result = native_turn(
-        client, messages, response_format={"type": "json_object", "schema": schema}
+    result = (
+        tool_turn(client, messages, response_format={"type": "json_object", "schema": schema})
+        if getattr(client, "tool_protocol", "native") == "json"
+        else native_turn(
+            client, messages, response_format={"type": "json_object", "schema": schema}
+        )
     )
+    result["content"] = json.dumps(json_object(result.get("content"), "Research final answer"))
     result["research_trace"] = trace
     return result
