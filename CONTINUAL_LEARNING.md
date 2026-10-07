@@ -1,4 +1,4 @@
-# V100 continual learning, v100.18
+# V100 continual learning, v100.19
 
 ## Budżet thinking i większy kontekst, v100.16
 
@@ -763,3 +763,23 @@ there is no silent clamping, automatic budget increase or unbounded retry.
 `experiment-plan-rejected` events identify the branch, attempt and invalid value.
 Repeated invalid plans retain the previous serving version. This fixes the planning
 path; it does not guarantee a candidate will pass quality gates or establish profit.
+
+## V100 controller v100.19: remote helper during training and reconnect
+
+The A/B training runner now accepts the explicitly pinned LAN RTX researcher,
+using the same identity, metadata, single-slot and 12 GiB admission checks as
+research. CPU helper limits remain unchanged; a second local GPU inference server
+is still rejected. Remote advisory jobs are not gated by the CPU helper's RAM
+reservation. The Windows process remains owned by its launcher.
+
+At mission startup and between learning cycles, helper connection failures now
+enter `waiting-for-remote-helper` with the endpoint and error in `mission-status`,
+`mission-watch` and the helper log. Identity probes have a 15-second read timeout;
+reconnect attempts are spaced 30 seconds apart and are interruptible by
+`mission-stop`. Successful reconnect restores the preceding phase after rechecking
+the pinned identity and loaded-model budget. Missing or changed models and invalid
+profiles fail explicitly instead of being retried as network outages. There is no
+silent CPU fallback or Windows process restart. Errors from inside an active job
+are not replayed by the reconnect wrapper. Complete checkpoints and the accepted
+serving profile remain available when a cycle fails. The live profile and current
+learning state are persisted before waiting for the helper.

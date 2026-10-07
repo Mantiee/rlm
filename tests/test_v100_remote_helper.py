@@ -1,8 +1,12 @@
 import copy
 import json
+import os
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import requests
 
 from rlm.clients.llamacpp import LlamaCppClient
 from rlm.v100 import competition, mission, remote_helper
@@ -244,6 +248,218 @@ def test_cpu_selected_when_remote_not_configured(tmp_path):
     path.parent.mkdir()
     path.touch()
     assert remote_helper.selected_helper(tmp_path) == path
+
+
+def test_training_runner_accepts_pinned_remote_but_rejects_local_gpu(transport, tmp_path):
+    _, settings = prepared(tmp_path)
+    competition.validate_concurrent_researcher(settings)
+    local = profile(tmp_path)
+    with pytest.raises(ValueError, match="Concurrent researcher"):
+        competition.validate_concurrent_researcher(local)
+    for field, value in (("slots", 2), ("model", "/local/model.gguf")):
+        changed = copy.deepcopy(settings)
+        changed["server"][field] = value
+        with pytest.raises(ValueError, match="pinned"):
+            competition.validate_concurrent_researcher(changed)
+    cpu = copy.deepcopy(local)
+    cpu["resources"] = {"device": "cpu"}
+    cpu["server"].update(gpu_layers=0, slots=1, threads=4, draft_model="")
+    competition.validate_concurrent_researcher(cpu)
+    cpu["server"]["threads"] = 8
+    with pytest.raises(ValueError, match="four threads"):
+        competition.validate_concurrent_researcher(cpu)
+
+
+def test_remote_duel_reaches_branch_execution_without_launching_windows(
+    transport, tmp_path, monkeypatch
+):
+    helper, settings = prepared(tmp_path)
+    output = tmp_path / "duel"
+    output.mkdir()
+    suite = tmp_path / "suite.jsonl"
+    suite.write_text("fixed")
+    main = output / "main.json"
+    atomic_json(main, profile(tmp_path))
+    bundle = {
+        "root": str(tmp_path),
+        "branches": {"A": {"profile": str(main)}, "B": {"profile": str(main)}},
+    }
+    from rlm.v100 import inference, protection
+
+    baseline = {
+        "suite_sha256": protection.file_hash(suite),
+        "generation": {},
+        "memory_mode": "fixed prompt fixtures; no live retrieval",
+    }
+    monkeypatch.setattr(competition, "load_duel", lambda *args: bundle)
+    monkeypatch.setattr(competition, "require_idle_gpu", lambda: None)
+    monkeypatch.setattr(protection, "compare_reports", lambda *args: {"passed": True})
+    monkeypatch.setattr(inference, "generation_conditions", lambda *args: {})
+    observed = []
+
+    def branches(out, root, selected_suite, selected_bundle, researcher, timeout, code):
+        observed.append(researcher)
+        return {"A": {}, "B": {}}
+
+    monkeypatch.setattr(competition, "run_branches", branches)
+    monkeypatch.setattr(competition, "judge_duel", lambda *args: {"winner": None})
+    monkeypatch.setattr(
+        competition.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("launched Windows")
+    )
+    assert competition.run_duel(output, tmp_path, suite, baseline, helper) == {"winner": None}
+    assert observed == [settings]
+
+
+def test_remote_adviser_runs_during_training_without_cpu_ram_reservation(
+    transport, tmp_path, monkeypatch
+):
+    _, helper = prepared(tmp_path)
+    output = tmp_path / "duel"
+    branch = output / "A"
+    branch.mkdir(parents=True)
+    chosen = profile(tmp_path)
+    chosen["training"]["output"] = str(branch / "training")
+    metrics = branch / "training/metrics.jsonl"
+    metrics.parent.mkdir()
+    metrics.write_text('{"step":1,"loss":2.1}\n')
+    path = branch / "profile.json"
+    atomic_json(path, chosen)
+    item = {
+        "profile": str(path),
+        "dataset": str(branch / "data.jsonl"),
+        "decision": {"research_jobs": [{"role": "tester", "brief": "Check training metrics"}]},
+    }
+    completed = threading.Event()
+
+    class Learner:
+        returncode = None
+
+        def poll(self):
+            if completed.wait(0.001):
+                self.returncode = 0
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+    learner = Learner()
+    monkeypatch.setattr(competition.subprocess, "Popen", lambda *args, **kwargs: learner)
+    monkeypatch.setattr(competition, "available_ram_gib", lambda: 1)
+
+    def advise(client, selected_branch, job, observed, root):
+        assert isinstance(client, remote_helper.OllamaResearchClient)
+        assert learner.returncode is None
+        assert observed[-1]["loss"] == 2.1
+        completed.set()
+        return {"status": "unverified hypothesis"}
+
+    monkeypatch.setattr(competition, "research_task", advise)
+    result = competition.train_branch(tmp_path, output, "A", item, helper, train_timeout=5)
+    assert completed.is_set() and result == [{"status": "unverified hypothesis"}]
+    assert json.loads((branch / "workers.json").read_text())["submitted"] == 1
+
+
+def test_reconnect_preserves_phase_and_rechecks_identity(transport, tmp_path, monkeypatch):
+    path, _ = prepared(tmp_path)
+    run = tmp_path / "research/mission/run-reconnect"
+    original = {
+        "phase": "research-and-learning-loop",
+        "context_window": 131072,
+        "baseline_passed": 58,
+    }
+    atomic_json(run / "status.json", original)
+    atomic_json(tmp_path / "research/mission/active.json", {"pid": os.getpid(), "run": str(run)})
+    checkpoint = run / "learning/live.json"
+    checkpoint.parent.mkdir()
+    checkpoint.write_text("preserved accepted model")
+    saved = checkpoint.read_bytes()
+    request = remote_helper.OllamaResearchClient.remote_request
+    failed = []
+
+    def transient(self, endpoint, data=None):
+        if not failed:
+            failed.append(endpoint)
+            raise requests.ConnectionError("No route to host")
+        assert self.timeout <= 15
+        return request(self, endpoint, data)
+
+    monkeypatch.setattr(remote_helper.OllamaResearchClient, "remote_request", transient)
+    sleeps = []
+
+    def wait(seconds):
+        sleeps.append(seconds)
+        waiting = json.loads((run / "status.json").read_text())
+        assert waiting["phase"] == "waiting-for-remote-helper"
+        assert waiting["context_window"] == 131072
+        assert waiting["endpoint"] == URL
+        assert checkpoint.read_bytes() == saved
+
+    monkeypatch.setattr(competition.time, "sleep", wait)
+    with competition.waiting_researcher(path, tmp_path, run / "helper.log"):
+        assert json.loads((run / "status.json").read_text()) == original
+    assert sleeps == [30]
+    events = [
+        json.loads(line)
+        for p in (tmp_path / "research/logs/activity").glob("*/timeline.jsonl")
+        for line in p.read_text().splitlines()
+    ]
+    assert [event["kind"] for event in events] == [
+        "remote-helper-unavailable",
+        "remote-helper-reconnected",
+    ]
+    assert checkpoint.read_bytes() == saved
+
+
+def test_reconnect_never_replays_work_inside_context(transport, tmp_path, monkeypatch):
+    path, _ = prepared(tmp_path)
+    monkeypatch.setattr(
+        competition.time, "sleep", lambda *args: pytest.fail("replayed active work")
+    )
+    with pytest.raises(requests.ConnectionError, match="during work"):
+        with competition.waiting_researcher(path, tmp_path, tmp_path / "helper.log"):
+            raise requests.ConnectionError("lost connection during work")
+
+
+def test_reconnect_identity_mismatch_fails_without_retry(transport, tmp_path, monkeypatch):
+    path, _ = prepared(tmp_path)
+    transport[1]["digest"] = "b" * 64
+    monkeypatch.setattr(
+        competition.time, "sleep", lambda *args: pytest.fail("retried changed model")
+    )
+    with pytest.raises(ValueError, match="changed"):
+        with competition.waiting_researcher(path, tmp_path, tmp_path / "helper.log"):
+            pytest.fail("used changed model")
+
+
+def test_reconnect_wait_is_interruptible_and_cpu_errors_are_not_retried(
+    transport, tmp_path, monkeypatch
+):
+    remote, _ = prepared(tmp_path)
+
+    @contextmanager
+    def unavailable(*args):
+        raise requests.ConnectionError("offline")
+        yield
+
+    monkeypatch.setattr(competition, "managed_server", unavailable)
+    sleeps = []
+
+    def interrupt(seconds):
+        sleeps.append(seconds)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(competition.time, "sleep", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        with competition.waiting_researcher(remote, tmp_path, tmp_path / "helper.log"):
+            pytest.fail("used unavailable helper")
+    cpu = tmp_path / "cpu.json"
+    local = profile(tmp_path)
+    local["resources"] = {"device": "cpu"}
+    atomic_json(cpu, local)
+    with pytest.raises(requests.ConnectionError):
+        with competition.waiting_researcher(cpu, tmp_path, tmp_path / "cpu.log"):
+            pytest.fail("used unavailable CPU helper")
+    assert sleeps == [30]
 
 
 def test_remote_transport_rejects_redirect_and_ignores_proxy(monkeypatch):

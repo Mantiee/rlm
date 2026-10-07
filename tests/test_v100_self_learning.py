@@ -272,6 +272,7 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
         active.remove(path)
 
     monkeypatch.setattr(continuous, "managed_server", server)
+    monkeypatch.setattr(continuous, "waiting_researcher", server)
     monkeypatch.setattr(continuous, "require_idle_gpu", lambda: None)
     monkeypatch.setattr(architectures, "prepare_inputs", lambda *a: None)
     monkeypatch.setattr(continuous, "helper_client", lambda p, *a: None)

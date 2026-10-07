@@ -10,7 +10,13 @@ import uuid
 from pathlib import Path
 
 from rlm.v100.common import atomic_json, load_profile
-from rlm.v100.competition import command, helper_client, managed_server, require_idle_gpu
+from rlm.v100.competition import (
+    command,
+    helper_client,
+    managed_server,
+    require_idle_gpu,
+    waiting_researcher,
+)
 from rlm.v100.evaluation import evaluate_suite
 from rlm.v100.goals import load_goal, set_goal
 from rlm.v100.inference import generation_conditions
@@ -291,7 +297,9 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     flash_attention_requested=serving["server"]["flash_attention"],
                     kv_cache_type=serving["server"]["cache_type"],
                 )
-                with managed_server(helper_path, root, directory / "research-helper.log") as helper:
+                with waiting_researcher(
+                    helper_path, root, directory / "research-helper.log"
+                ) as helper:
                     with PaperLearning(root, paper_settings) as income:
                         try:
                             income.research(serving, helper)

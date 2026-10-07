@@ -10,7 +10,13 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from rlm.v100.common import atomic_json
-from rlm.v100.competition import evolve, helper_client, managed_server, require_idle_gpu
+from rlm.v100.competition import (
+    evolve,
+    helper_client,
+    managed_server,
+    require_idle_gpu,
+    waiting_researcher,
+)
 from rlm.v100.experiments import SharedLab, load_duel
 from rlm.v100.insights import extend_pool
 from rlm.v100.protection import assert_candidate_output, file_hash
@@ -99,11 +105,12 @@ def learn_loop(
             cycle += 1
             prepare_inputs(root, current_pool, suite)
             atomic_json(live, current)
+            save_progress(root, output, state)
             if paper is not None:
                 paper.phase("serving-rnd", cycle, current)
             # Serve the current version during R&D/waiting. Only our own inference
             # process is stopped for the training phase; never another user's server.
-            with managed_server(researcher_path, root, output / "researcher.log") as helper:
+            with waiting_researcher(researcher_path, root, output / "researcher.log") as helper:
                 with managed_server(live, root, output / "live-server.log"):
                     shared = SharedLab(root / "research/state/competition.sqlite3")
                     try:

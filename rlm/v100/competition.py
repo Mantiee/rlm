@@ -1,4 +1,4 @@
-"""Sequential GPU branches with low-priority CPU research during training."""
+"""Sequential GPU branches with CPU or separate remote-GPU research."""
 
 import copy
 import json
@@ -8,13 +8,14 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
 
 from rlm.clients.llamacpp import LlamaCppClient
+from rlm.v100.activity import ActivityLog
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.experiments import SharedLab, judge_duel, load_duel, plan_duel
 from rlm.v100.researchers import available_ram_gib, research_task, review_research
@@ -56,6 +57,7 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
         from rlm.v100.remote_helper import OllamaResearchClient
 
         assert isinstance(client, OllamaResearchClient)
+        client.timeout = min(15, client.timeout)
         client.identity()
         measured = client.loaded()
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +122,83 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+
+
+@contextmanager
+def waiting_researcher(profile_path: Path, root: Path, log_path: Path):
+    """Retry only remote entry transport failures, never repeat work after yield."""
+    from rlm.v100.remote_helper import remote_profile
+
+    profile = load_profile(profile_path, root)
+    if not remote_profile(profile):
+        with managed_server(profile_path, root, log_path) as actual:
+            yield actual
+        return
+    active_path = root / "research/mission/active.json"
+    status_path, original_state = None, None
+    if active_path.exists():
+        active = json.loads(active_path.read_text())
+        run = Path(active["run"]).resolve()
+        if active.get("pid") == os.getpid() and run.is_relative_to(
+            (root / "research/mission").resolve()
+        ):
+            status_path = run / "status.json"
+            original_state = json.loads(status_path.read_text()) if status_path.exists() else {}
+    attempt = 0
+    while True:
+        with ExitStack() as scope:
+            try:
+                actual = scope.enter_context(managed_server(profile_path, root, log_path))
+            except (requests.ConnectionError, requests.Timeout) as error:
+                attempt += 1
+                event = {
+                    "phase": "waiting-for-remote-helper",
+                    "endpoint": profile["runtime"]["base_url"],
+                    "attempt": attempt,
+                    "retry_seconds": 30,
+                    "error": type(error).__name__,
+                    "detail": str(error)[:400],
+                    "checkpoints": "retained; no candidate accepted",
+                }
+                if status_path is not None:
+                    atomic_json(status_path, {**original_state, **event})
+                ActivityLog(root, "controller", "tester").write(
+                    "errors", "remote-helper-unavailable", event
+                )
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with log_path.open("a") as log:
+                    log.write(json.dumps(event) + "\n")
+                print(json.dumps(event), flush=True)
+            else:
+                if attempt:
+                    if status_path is not None:
+                        atomic_json(status_path, original_state)
+                    event = {"endpoint": profile["runtime"]["base_url"], "attempts": attempt}
+                    ActivityLog(root, "controller", "tester").write(
+                        "steps", "remote-helper-reconnected", event
+                    )
+                    print("Remote helper reconnected:", json.dumps(event), flush=True)
+                yield actual
+                return
+        time.sleep(30)
+
+
+def validate_concurrent_researcher(profile: dict) -> None:
+    from rlm.v100.remote_helper import remote_profile, validate_remote
+
+    if remote_profile(profile):
+        validate_remote(profile)
+        return
+    if (
+        profile.get("resources", {}).get("device") != "cpu"
+        or profile["server"].get("gpu_layers") != 0
+        or profile["server"]["draft_model"]
+        or profile["server"]["slots"] != 1
+        or not 1 <= profile["server"]["threads"] <= 4
+    ):
+        raise ValueError(
+            "Concurrent researcher must use a pinned remote helper or CPU only, one slot and at most four threads"
+        )
 
 
 def helper_client(
@@ -256,9 +335,11 @@ def train_branch(
                     )
                 if jobs and submitted < len(jobs) and future is None and observed:
                     assert researcher is not None
-                    if available_ram_gib() >= researcher.get("resources", {}).get(
-                        "min_available_ram_gib", 6
-                    ):
+                    from rlm.v100.remote_helper import remote_profile
+
+                    if remote_profile(researcher) or available_ram_gib() >= researcher.get(
+                        "resources", {}
+                    ).get("min_available_ram_gib", 6):
                         job = jobs[submitted]
                         shared = SharedLab(root / "research/state/competition.sqlite3")
                         try:
@@ -338,16 +419,7 @@ def run_duel(
         raise ValueError("Unknown code-candidate branch")
     if researcher_path:
         helper = load_profile(researcher_path, root)
-        if (
-            helper.get("resources", {}).get("device") != "cpu"
-            or helper["server"].get("gpu_layers") != 0
-            or helper["server"]["draft_model"]
-            or helper["server"]["slots"] != 1
-            or not 1 <= helper["server"]["threads"] <= 4
-        ):
-            raise ValueError(
-                "Concurrent researcher must use CPU only, one slot and at most four threads"
-            )
+        validate_concurrent_researcher(helper)
     for path in code_candidates.values():
         from rlm.v100.code_lab import verify_code
 
@@ -364,7 +436,7 @@ def run_duel(
     )
     from rlm.v100.architectures import resource_lease
 
-    # CPU helper remains loaded while each GPU branch learns. A/B are not loaded
+    # CPU or external GPU helper stays available while each local branch learns. A/B are not loaded
     # together. No arbitrary host server is stopped and no hidden audit is shared.
     with resource_lease(root, "cuda"):
         if researcher_path:
@@ -395,7 +467,7 @@ def run_branches(
 
     reports = {}
     for branch in ("A", "B"):
-        print(f"Branch {branch}: training, with CPU research if configured", flush=True)
+        print(f"Branch {branch}: training, with separate helper research if configured", flush=True)
         require_idle_gpu()
         item = bundle["branches"][branch]
         profile = json.loads(Path(item["profile"]).read_text())

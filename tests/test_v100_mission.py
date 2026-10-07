@@ -417,6 +417,7 @@ def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
         yield chosen
 
     monkeypatch.setattr(mission, "managed_server", server)
+    monkeypatch.setattr(mission, "waiting_researcher", server)
     monkeypatch.setattr(mission, "require_idle_gpu", lambda: None)
     monkeypatch.setattr(mission, "gpu_free_gib", lambda: next(capacities))
     monkeypatch.setattr(mission, "helper_client", lambda *args: None)
@@ -478,6 +479,7 @@ def test_first_update_can_use_verified_seed_then_failed_upgrade_retains_parent(
         yield profile
 
     monkeypatch.setattr(continuous, "managed_server", server)
+    monkeypatch.setattr(continuous, "waiting_researcher", server)
     monkeypatch.setattr(continuous, "require_idle_gpu", lambda: None)
     monkeypatch.setattr(continuous, "helper_client", lambda *args: None)
     monkeypatch.setattr(architectures, "prepare_inputs", lambda *args: None)
