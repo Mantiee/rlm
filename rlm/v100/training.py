@@ -18,8 +18,16 @@ def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], li
         raise ValueError("Empty dataset")
     for record in records:
         verification = record.get("verification", {})
-        if verification.get("kind") != "human_feedback" or verification.get("accepted") is not True:
-            raise ValueError("Only explicit verified feedback is supported in this release")
+        if verification.get("kind") == "deterministic_reference":
+            from rlm.v100.insights import verify_record
+
+            verify_record(record)
+        elif (
+            verification.get("kind") != "human_feedback" or verification.get("accepted") is not True
+        ):
+            raise ValueError(
+                "Only explicit verified feedback or independently checked formal tasks are supported"
+            )
         if not record.get("group") or record["messages"][-1]["role"] != "assistant":
             raise ValueError("Each record needs group and final assistant answer")
     if ledger is not None:
@@ -140,6 +148,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
                 "protection.py",
                 "breeding.py",
                 "checkpointing.py",
+                "insights.py",
             )
         },
         "train_records": len(train),

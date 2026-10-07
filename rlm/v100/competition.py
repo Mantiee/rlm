@@ -106,7 +106,7 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
 
 def helper_client(profile: dict) -> LlamaCppClient:
     settings = profile["runtime"]
-    return LlamaCppClient(
+    client = LlamaCppClient(
         model_name=settings["model_name"],
         base_url=settings["base_url"],
         context_window=settings["context_window"],
@@ -114,6 +114,8 @@ def helper_client(profile: dict) -> LlamaCppClient:
         sampling_args={"max_tokens": settings["max_output_tokens"]},
         enable_thinking=False,
     )
+    client.research_config = profile.get("research", {})
+    return client
 
 
 def complete_metrics(path: Path) -> list[dict]:
@@ -249,6 +251,8 @@ def run_duel(
 
     output, root, suite = output.resolve(), root.resolve(), suite.resolve()
     bundle = load_duel(output)
+    if bundle.get("goal") and bundle["goal"]["suite_sha256"] != file_hash(suite):
+        raise ValueError("Duel suite differs from its user-owned objective")
     if Path(bundle["root"]).resolve() != root.resolve():
         raise ValueError("Duel belongs to a different lab root")
     if (output / "judgment.json").exists():
@@ -301,16 +305,20 @@ def run_duel(
             "researcher_profile": str(researcher_path) if researcher_path else None,
         },
     )
-    require_idle_gpu()
+    from rlm.v100.architectures import resource_lease
+
     # CPU helper remains loaded while each GPU branch learns. A/B are not loaded
     # together. No arbitrary host server is stopped and no hidden audit is shared.
-    if researcher_path:
-        with managed_server(researcher_path, root, output / "researcher.log") as researcher:
+    with resource_lease(root, "cuda"):
+        if researcher_path:
+            with managed_server(researcher_path, root, output / "researcher.log") as researcher:
+                reports = run_branches(
+                    output, root, suite, bundle, researcher, train_timeout, code_candidates
+                )
+        else:
             reports = run_branches(
-                output, root, suite, bundle, researcher, train_timeout, code_candidates
+                output, root, suite, bundle, None, train_timeout, code_candidates
             )
-    else:
-        reports = run_branches(output, root, suite, bundle, None, train_timeout, code_candidates)
     return judge_duel(output, baseline, reports)
 
 
@@ -323,7 +331,9 @@ def run_branches(
     train_timeout: int,
     code_candidates: dict[str, Path],
 ) -> dict:
+    from rlm.v100.efficiency import observed_training
     from rlm.v100.evaluation import evaluate_suite
+    from rlm.v100.protection import file_hash
     from rlm.v100.serving import assert_served_expert
 
     reports = {}
@@ -332,11 +342,15 @@ def run_branches(
         require_idle_gpu()
         item = bundle["branches"][branch]
         profile = json.loads(Path(item["profile"]).read_text())
+        started = time.monotonic()
         results = train_branch(
             root, output, branch, item, researcher, train_timeout, code_candidates.get(branch)
         )
+        training_seconds = time.monotonic() - started
         print(f"Branch {branch}: exporting and independent development evaluation", flush=True)
+        started = time.monotonic()
         subprocess.run(command(root, Path(item["profile"]), "export-model"), check=True)
+        export_seconds = time.monotonic() - started
         serving = copy.deepcopy(profile)
         serving["server"].update(
             model=str(Path(profile["training"]["output"]) / "export-Q6_K.gguf"), draft_model=""
@@ -344,6 +358,7 @@ def run_branches(
         serving["runtime"]["model_version"] = f"{output.name}-{branch}"
         serving_path = output / branch / "serving.json"
         atomic_json(serving_path, serving)
+        started = time.monotonic()
         with managed_server(serving_path, root, output / branch / "server.log"):
             client = helper_client(serving)
             assert_served_expert(client, serving, root)
@@ -352,16 +367,37 @@ def run_branches(
             if results:
                 review = review_research(client, branch, results, root)
                 atomic_json(output / branch / "research-review.json", review)
+        evaluation_seconds = time.monotonic() - started
+        performance = {
+            "schema": "v100-performance-v1",
+            "model_sha256": reports[branch]["model_sha256"],
+            "quality_report_sha256": file_hash(report_path),
+            "training_wall_seconds": training_seconds,
+            "export_wall_seconds": export_seconds,
+            "evaluation_wall_seconds": evaluation_seconds,
+            "total_wall_seconds": training_seconds + export_seconds + evaluation_seconds,
+            "learner_reported": observed_training(
+                Path(profile["training"]["output"]) / "metrics.jsonl"
+            ),
+            "scope": "Host wall time includes loading, validation, saves, pending helpers and export; single trial, not a global optimum",
+        }
+        atomic_json(output / branch / "performance.json", performance)
         shared = SharedLab(Path(bundle["shared_memory"]))
         try:
             shared.append(
                 branch,
                 "training",
                 {
-                    "candidate": profile["training"]["output"],
-                    "best": json.loads(
+                    "parameters": item["decision"]["parameters"],
+                    "measured_cost": {
+                        key: performance[key]
+                        for key in ("training_wall_seconds", "total_wall_seconds")
+                    },
+                    "learner_reported": performance["learner_reported"],
+                    "best_eval_loss": json.loads(
                         (Path(profile["training"]["output"]) / "best.json").read_text()
-                    ),
+                    )["eval_loss"],
+                    "candidate": profile["training"]["output"],
                 },
             )
         finally:
@@ -402,6 +438,11 @@ def evolve(
     current, replay, rounds = copy.deepcopy(profile), None, []
     gates = list(baselines)
     for generation in range(1, generations + 1):
+        from rlm.v100.insights import extend_pool
+
+        next_pool = output / f"pool-{generation:02d}.jsonl"
+        if extend_pool(pool, root, next_pool):
+            pool = next_pool
         require_idle_gpu()
         directory = output / f"generation-{generation:02d}"
         planning_profile = output / f"planner-{generation:02d}.json"
@@ -411,7 +452,9 @@ def evolve(
         # Parent is served only while choosing the next experiments, then unloaded
         # before GPU training. CPU research is concurrent with the training itself.
         with managed_server(planning_profile, root, output / f"planner-{generation:02d}.log"):
-            plan_duel(helper_client(planner), current, pool, directory, root, replay=replay)
+            plan_duel(
+                helper_client(planner), current, pool, directory, root, replay=replay, recent=True
+            )
         verdict = run_duel(directory, root, suite, gates, researcher_path, train_timeout)
         rounds.append({"directory": str(directory), "judgment": verdict})
         result = {
@@ -424,7 +467,9 @@ def evolve(
             break
         # Equal task scores do not justify inventing a quality ranking. A is the
         # declared deterministic continuation choice, while both are preserved.
-        winner = "A" if verdict["winner"] == "tie" else verdict["winner"]
+        winner = verdict.get("continuation_branch") or (
+            "A" if verdict["winner"] == "tie" else verdict["winner"]
+        )
         bundle = load_duel(directory)
         selected = json.loads(Path(bundle["branches"][winner]["profile"]).read_text())
         adapter = Path(selected["training"]["output"]) / "candidate"

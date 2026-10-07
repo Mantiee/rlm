@@ -20,6 +20,10 @@ PROMPT_FILES = {
     "rlm/v100/cli.py",
     "rlm/v100/code_lab.py",
     "rlm/utils/prompts.py",
+    "rlm/v100/research_tools.py",
+    "rlm/v100/goals.py",
+    "rlm/v100/architectures.py",
+    "rlm/v100/architecture_worker.py",
 }
 
 
@@ -191,15 +195,21 @@ def sandbox_environment(gpu: bool = False) -> dict:
     }
 
 
-def check_code(output: Path, timeout: int = 600) -> dict:
+def check_code(output: Path, timeout: int = 600, cpu_threads: int = 8) -> dict:
     report = verify_code(output)
     if not 1 <= timeout <= 3600:
         raise ValueError("Invalid code-check timeout")
+    if type(cpu_threads) is not int or not 1 <= cpu_threads <= 8:
+        raise ValueError("Code checks require 1-8 CPU threads")
     runner = "import runpy,sys;sys.path.insert(0,'/work');sys.argv=['pytest','/checks/tests','-q','--basetemp=/tmp/checks','-p','no:cacheprovider'];runpy.run_module('pytest',run_name='__main__')"
     args = sandbox_command(output, [sys.executable, "-I", "-c", runner])
+    if cpu_threads <= 4:
+        args = ["/usr/bin/nice", "-n", "10", *args]
+    environment = sandbox_environment()
+    environment.update(OMP_NUM_THREADS=str(cpu_threads), MKL_NUM_THREADS=str(cpu_threads))
     with (output / "checks.log").open("w") as log:
         result = subprocess.run(
-            args, env=sandbox_environment(), stdout=log, stderr=subprocess.STDOUT, timeout=timeout
+            args, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=timeout
         )
     # The mutable worker cannot write this result or the immutable checks tree.
     verify_code(output)

@@ -91,6 +91,26 @@ def main() -> None:
     parser.add_argument("--profile", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
+    objective = sub.add_parser(
+        "set-goal",
+        help="Set the user-owned shared A/B objective and bind its fixed development suite",
+    )
+    objective.add_argument("text")
+    objective.add_argument("--suite", type=Path, required=True)
+    pilot_inputs = sub.add_parser(
+        "prepare-submodels",
+        help="Snapshot verified data and fixed tests for autonomous CPU architecture pilots",
+    )
+    pilot_inputs.add_argument("pool", type=Path)
+    pilot_inputs.add_argument("--suite", type=Path, required=True)
+    pilot = sub.add_parser(
+        "run-submodel",
+        help="Train all weights of an isolated architecture candidate; does not replace Gemma",
+    )
+    pilot.add_argument("candidate_id")
+    pilot.add_argument("pool", type=Path)
+    pilot.add_argument("--suite", type=Path, required=True)
+    pilot.add_argument("--budget", type=Path, help="Explicit CPU or exclusive-GPU budget JSON")
     sub.add_parser("serve")
     sub.add_parser(
         "prepare-mtp",
@@ -201,6 +221,17 @@ def main() -> None:
     evolution.add_argument("--researcher-profile", type=Path)
     evolution.add_argument("--generations", type=int, default=2)
     evolution.add_argument("--timeout", type=int, default=7200)
+    loop = sub.add_parser(
+        "learn-loop", help="Repeat R&D and verified-example training; serve between updates"
+    )
+    loop.add_argument("pool", type=Path)
+    loop.add_argument("--output", type=Path, required=True)
+    loop.add_argument("--suite", type=Path, required=True)
+    loop.add_argument("--baseline-report", type=Path, required=True, action="append")
+    loop.add_argument("--researcher-profile", type=Path, required=True)
+    loop.add_argument("--cycles", type=int, default=4, help="0 runs until interrupted")
+    loop.add_argument("--interval", type=int, default=600)
+    loop.add_argument("--timeout", type=int, default=7200)
     code = sub.add_parser("propose-code", help="Create an isolated algorithm-code candidate")
     code.add_argument("repository", type=Path)
     code.add_argument("file")
@@ -214,6 +245,50 @@ def main() -> None:
     root = args.root.expanduser().resolve()
     profile = load_profile(args.profile or root / "research/v100.toml", root)
     registry = ExpertRegistry(root / "research/experts")
+    if args.command == "set-goal":
+        from rlm.v100.goals import set_goal
+
+        print(json.dumps(set_goal(root, args.text, args.suite), ensure_ascii=False, indent=2))
+        return
+    if args.command == "prepare-submodels":
+        from rlm.v100.architectures import prepare_inputs
+
+        print(json.dumps(prepare_inputs(root, args.pool, args.suite), indent=2))
+        return
+    if args.command == "run-submodel":
+        from rlm.v100.architectures import run_candidate
+
+        budget = json.loads(args.budget.read_text()) if args.budget else None
+        print(
+            json.dumps(
+                run_candidate(root, args.candidate_id, args.pool, args.suite, budget),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if args.command == "learn-loop":
+        from rlm.v100.continuous import learn_loop
+
+        print(
+            json.dumps(
+                learn_loop(
+                    profile,
+                    root,
+                    args.pool,
+                    args.output,
+                    args.suite,
+                    [json.loads(path.read_text()) for path in args.baseline_report],
+                    args.researcher_profile,
+                    args.cycles,
+                    args.interval,
+                    args.timeout,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
     if args.command == "evolve":
         from rlm.v100.competition import evolve
 

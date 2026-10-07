@@ -411,7 +411,7 @@ def test_evolution_preserves_all_eligible_reports_replays_and_stops_on_failure(
     plans, gate_counts = [], []
     real_plan = experiments.plan_duel
 
-    def plan(client, settings, pool, output, root, replay=None):
+    def plan(client, settings, pool, output, root, replay=None, recent=False):
         plans.append(
             {
                 "init": settings["training"]["init_adapter"],
@@ -419,7 +419,7 @@ def test_evolution_preserves_all_eligible_reports_replays_and_stops_on_failure(
                 "replay": replay,
             }
         )
-        return real_plan(client, settings, pool, output, root, replay)
+        return real_plan(client, settings, pool, output, root, replay, recent=recent)
 
     monkeypatch.setattr(competition, "plan_duel", plan)
 

@@ -1,4 +1,4 @@
-# V100 continual learning, v100.5
+# V100 continual learning, v100.6
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,6 +6,25 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
+Kod v100.6 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
+pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
+
+## Twój cel i współpraca A/B
+
+`set-goal TEXT --suite DEV_SUITE` ustawia wspólny cel opisany Twoimi słowami
+i wiąże go z SHA256 zewnętrznego zestawu testów. Kolejne cele zachowują osobne
+snapshoty. Planner, testerzy i researcherzy otrzymują cel i publiczne wnioski
+obu gałęzi. A/B mogą proponować różne rozwiązania albo współpracować.
+Wygrywa liczba niezależnie zaliczonych zadań po bramkach zachowania dawnych
+wyników; model nie może zmienić kryterium ani zatwierdzić swojego wyniku.
+Sam tekst celu nie tworzy poprawnego benchmarku: testy muszą mierzyć ten cel.
+
+Koszt mierzy kontroler: trening, eksport, ocena i całkowity czas próby.
+Przy równej jakości kontynuuje gałąź szybsza o co najmniej 5%; mniejsza różnica
+lub brak poprawnych pomiarów daje jawne kontynuowanie A. Obie wersje zostają.
+To heurystyka z pojedynczej próby, nie statystyczny dowód najlepszego ustawienia.
+Raport `performance.json` jest powiązany z wagami i raportem jakości przez SHA256.
 
 ## Zachowanie wcześniejszych wersji
 
@@ -22,7 +41,8 @@ Właściciel konta może zmienić uprawnienia plików; to nie ochrona przed admi
 
 ## Wagi rzeczywiście się uczą
 
-`train DATASET` trenuje osobnego kandydata LoRA na zatwierdzonym feedbacku. Eksport
+`train DATASET` trenuje osobnego kandydata LoRA na zatwierdzonym feedbacku lub
+kanonicznych przykładach ponownie sprawdzonych przez zewnętrzny kalkulator. Eksport
 pamięci obejmuje również poprzednie zatwierdzone przykłady jako replay. Model
 nie zatwierdza własnych odpowiedzi. Tylko parametry kandydata LoRA są trenowalne.
 Źródła pozostają przypisane do train/validation w SQLite między rundami; próba
@@ -62,13 +82,14 @@ curriculum. Walidacja jest identyczna w obu gałęziach. `--replay PREVIOUS_POOL
 wymusza zachowanie wcześniejszych przykładów treningowych w następnej rundzie.
 Rozmowy, hipotezy i wyniki development trafiają do wspólnego
 `research/state/competition.sqlite3`; do kontekstu trafiają ograniczone fragmenty.
-Nie jest to samoczynne generowanie prawdziwych odpowiedzi ani przyjmowanie
-niezweryfikowanych danych od pomocników do treningu.
+Odpowiedzi pomocników nie stają się automatycznie prawdziwymi etykietami treningu.
+Nowy mechanizm formalnych ćwiczeń opisano poniżej.
 
 `prepare-researcher` przygotowuje osobny profil `research/researcher-cpu.toml`
 na porcie 8090. Pobiera oficjalny Qwen3-0.6B Q8_0 GGUF, przypina rewizję i sprawdza
 SHA256 artefaktu. Używa tego samego skompilowanego llama-server, `gpu_layers=0`,
-4 wątków, kontekstu 2048 i nice=10. Kontroler wyłącza widoczność CUDA dla tego
+4 wątków, kontekstu 4096 dla nowych profili i nice=10. Istniejący profil nie jest
+nadpisywany. Kontroler wyłącza widoczność CUDA dla tego
 procesu. Rozmiar pliku wag około 639 MB nie obejmuje KV cache i buforów procesu.
 
 `run-duel DIR --suite DEV_SUITE --baseline-report BASELINE --researcher-profile CPU_PROFILE`
@@ -76,8 +97,8 @@ trenuje A, eksportuje Q6_K, ocenia A, a następnie robi to samo z B. Na V100 jes
 jedna duża gałąź naraz. Mały model CPU pozostaje uruchomiony równolegle z treningiem
 GPU i czyta aktualne, kompletne wiersze metryk. Planner może zlecić do 3 zadań na
 gałąź jako tester/researcher/critic. To różne role korzystające z jednego serwera
-0.6B, nie niezależnie trenowane sieci potomne. Pomocnicy proponują hipotezy i testy;
-nie wykonują dowolnego kodu ani nie są sędziami jakości. Błąd/timeout pomocnika
+0.6B, nie niezależnie trenowane sieci potomne. Dodatkowo mogą tworzyć i trenować
+osobne małe sieci przez izolowane narzędzia poniżej. Nie są sędziami jakości. Błąd/timeout pomocnika
 zapisuje się jawnie, bez przerwania poprawnie działającego treningu.
 
 Model główny po eksporcie przegląda wyniki pomocników, może odrzucić wszystkie i
@@ -105,20 +126,108 @@ Można podać wiele `--baseline-report` dla wcześniejszych rodziców.
 Raporty są związane z SHA modelu, suite i warunkami wykonania. Wynik zapisuje się
 w `judgment.json`. Nie promuje automatycznie eksperta. Suite development jest
 jawna i podatna na przeuczenie przy wielu rundach, więc końcowy audit musi pozostać
-oddzielny. Zmiana architektury i trening sieci pomocników pozostają kolejnymi
-eksperymentami, nie gotowymi funkcjami tej wersji.
+oddzielny. Eksperymenty nowych architektur mają osobny protokół; ten sędzia
+duelu ocenia wyłącznie kandydatów obecnej głównej ścieżki Gemma/LoRA.
 
 `evolve POOL --output DIR --suite DEV_SUITE --baseline-report BASELINE --researcher-profile CPU_PROFILE`
 automatyzuje 1-4 takich pokoleń (domyślnie 2). Po zakończeniu pokolenia unloaduje
 GPU, a kolejną parę planuje jego zwycięzca; używa jego adaptera jako inicjalizacji
 i zamrożonego nauczyciela. Zachowuje poprzedni pool jako obowiązkowy replay oraz
 raporty wszystkich wcześniejszych dopuszczonych gałęzi jako bramki regresji.
-Przy remisie kontynuuje jawnie A, zachowując również B; przy braku dopuszczonego
+Przy remisie jakości kontynuuje według pomiaru czasu opisanego wyżej,
+zachowując również drugą gałąź; przy braku dopuszczonego
 zwycięzcy kończy cykl. `evolution.json` zapisuje wyniki każdego pokolenia.
-Nie podmienia serwowanego modelu, nie promuje eksperta i nie zatwierdza odpowiedzi
-pomocników. To ograniczona ewolucja adapterów/hiperparametrów, bez automatycznej
+Nie podmienia głównego profilu ani nie promuje eksperta. Pobiera nowe formalne
+przykłady wyłącznie po niezależnym sprawdzeniu i przyjęciu przez rodzica.
+To ograniczona ewolucja adapterów/hiperparametrów, bez automatycznej
 przebudowy architektury ani krzyżowania wag. Cross breeding jest osobną komendą.
 Pełny wielopokoleniowy cykl nie ma jeszcze automatycznego wznowienia po awarii.
+
+## Samodzielne wnioski, internet i zmiana wag
+
+Pomocnik proponuje do dwóch nowych ćwiczeń: ograniczoną arytmetykę całkowitą
+lub równanie liniowe. Stały kalkulator hosta liczy odpowiedź, nie wykonując
+zaproponowanego Pythona. Wpis trafia do kolejki pending w
+`research/state/verified-insights.sqlite3`. Rodzic może go odrzucić; dopiero
+sprawdzone i przyjęte ćwiczenie wchodzi do nowego snapshotu danych.
+Dedup, ponowna walidacja etykiet i stałe podziały źródeł obejmują kolejne rundy.
+Ta wersja nie potwierdza automatycznie dowolnej tezy naukowej, faktu z WWW ani
+swobodnego podsumowania. Takie wnioski zostają w pamięci jako hipotezy.
+
+Researcher wybiera narzędzia, maksymalnie dwa wywołania na zadanie. Może czytać
+publiczny HTTPS tekst/HTML/JSON z limitem 256 KiB i wykonywać stałe testy
+istniejącego kandydata kodu przez bubblewrap. Czytnik zachowuje URL, SHA i tekst,
+blokuje adresy lokalne/prywatne oraz ponownie sprawdza przekierowania.
+Nie jest wyszukiwarką, przeglądarką z logowaniem ani czytnikiem PDF.
+Nie ma konsultacji przez płatne API. Automatyzacja darmowego LLM przez stronę,
+tworzenie kont, logowanie i CAPTCHA nie są podłączone; wymagają konkretnej
+usługi i jej obsługi. Nie ma obchodzenia limitów przez kolejne konta.
+
+`learn-loop POOL --output DIR --suite DEV_SUITE --baseline-report BASELINE --researcher-profile CPU_PROFILE`
+powtarza R&D A/B i weryfikację. Tylko NOWE sprawdzone, przyjęte przykłady
+uruchamiają kolejną rundę optimizer/backward z replay i KL. Między rundami
+serwuje bieżącą wersję; przed treningiem zatrzymuje tylko własne serwery GPU.
+CPU pomocnik może pracować podczas treningu. Nie zapewnia równoczesnej
+dostępności głównego modelu w trakcie całej aktualizacji.
+
+Domyślnie wykonuje 4 cykle; `--cycles 0` działa do przerwania. Bez nowych danych
+czeka `--interval` sekund (domyślnie 600), bez trenowania identycznego zbioru.
+Wymaga 160 GiB wolnego dysku przed parą eksportów, limitu 10000 rekordów replay,
+28 GiB wolnego VRAM przed fazą treningu i stałego celu/suite. Zmiana celu
+przerywa tę serię. Nie śledzi dowolnych późniejszych zmian seedowego pliku.
+Przechodząca wersja jest wybierana do następnej fazy serwowania, odrzucona nie
+zastępuje poprzedniej. Zachowuje wszystkie historyczne bramki jakości.
+Po skończonej liczbie cykli własne serwery są zatrzymane; `live.json` zawiera
+wybrany profil do późniejszego `serve`, `ask` i kolejnej rundy. Oryginalny profil
+i wrapper pozostają bez zmian. `state.json` zapisuje przebieg, ale cały loop
+nie ma jeszcze automatycznego wznowienia po awarii. Wznowienie pojedynczego
+kompletnego treningu działa przez jego profil i zgodny manifest.
+
+Wagi LoRA zmieniają się w krokach optymalizatora, a eksport scala je z bazą.
+Samo zapisanie wniosku nie aktualizuje parametrów. Ten cykl automatyzuje drogę
+od sprawdzonego wniosku do danych i rzeczywistego treningu. Nie gwarantuje
+całkowitego braku catastrophic forgetting poza skończonymi testami.
+
+## Nowe sieci i własne architektury
+
+Narzędzia `create_submodel`, `support_submodel`, `test_submodel` pozwalają A/B
+napisać cały kod małej sieci PyTorch i trenować wszystkie jej wagi od zera.
+Może to być np. RNN, GRU lub mały transformer. Kontrakt jest stały: build(config)
+zwraca nn.Module, wejście to tokeny bajtowe [B,T], wyjście logits [B,T,257].
+To inny tokenizer i backend niż Gemma. Kod musi sam zapewnić przyczynowość.
+Nie ma dowodu poprawności dowolnego wygenerowanego algorytmu.
+
+Wspólna próba wymaga osobnych zgód A i B na identyczny kod, cel oraz budżet.
+Zmiana budżetu unieważnia poprzednie zgody. Propozycje i wyniki są publiczne
+w pamięci obu gałęzi, więc mogą rozwijać pomysły partnera. Model nie zmienia
+system promptu, zewnętrznego sędziego ani zaakceptowanych poprzednich wag.
+
+`prepare-submodels POOL --suite DEV_SUITE` przygotowuje kontrolowane snapshoty.
+Loop robi to automatycznie. Samodzielny tester CPU dostaje domyślnie 2 wątki,
+2M parametrów, 256 bajtów kontekstu, 40 kroków, 120 s na każdą fazę,
+8 GiB limitu przestrzeni wirtualnej i 512 MiB artefaktów. Próbę odkłada, jeśli
+obok rodzica pozostaje mniej niż 12 GiB dostępnego RAM. Jeden taki trening CPU
+naraz. To dodatki do głównego GPU, a nie jego zastąpienie.
+
+`run-submodel ID POOL --suite DEV_SUITE --budget BUDGET_JSON` pozwala jawnie
+wybrać większy budżet, także CUDA, do granic zewnętrznego kontrolera. CUDA
+wymaga wolnej V100 i korzysta z tej samej blokady co run-duel. Nie ładuje dwóch
+pełnych głównych Gemm naraz. V100 nie ma MIG: nie tworzymy sprzętowych partycji
+VRAM ani nie gwarantujemy, że niekooperujący kod nie przekroczy limitu chwilowo.
+Limit allocatora PyTorch, okresowe monitorowanie RAM/VRAM/artefaktów oraz
+zatrzymanie grupy procesów po przekroczeniu budżetu ograniczają próbę.
+CPU dodatkowo ma prlimit AS/CPU/rozmiaru pliku; CUDA nie ma limitu przestrzeni
+wirtualnej ze względu na rezerwacje adresowe sterownika. Wszystkie próby wymagają
+bubblewrap i prlimit, bez sieci i zastępczego wykonania na hoście.
+
+Trening widzi wyłącznie część train. Ocena dostaje pytania bez gold odpowiedzi,
+a exact/contains liczy zewnętrzny kontroler. `trial/quality.json` wiąże wynik
+z SHA kodu, wag i suite. Loss w train.log jest tylko metryką pomocniczą.
+Wybrane wagi zapisują się jako safetensors według najmniejszego obserwowanego
+training loss; te krótkie próby nie mają jeszcze pełnego wznowienia optimizer/RNG.
+Nie ma automatycznej podmiany głównej Gemmy, eksportu dowolnej architektury do
+GGUF ani krzyżowania niezgodnych sieci. Ich wyniki mogą kierować dalszym R&D;
+produkcja nowego backendu wymaga kolejnego wdrożenia i bramek jakości.
 
 ## Kandydaty zmian własnego kodu
 
@@ -242,5 +351,12 @@ Wynik v100.5: 345 zaliczonych, 63 pominięte. Hooki ruff, formatter i ty zaliczo
 przy wskazaniu Python 3.11. Wielopokoleniową orkiestrację sprawdzono przez zastępcze
 treningi/serwery: zachowuje wszystkie dopuszczone raporty rodziców, ustawia
 poprzednika jako init/nauczyciela, wymusza replay i kończy po braku zwycięzcy.
-Ladder side network, przebudowa Gemmy i inne metody pozostają eksperymentami do porównania,
-nie istniejącą funkcją. Granice badań: [FORGETTING_RESEARCH.md](FORGETTING_RESEARCH.md).
+Wynik v100.6: 382 zaliczone, 63 pominięte; hooki ruff, formatter i ty zaliczone.
+Nowe testy sprawdzają rzeczywiste zmiany LoRA od automatycznie wyliczonych etykiet
+oraz zmianę wszystkich parametrów zaufanej małej sieci CPU. Orkiestracja loopu
+jest testowana na zastępczych serwerach; ocena nowych architektur sprawdza oddzielenie
+gold odpowiedzi, dwie zgody na wspólny budżet i brak wykonania bez bubblewrap.
+Nie zmierzono jeszcze tych nowych funkcji na Twoim Debianie/V100. Rzeczywista
+izolacja wymaga testu docelowego; nie zastępujemy jej wykonywaniem kodu na hoście.
+Ladder side network oraz automatyczna przebudowa i wymiana głównej Gemmy
+pozostają kolejnymi eksperymentami. Granice badań: [FORGETTING_RESEARCH.md](FORGETTING_RESEARCH.md).

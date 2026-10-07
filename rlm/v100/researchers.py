@@ -8,7 +8,9 @@ from pathlib import Path
 from rlm.v100.agent import native_turn
 from rlm.v100.common import atomic_json
 from rlm.v100.experiments import SharedLab
+from rlm.v100.insights import InsightQueue
 from rlm.v100.protection import file_hash
+from rlm.v100.research_tools import research_turn
 from rlm.v100.speculative import validate_gguf
 
 MODEL_ID = "Qwen/Qwen3-0.6B-GGUF"
@@ -37,14 +39,14 @@ def prepare_researcher(profile: dict, root: Path) -> Path:
         base_url="http://127.0.0.1:8090",
         model_name="researcher",
         model_version="qwen3-06b-q8-" + revision[:8],
-        context_window=2048,
+        context_window=4096,
         max_output_tokens=384,
         max_timeout=90,
     )
     chosen["server"].update(
         model=str(model),
         gpu_layers=0,
-        context_per_slot=2048,
+        context_per_slot=4096,
         slots=1,
         threads=4,
         batch_size=128,
@@ -83,13 +85,29 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
         raise ValueError("Invalid researcher assignment")
     if not job["brief"].strip() or len(job["brief"]) > 400:
         raise ValueError("Research assignment exceeds its budget")
+    from rlm.v100.goals import load_goal
+
+    client.research_owner = branch
     schema = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["observation", "hypothesis", "suggested_test"],
+        "required": ["observation", "hypothesis", "suggested_test", "exercises"],
         "properties": {
             name: {"type": "string", "maxLength": 1600}
             for name in ("observation", "hypothesis", "suggested_test")
+        },
+    }
+    schema["properties"]["exercises"] = {
+        "type": "array",
+        "maxItems": 2,
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "expression"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["arithmetic", "linear_equation"]},
+                "expression": {"type": "string", "maxLength": 160},
+            },
         },
     }
     shared = SharedLab(root / "research/state/competition.sqlite3")
@@ -104,18 +122,19 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
         ]
     finally:
         shared.close()
-    message = native_turn(
+    message = research_turn(
         client,
         [
             {
                 "role": "system",
-                "content": "You are a small lab assistant. Analyze the assigned development observations and public peer notes. Be concise, at most 80 words total. Separate observations from hypotheses. Propose a falsifiable test or counterexample. Do not claim to have run a test or accessed data you have not seen. Your answer is advisory, never a training approval or quality verdict.",
+                "content": "You are a small lab assistant. Analyze the assigned development observations and public peer notes. Be concise, at most 80 words of prose. Separate observations from hypotheses. Propose a falsifiable test or counterexample. Also propose up to two useful NEW formal exercises for future learning: bounded integer arithmetic with +,-,*,//,% and parentheses, or linear equations of the form a*x+b=c or a*x-b=c with small integers and nonzero a. Choose useful challenges distinct from previous public notes. Do not supply or certify their answers: the host reference computes them independently. Other hypotheses remain advisory, never training approval or quality verdict.",
             },
             {
                 "role": "user",
                 "content": json.dumps(
                     {
                         "branch": branch,
+                        "user_goal": load_goal(root),
                         "assignment": job,
                         "observations": observations,
                         "public_peer_notes": history,
@@ -124,13 +143,32 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
                 ),
             },
         ],
-        response_format={"type": "json_object", "schema": schema},
+        schema,
+        root,
     )
     result = json.loads(message["content"])
-    if set(result) != set(schema["properties"]) or not all(
-        isinstance(value, str) and len(value) <= 1600 for value in result.values()
+    if (
+        set(result) != set(schema["properties"])
+        or not all(
+            isinstance(result[name], str) and len(result[name]) <= 1600
+            for name in ("observation", "hypothesis", "suggested_test")
+        )
+        or not isinstance(result["exercises"], list)
+        or len(result["exercises"]) > 2
     ):
         raise ValueError("Invalid researcher result")
+    checks = []
+    queue = InsightQueue(root)
+    try:
+        for task in result["exercises"]:
+            try:
+                checks.append({"task": task, "verified": True, "new": queue.add(branch, task)})
+            except (ValueError, SyntaxError, ZeroDivisionError) as error:
+                checks.append({"task": task, "verified": False, "reason": str(error)[:200]})
+    finally:
+        queue.close()
+    result["exercise_checks"] = checks
+    result["research_trace"] = message.get("research_trace", [])
     result.update(status="unverified hypothesis", role=job["role"], model=client.model_name)
     shared = SharedLab(root / "research/state/competition.sqlite3")
     try:
@@ -182,6 +220,14 @@ def review_research(client, branch: str, results: list[dict], root: Path) -> dic
         raise ValueError("Invalid retained worker indices")
     if not isinstance(decision["conclusion"], str) or len(decision["conclusion"]) > 1600:
         raise ValueError("Invalid researcher conclusion")
+    queue = InsightQueue(root)
+    try:
+        for index in indices:
+            for checked in results[index].get("exercise_checks", []):
+                if checked.get("verified") is True:
+                    queue.admit(checked["task"])
+    finally:
+        queue.close()
     shared = SharedLab(root / "research/state/competition.sqlite3")
     try:
         shared.append(
