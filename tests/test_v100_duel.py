@@ -131,6 +131,73 @@ def test_native_planner_rejects_unknown_examples_and_does_not_expose_answers(tmp
         experiments.choose_experiment(SimpleNamespace(), "A", records()[:2], profile(tmp_path), [])
 
 
+def test_planner_repairs_out_of_budget_choice_before_any_training(tmp_path, monkeypatch):
+    valid = decision(records()[0])
+    invalid = deepcopy(valid)
+    invalid["parameters"]["learning_rate"] = 0.001
+    responses = iter([invalid, valid])
+    calls = []
+    client = SimpleNamespace(activity_root=tmp_path, enable_thinking=True, sampling_args={})
+
+    def turn(selected, messages, **kwargs):
+        calls.append(deepcopy(messages))
+        assert (
+            kwargs["response_format"]["schema"]["properties"]["parameters"]["properties"][
+                "learning_rate"
+            ]["enum"]
+            == experiments.parameter_schema(profile(tmp_path))["learning_rate"]["enum"]
+        )
+        return {"content": json.dumps(next(responses))}
+
+    monkeypatch.setattr(experiments, "native_turn", turn)
+    result = experiments.choose_experiment(client, "A", records()[:2], profile(tmp_path), [])
+    assert result == valid
+    feedback = json.loads(calls[1][-1]["content"])
+    assert "learning_rate=0.001" in feedback["host_validation_error"]
+    assert feedback["budget"]["learning_rate"]["maximum"] == 0.0002
+    assert "Verified answer" not in json.dumps(calls)
+    assert client.sampling_args == {} and client.enable_thinking is True
+    journals = list((tmp_path / "research/logs/activity").glob("*/A/model/errors.jsonl"))
+    event = json.loads(journals[0].read_text())
+    assert event["kind"] == "experiment-plan-rejected"
+    assert event["payload"]["accepted"] is False
+    assert not (tmp_path / "research/state/competition.sqlite3").exists()
+
+
+def test_invalid_plan_retry_is_bounded_and_never_clamps_values(tmp_path, monkeypatch):
+    proposed = decision(records()[0])
+    proposed["parameters"]["learning_rate"] = 0.001
+    calls = []
+
+    def turn(client, messages, **kwargs):
+        calls.append(deepcopy(messages))
+        return {"content": json.dumps(proposed)}
+
+    monkeypatch.setattr(experiments, "native_turn", turn)
+    with pytest.raises(ValueError, match="learning_rate=0.001"):
+        experiments.choose_experiment(SimpleNamespace(), "B", records()[:2], profile(tmp_path), [])
+    assert len(calls) == 2
+    assert proposed["parameters"]["learning_rate"] == 0.001
+
+
+def test_all_numeric_choices_are_finite_and_preserve_adapter_and_step_limits(tmp_path):
+    chosen = profile(tmp_path)
+    chosen["training"]["max_steps"] = 63
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_config.json").write_text('{"r":32}')
+    chosen["training"]["init_adapter"] = str(adapter)
+    schema = experiments.parameter_schema(chosen)
+    assert schema["rank"]["enum"] == [32]
+    assert schema["max_steps"]["enum"] == [25, 50, 63]
+    base = {key: rule["enum"][0] for key, rule in schema.items()}
+    for key, rule in schema.items():
+        for value in rule["enum"]:
+            experiments.validate_parameters({**base, key: value}, schema)
+    with pytest.raises(ValueError, match="Invalid experiment choice: learning_rate"):
+        experiments.validate_parameters({**base, "learning_rate": 0.0000123}, schema)
+
+
 def test_helpers_can_be_discarded_and_failures_are_recorded(tmp_path, monkeypatch):
     monkeypatch.setattr(
         researchers,

@@ -1,4 +1,4 @@
-# V100 continual learning, v100.17
+# V100 continual learning, v100.18
 
 ## Budżet thinking i większy kontekst, v100.16
 
@@ -751,3 +751,15 @@ are research evidence, not automatic outcome-training labels or promotion proof.
 Only independently audited forward paper resolutions enter outcome training.
 The model can choose useful markets and other income research instead; no actual
 trade, sale or paid service is enabled by a successful backtest.
+
+## V100 controller v100.18: valid experiment planning
+
+Curriculum planning now exposes finite numeric choices in the generation schema,
+including eight learning rates from 0.000001 to 0.0002. Adapter rank remains fixed
+when continuing an existing adapter, and step choices respect the current profile
+budget. The host still validates every complete plan before starting training.
+An invalid plan receives its exact validation error and one correction attempt;
+there is no silent clamping, automatic budget increase or unbounded retry.
+`experiment-plan-rejected` events identify the branch, attempt and invalid value.
+Repeated invalid plans retain the previous serving version. This fixes the planning
+path; it does not guarantee a candidate will pass quality gates or establish profit.
