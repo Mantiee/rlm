@@ -247,6 +247,10 @@ def main() -> None:
         "--context", type=int, choices=(8192, 16384, 32768, 65536, 131072), required=True
     )
     remote.add_argument("--digest", required=True)
+    sub.add_parser(
+        "repair-helper-metadata",
+        help="Migrate a stopped mission's legacy helper hash after pinned identity checks",
+    )
     duel = sub.add_parser(
         "plan-duel", help="Ask the model to plan independent bounded A/B experiments"
     )
@@ -435,6 +439,11 @@ def main() -> None:
             "Remote researcher profile:",
             prepare_remote(profile, root, args.url, args.context, args.digest),
         )
+        return
+    if args.command == "repair-helper-metadata":
+        from rlm.v100.remote_helper import migrate_remote_metadata
+
+        print(json.dumps(migrate_remote_metadata(root), ensure_ascii=False, indent=2))
         return
     if args.command == "run-duel":
         from rlm.v100.competition import run_duel

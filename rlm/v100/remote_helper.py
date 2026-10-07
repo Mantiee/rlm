@@ -27,6 +27,8 @@ MODEL = "qwen3.5:9b-q8_0"
 BACKEND = "ollama-research"
 HELPER_WORKLOAD_LOCK = threading.Lock()
 HELPER_PACING: dict[str, dict] = {}
+FULL_METADATA = "ollama-full-v1"
+STABLE_METADATA = "ollama-stable-v2"
 
 
 def helper_boot_id() -> str:
@@ -83,6 +85,8 @@ def validate_remote(profile: dict) -> None:
         or runtime.get("enable_thinking") is not False
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("model_digest", ""))
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("metadata_sha256", ""))
+        or resources.get("metadata_hash_scheme", FULL_METADATA)
+        not in (FULL_METADATA, STABLE_METADATA)
         or runtime["context_window"] not in (8192, 16384, 32768, 65536, 131072)
         or runtime["max_output_tokens"] > 1024
         or server["slots"] != 1
@@ -94,12 +98,18 @@ def validate_remote(profile: dict) -> None:
         raise ValueError("Remote helper must be a pinned text-only local Qwen researcher profile")
 
 
-def metadata_sha(info: dict) -> str:
-    import hashlib
-
-    # Include the renderer and system text; a changed server template is not
-    # silently accepted as the same experiment.
-    return hashlib.sha256(json.dumps(info, sort_keys=True).encode()).hexdigest()
+def metadata_sha(info: dict, scheme: str = FULL_METADATA) -> str:
+    if scheme not in (FULL_METADATA, STABLE_METADATA):
+        raise ValueError("Unknown remote metadata hash scheme")
+    # modified_at is a local manifest timestamp, not a model behavior field.
+    # Keep every other field, including the generated modelfile, renderer,
+    # parameters, tokenizer and template. Legacy hashes retain their old meaning.
+    chosen = (
+        {key: value for key, value in info.items() if key != "modified_at"}
+        if scheme == STABLE_METADATA
+        else info
+    )
+    return hashlib.sha256(json.dumps(chosen, sort_keys=True).encode()).hexdigest()
 
 
 class OllamaResearchClient(LlamaCppClient):
@@ -109,6 +119,7 @@ class OllamaResearchClient(LlamaCppClient):
         base_url: str,
         model_digest: str,
         metadata_sha256: str = "",
+        metadata_hash_scheme: str = FULL_METADATA,
         max_vram_gib: int = 12,
         helper_batch_tokens: int = 64,
         helper_duty_percent: int = 65,
@@ -116,6 +127,8 @@ class OllamaResearchClient(LlamaCppClient):
     ):
         origin = private_origin(base_url)
         validate_workload(helper_batch_tokens, helper_duty_percent)
+        if metadata_hash_scheme not in (FULL_METADATA, STABLE_METADATA):
+            raise ValueError("Unknown remote metadata hash scheme")
         if kwargs.get("model_name", MODEL) != MODEL or not re.fullmatch(
             r"[0-9a-f]{64}", model_digest
         ):
@@ -130,6 +143,7 @@ class OllamaResearchClient(LlamaCppClient):
         self.base_url = origin
         self.model_digest = model_digest
         self.metadata_sha256 = metadata_sha256
+        self.metadata_hash_scheme = metadata_hash_scheme
         self.max_vram_gib = max_vram_gib
         self.helper_batch_tokens = helper_batch_tokens
         self.helper_duty_percent = helper_duty_percent
@@ -198,7 +212,7 @@ class OllamaResearchClient(LlamaCppClient):
             )
 
     def remote_request(self, endpoint: str, data: dict | None = None) -> dict:
-        if endpoint not in ("/api/tags", "/api/show", "/api/ps", "/api/chat"):
+        if endpoint not in ("/api/tags", "/api/show", "/api/ps", "/api/chat", "/api/version"):
             raise ValueError("Remote research transport does not expose model management")
         with requests.Session() as session:
             session.trust_env = False
@@ -245,7 +259,10 @@ class OllamaResearchClient(LlamaCppClient):
             or len(info.get("template", "").encode()) > 16384
         ):
             raise ValueError("Remote helper metadata differs from supported text byte-BPE model")
-        if self.metadata_sha256 and metadata_sha(info) != self.metadata_sha256:
+        if (
+            self.metadata_sha256
+            and metadata_sha(info, self.metadata_hash_scheme) != self.metadata_sha256
+        ):
             raise ValueError("Remote model metadata or template changed")
         return info
 
@@ -400,6 +417,7 @@ def prepare_remote(profile: dict, root: Path, url: str, context: int, digest: st
         "device": "remote",
         "model_digest": digest,
         "metadata_sha256": "0" * 64,
+        "metadata_hash_scheme": STABLE_METADATA,
         "max_vram_gib": 12,
         "min_available_ram_gib": 0,
         "helper_batch_tokens": 64,
@@ -410,13 +428,81 @@ def prepare_remote(profile: dict, root: Path, url: str, context: int, digest: st
     client = OllamaResearchClient(
         base_url=url, model_name=MODEL, model_digest=digest, context_window=context, timeout=300
     )
-    chosen["resources"]["metadata_sha256"] = metadata_sha(client.identity())
+    info = client.identity()
+    chosen["resources"]["metadata_sha256"] = metadata_sha(info, STABLE_METADATA)
     client.loaded()
     destination = root / "research/researcher-rtx3090.json"
     if destination.exists():
         raise FileExistsError("Remote profile already exists; review it before replacing")
+    snapshot = root / "research/helper-metadata" / f"show-{time.time_ns()}.json"
+    atomic_json(snapshot, info)
+    chosen["resources"]["metadata_snapshot"] = str(snapshot.relative_to(root))
     atomic_json(destination, chosen)
     return destination
+
+
+def migrate_remote_metadata(root: Path) -> dict:
+    """Explicitly migrate a legacy hash after pinned-manifest and residency checks."""
+    import fcntl
+
+    from rlm.v100.common import load_profile
+    from rlm.v100.competition import helper_client
+    from rlm.v100.mission import status
+
+    directory = root / "research/mission"
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "start.lock").open("a") as lease:
+        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if status(root)["running"]:
+            raise RuntimeError("Stop the mission before migrating helper metadata")
+        path = root / "research/researcher-rtx3090.json"
+        original = json.loads(path.read_text())
+        profile = load_profile(path, root)
+        validate_remote(profile)
+        client = helper_client(profile, root)
+        runtime = client.remote_request("/api/version")
+        if runtime.get("version") != "0.40.0":
+            raise ValueError("Metadata migration requires the isolated Ollama 0.40.0 runtime")
+        if client.metadata_hash_scheme == STABLE_METADATA:
+            client.identity()
+            client.loaded()
+            return {"status": "already stable; identity verified", "profile": str(path)}
+        old_hash = client.metadata_sha256
+        # The user invokes this migration explicitly. Retain the pinned tag
+        # manifest digest and all supported-model checks while rebinding metadata.
+        client.metadata_sha256 = ""
+        info = client.identity()
+        client.loaded()
+        new_hash = metadata_sha(info, STABLE_METADATA)
+        client.metadata_hash_scheme = STABLE_METADATA
+        client.metadata_sha256 = new_hash
+        client.identity()
+        audit = root / "research/helper-metadata" / f"migration-{time.time_ns()}"
+        atomic_json(audit / "profile-before.json", original)
+        atomic_json(audit / "show.json", info)
+        record = {
+            "status": "migrated; pinned manifest and loaded GPU context verified",
+            "profile": str(path),
+            "audit": str(audit),
+            "model_digest": client.model_digest,
+            "old_full_hash": old_hash,
+            "current_full_hash": metadata_sha(info),
+            "stable_hash": new_hash,
+            "modified_at": info.get("modified_at"),
+            "legacy_difference": "Cause cannot be established without the original show snapshot",
+            "weights_changed": False,
+            "mission_started": False,
+        }
+        atomic_json(audit / "migration.json", record)
+        chosen = copy.deepcopy(original)
+        chosen["resources"].update(
+            metadata_hash_scheme=STABLE_METADATA,
+            metadata_sha256=new_hash,
+            metadata_snapshot=str((audit / "show.json").relative_to(root)),
+        )
+        validate_remote(chosen)
+        atomic_json(path, chosen)
+        return record
 
 
 def selected_helper(root: Path) -> Path:

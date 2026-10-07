@@ -42,6 +42,8 @@ def transport(monkeypatch):
 
     def request(self, endpoint, data=None):
         calls.append((endpoint, data))
+        if endpoint == "/api/version":
+            return {"version": state.get("version", "0.40.0")}
         if endpoint == "/api/show":
             return state["info"]
         if endpoint == "/api/tags":
@@ -81,6 +83,125 @@ def profile(root):
 def prepared(root):
     path = remote_helper.prepare_remote(profile(root), root, URL, 32768, DIGEST)
     return path, load_profile(path, root)
+
+
+def legacy_profile(root):
+    path, settings = prepared(root)
+    settings["resources"].pop("metadata_hash_scheme")
+    settings["resources"].pop("metadata_snapshot")
+    settings["resources"]["metadata_sha256"] = "e" * 64
+    atomic_json(path, settings)
+    return path, settings
+
+
+def test_stable_metadata_ignores_only_date_and_keeps_legacy_semantics(transport):
+    first = {**INFO, "modified_at": "before"}
+    second = {**INFO, "modified_at": "after"}
+    assert remote_helper.metadata_sha(first) != remote_helper.metadata_sha(second)
+    assert remote_helper.metadata_sha(first, remote_helper.STABLE_METADATA) == (
+        remote_helper.metadata_sha(second, remote_helper.STABLE_METADATA)
+    )
+    instance = client(metadata_hash_scheme=remote_helper.STABLE_METADATA)
+    instance.metadata_sha256 = remote_helper.metadata_sha(first, remote_helper.STABLE_METADATA)
+    transport[1]["info"] = second
+    instance.identity()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("template", "different"),
+        ("parameters", "temperature 2"),
+        ("renderer", "new-renderer"),
+        ("parser", "new-parser"),
+        ("modelfile", "FROM other-blob"),
+        ("messages", [{"role": "user", "content": "changed"}]),
+        ("model_info", {"tokenizer.ggml.model": "gpt2", "new_dimension": 123}),
+        ("unrecognized_behavior_field", "changed"),
+    ],
+)
+def test_stable_metadata_still_blocks_other_changes(transport, field, value):
+    instance = client(metadata_hash_scheme=remote_helper.STABLE_METADATA)
+    transport[1]["info"][field] = value
+    with pytest.raises(ValueError, match="metadata"):
+        instance.identity()
+    assert not any(endpoint == "/api/chat" for endpoint, _ in transport[0])
+
+
+def test_explicit_migration_keeps_original_profile_and_snapshots_and_is_idempotent(
+    transport, tmp_path
+):
+    path, original = legacy_profile(tmp_path)
+    report = remote_helper.migrate_remote_metadata(tmp_path)
+    current = json.loads(path.read_text())
+    audit = Path(report["audit"])
+    assert json.loads((audit / "profile-before.json").read_text()) == original
+    assert json.loads((audit / "show.json").read_text()) == INFO
+    for section in original:
+        if section != "resources":
+            assert current[section] == original[section]
+    assert current["resources"]["metadata_hash_scheme"] == remote_helper.STABLE_METADATA
+    assert report["model_digest"] == DIGEST
+    assert report["old_full_hash"] == "e" * 64
+    assert report["weights_changed"] is False and report["mission_started"] is False
+    transport[1]["info"]["modified_at"] = "another pull"
+    assert "already stable" in remote_helper.migrate_remote_metadata(tmp_path)["status"]
+    assert json.loads(path.read_text()) == current
+    transport[1]["info"]["template"] = "changed"
+    with pytest.raises(ValueError, match="metadata"):
+        remote_helper.migrate_remote_metadata(tmp_path)
+    assert json.loads(path.read_text()) == current
+    assert len(list(audit.parent.glob("migration-*"))) == 1
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"digest": "b" * 64},
+        {"version": "0.41.0"},
+        {"info": {**INFO, "system": "custom system"}},
+        {"info": {**INFO, "remote_host": "cloud"}},
+        {"loaded": {**LOADED, "context_length": 8192}},
+        {"loaded": {**LOADED, "size_vram": 13 * 2**30}},
+        {"loaded": {**LOADED, "size_vram": 4 * 2**30}},
+    ],
+)
+def test_migration_rejects_changed_identity_runtime_or_residency_without_rebinding(
+    transport, tmp_path, change
+):
+    path, _ = legacy_profile(tmp_path)
+    before = path.read_bytes()
+    transport[1].update(change)
+    with pytest.raises(ValueError):
+        remote_helper.migrate_remote_metadata(tmp_path)
+    assert path.read_bytes() == before
+    assert not list((tmp_path / "research/helper-metadata").glob("migration-*"))
+
+
+def test_migration_refuses_running_mission_and_midflight_template_change(
+    transport, tmp_path, monkeypatch
+):
+    path, _ = legacy_profile(tmp_path)
+    before = path.read_bytes()
+    monkeypatch.setattr(mission, "status", lambda root: {"running": True})
+    with pytest.raises(RuntimeError, match="Stop the mission"):
+        remote_helper.migrate_remote_metadata(tmp_path)
+    monkeypatch.setattr(mission, "status", lambda root: {"running": False})
+    request = remote_helper.OllamaResearchClient.remote_request
+
+    def swapped(self, endpoint, data=None):
+        result = request(self, endpoint, data)
+        if endpoint == "/api/ps":
+            transport[1]["info"] = {
+                **transport[1]["info"],
+                "template": "swapped during verification",
+            }
+        return result
+
+    monkeypatch.setattr(remote_helper.OllamaResearchClient, "remote_request", swapped)
+    with pytest.raises(ValueError, match="metadata"):
+        remote_helper.migrate_remote_metadata(tmp_path)
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("context", [65536, 131072])

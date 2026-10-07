@@ -5,6 +5,7 @@ param(
     [int]$Context = 32768,
     [ValidateSet(16, 32, 64)]
     [int]$BatchTokens = 64,
+    [switch]$DebugLogs,
     [switch]$Stop
 )
 
@@ -161,7 +162,7 @@ $WorkerScript = Join-Path $Root 'serve-worker.ps1'
 @'
 param([string]$OllamaPath, [string]$HelperRoot)
 $ErrorActionPreference = 'Stop'
-$server = Start-Process -FilePath $OllamaPath -ArgumentList 'serve' -PassThru `
+$server = Start-Process -FilePath $OllamaPath -ArgumentList 'serve' -PassThru -WindowStyle Hidden `
     -RedirectStandardOutput (Join-Path $HelperRoot 'logs/server.stdout.log') `
     -RedirectStandardError (Join-Path $HelperRoot 'logs/server.stderr.log')
 @{ pid = $server.Id; started = $server.StartTime.ToUniversalTime().ToString('o'); path = $OllamaPath } |
@@ -185,10 +186,12 @@ $Settings = @{
     OLLAMA_KV_CACHE_TYPE = 'q8_0'
     OLLAMA_NO_CLOUD = '1'
     OLLAMA_DEBUG_LOG_REQUESTS = '0'
+    OLLAMA_DEBUG = '0'
     OLLAMA_KEEP_ALIVE = '-1'
     # Reserve the other half as a scheduler hint, not a hard VRAM partition.
     OLLAMA_GPU_OVERHEAD = "$([int64][Math]::Max(0, ($FreeMiB - 12288)) * 1048576)"
 }
+if ($DebugLogs) { $Settings['OLLAMA_DEBUG'] = '1' }
 foreach ($key in $Settings.Keys) { $Info.EnvironmentVariables[$key] = $Settings[$key] }
 $Worker = [Diagnostics.Process]::Start($Info)
 $Ready = $false
@@ -284,6 +287,8 @@ $Ready = $false
         note = 'GPU memory measurement after load, not a hard or transient peak limit'
         batch_tokens = $BatchTokens; startup_request_active_time_target_percent = 65
         workload_note = 'Controller update required for research pacing; no hard GPU utilization or board power cap'
+        debug_logs = [bool]$DebugLogs
+        server_log = (Join-Path $Root 'logs/server.stderr.log')
     }
     $Receipt | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $Root 'helper-ready.json')
     Write-Host 'RTX HELPER READY. Paste the following result back:'

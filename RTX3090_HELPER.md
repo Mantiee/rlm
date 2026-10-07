@@ -149,3 +149,30 @@ nadal może chwilowo wykorzystać pełną kartę. Inne aplikacje na RTX nie dost
 limitu i nie zmieniamy globalnej mocy karty, zegarów, sterownika ani TDR.
 Nie uznajemy tego za potwierdzone rozwiązanie blackscreen; wcześniejsze awarie
 przy dużym obciążeniu nadal wymagają diagnozy i kontrolowanego testu.
+
+## Stabilne metadane i okno helpera, v100.21
+
+Po aktualizacji klienta, przy zatrzymanej misji i działającym helperze, polecenie
+`v100-continual repair-helper-metadata` migruje stary hash do schematu pomijającego
+wyłącznie `modified_at`. Wymaga dotychczasowego digestu manifestu, runtime 0.40.0
+i właściwego kontekstu/rezydencji GPU. Zapisuje backup profilu i pełny snapshot
+metadanych w `research/helper-metadata/migration-*/`. Wagi, kontekst i cel 65%
+czasu zapytań pozostają bez zmian. Zmiany szablonu lub parametrów po migracji
+nadal zatrzymują pracę; profile już zmigrowane nie są ponownie przepinane.
+
+Stary hash bez oryginalnego snapshotu nie pozwala ustalić przyczyny różnicy.
+Migracja jawnie rejestruje ten brak, zamiast uznawać go za dowód zmiany samej daty.
+
+Nowy launcher ukrywa puste okno natywnego serwera. Opcjonalne `-DebugLogs` włącza
+debug wyłącznie w procesach tego helpera; `OLLAMA_DEBUG_LOG_REQUESTS` pozostaje
+wyłączone. Log serwera: `$env:USERPROFILE\ai-v100-helper\logs\server.stderr.log`.
+Podgląd w osobnym PowerShellu:
+
+```powershell
+Get-Content -LiteralPath "$env:USERPROFILE\ai-v100-helper\logs\server.stderr.log" -Tail 30 -Wait
+```
+
+To log transportu/serwera, nie raport uczenia ani wyników zarabiania. Te raporty
+są dostępne przez `v100-continual mission-watch` i `mission-report` na Debianie.
+Zmiany Windows sprawdzono w kodzie; rzeczywisty test PowerShell/GPU wymaga
+uruchomienia launchera na komputerze użytkownika.

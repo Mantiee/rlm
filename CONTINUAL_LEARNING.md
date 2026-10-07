@@ -1,4 +1,4 @@
-# V100 continual learning, v100.20
+# V100 continual learning, v100.21
 
 ## Budżet thinking i większy kontekst, v100.16
 
@@ -808,3 +808,31 @@ limits our request workload, not measured GPU utilization or watts. A single
 request can still use the full GPU; other applications and callers are unaffected.
 No clocks, board power caps, driver settings or TDR values are changed. Pacing
 does not establish the cause of a black screen or guarantee hardware stability.
+
+## V100 controller v100.21: stable remote metadata and explicit migration
+
+New helper profiles use `ollama-stable-v2` metadata hashes. Only the local
+`modified_at` timestamp is excluded; template, renderer, parser, parameters,
+system text, modelfile, tokenizer and every other returned field remain pinned.
+The full `/api/show` snapshot is saved alongside the profile so future differences
+can be inspected. Old profiles retain `ollama-full-v1` semantics until migrated.
+
+With the mission stopped, `v100-continual repair-helper-metadata` checks the
+existing model manifest digest, isolated Ollama 0.40.0, supported model metadata,
+loaded context, full GPU residency and measured VRAM. It then explicitly binds
+the stable hash and stores the original profile, full current metadata and audit
+under `research/helper-metadata/migration-*/`. It rechecks the stable hash before
+writing the profile and never starts a mission or changes weights. A profile
+already on v2 is verified, not rebound; changed templates or parameters still
+fail. The mission start lock prevents racing a new mission with migration.
+
+The reason for an old full-hash mismatch cannot be established without the
+original metadata snapshot. This migration records that limitation rather than
+claiming a timestamp was the sole cause. Digest/runtime/residency mismatches
+leave the profile untouched. Existing pacing and context settings are retained.
+
+The Windows launcher hides the native Ollama server window while retaining
+stdout/stderr logs. `-DebugLogs` enables debug logging only for the isolated
+helper. Request-body logging remains disabled. Follow
+`$env:USERPROFILE\ai-v100-helper\logs\server.stderr.log` for server activity;
+learning progress and A/B findings remain in the Debian controller's logs.
