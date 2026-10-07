@@ -1,6 +1,8 @@
 import copy
 import json
 import os
+import subprocess
+import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -34,6 +36,7 @@ LOADED = {
 
 @pytest.fixture
 def transport(monkeypatch):
+    monkeypatch.setattr(remote_helper, "helper_boot_id", lambda: "test-boot")
     calls = []
     state = {"info": copy.deepcopy(INFO), "loaded": copy.deepcopy(LOADED), "digest": DIGEST}
 
@@ -159,6 +162,139 @@ def test_remote_context_admission_precedes_http(transport):
     with pytest.raises(ValueError, match="working context"):
         native_turn(client(), [{"role": "user", "content": "ą" * 20000}])
     assert not calls
+
+
+@pytest.mark.parametrize("batch,duty", [(512, 65), (64, 66), (64, 0), (64, True), (True, 65)])
+def test_helper_workload_limits_reject_invalid_settings_before_http(transport, batch, duty):
+    with pytest.raises(ValueError, match="batch|wall-time"):
+        client(helper_batch_tokens=batch, helper_duty_percent=duty)
+    assert not transport[0]
+
+
+def test_helper_pacing_returns_answer_before_idle_and_survives_new_client(
+    transport, tmp_path, monkeypatch
+):
+    clock = {"now": 0.0}
+    starts, sleeps = [], []
+    request = remote_helper.OllamaResearchClient.remote_request
+
+    def timed(self, endpoint, data=None):
+        if endpoint == "/api/chat":
+            starts.append(clock["now"])
+            assert data["options"]["num_batch"] == 64
+            assert data["options"]["num_thread"] == 4
+            assert data["options"]["num_ctx"] == 32768
+            clock["now"] += 13
+        return request(self, endpoint, data)
+
+    def sleep(seconds):
+        assert 0 < seconds <= 1
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(remote_helper.OllamaResearchClient, "remote_request", timed)
+    monkeypatch.setattr(remote_helper.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(remote_helper.time, "sleep", sleep)
+    data = {
+        "model": remote_helper.MODEL,
+        "messages": [{"role": "user", "content": "2+2?"}],
+        "max_tokens": 128,
+    }
+    first = client(activity_root=str(tmp_path)).http_request("/v1/chat/completions", data)
+    assert clock["now"] == 13 and sleeps == []
+    assert first["timings"]["helper_planned_idle_seconds"] == 7
+    second = client(activity_root=str(tmp_path)).http_request("/v1/chat/completions", data)
+    assert starts == [0, 20] and sum(sleeps) == 7
+    assert second["timings"]["helper_waited_seconds"] == 7
+    assert 13 / (starts[1] - starts[0]) == 0.65
+    journal = next((tmp_path / "research/logs/activity").glob("*/timeline.jsonl"))
+    events = [json.loads(line) for line in journal.read_text().splitlines()]
+    assert [row["payload"]["batch_tokens"] for row in events] == [64, 64]
+    assert "not a GPU utilization" in events[0]["payload"]["scope"]
+
+
+def test_helper_idle_lease_blocks_another_process(transport, tmp_path):
+    instance = client(activity_root=str(tmp_path))
+    with instance.workload_slot():
+        lock = next((tmp_path / "research/state").glob("helper-*.workload.lock"))
+        script = """
+import fcntl, sys
+with open(sys.argv[1], 'a') as lease:
+    try:
+        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print('blocked')
+    else:
+        raise SystemExit('lease was not held')
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(lock)], capture_output=True, text=True, check=True
+        )
+        assert result.stdout.strip() == "blocked"
+
+
+def test_previous_boot_deadline_is_discarded_and_wait_is_interruptible(
+    transport, tmp_path, monkeypatch
+):
+    instance = client(activity_root=str(tmp_path))
+    with instance.workload_slot() as quota:
+        path = quota["path"]
+    atomic_json(path, {"boot_id": "previous-boot", "not_before": 1e99})
+    monkeypatch.setattr(remote_helper.time, "monotonic", lambda: 0.0)
+    with instance.workload_slot() as quota:
+        assert quota["waited_seconds"] == 0
+        boot = quota["boot_id"]
+    atomic_json(path, {"boot_id": boot, "not_before": 7})
+
+    def interrupt(seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(remote_helper.time, "sleep", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        with instance.workload_slot():
+            pytest.fail("ignored idle reservation")
+    assert not transport[0]
+
+
+def test_failed_helper_request_reserves_idle_without_accepting_an_answer(
+    transport, tmp_path, monkeypatch
+):
+    clock = {"now": 0.0}
+    request = remote_helper.OllamaResearchClient.remote_request
+
+    def failed(self, endpoint, data=None):
+        if endpoint == "/api/chat":
+            clock["now"] += 13
+            raise requests.ConnectionError("worker disconnected")
+        return request(self, endpoint, data)
+
+    monkeypatch.setattr(remote_helper.OllamaResearchClient, "remote_request", failed)
+    monkeypatch.setattr(remote_helper.time, "monotonic", lambda: clock["now"])
+    with pytest.raises(requests.ConnectionError, match="disconnected"):
+        client(activity_root=str(tmp_path)).http_request(
+            "/v1/chat/completions",
+            {
+                "model": remote_helper.MODEL,
+                "messages": [{"role": "user", "content": "2+2?"}],
+                "max_tokens": 128,
+            },
+        )
+    state = json.loads(
+        next((tmp_path / "research/state").glob("helper-*.workload.json")).read_text()
+    )
+    assert state["not_before"] == 20
+    assert clock["now"] == 13
+
+
+def test_existing_remote_profile_gets_pacing_defaults_without_mutation(transport, tmp_path):
+    _, settings = prepared(tmp_path)
+    settings["resources"].pop("helper_batch_tokens")
+    settings["resources"].pop("helper_duty_percent")
+    original = copy.deepcopy(settings)
+    remote_helper.validate_remote(settings)
+    instance = competition.helper_client(settings, tmp_path)
+    assert instance.helper_batch_tokens == 64 and instance.helper_duty_percent == 65
+    assert settings == original
 
 
 @pytest.mark.parametrize(

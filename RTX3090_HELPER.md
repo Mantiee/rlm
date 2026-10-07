@@ -127,3 +127,25 @@ Testy transportu/orchestracji wykonano z deterministycznymi serwerami
 zastępczymi. Rzeczywiste Windows/3090, LAN, przepustowość i jakość wymagają
 wyniku uruchomienia skryptu u użytkownika. Speculative decoding pozostaje
 oddzielnym eksperymentem; ten pomocnik go nie włącza.
+
+## Ograniczenia samego helpera, v100.20
+
+Launcher ma domyślnie `-BatchTokens 64` (dozwolone 16/32/64), cztery wątki
+CPU i odstęp między własnymi testami startowymi. Zaktualizowany klient Debiana
+stosuje taki sam batch i cel 65% czasu aktywnych zapytań. Po zapytaniu trwającym
+13 s rezerwuje 7 s przerwy przed następnym. Wynik oddaje od razu, więc V100
+może pracować podczas tej przerwy. Lease i zapisany deadline są wspólne dla
+klientów i procesów tego labu na Debianie, nie tylko jednego obiektu klienta.
+
+Stare profile otrzymują domyślnie batch 64 i cel 65%. Opcjonalne pola resources
+`helper_batch_tokens` i `helper_duty_percent` pozwalają zmniejszyć te wartości.
+Nie trzeba zmieniać digestu, metadanych ani kontekstu 131072. Log zdarzenia
+`helper-workload-reservation` podaje czas zapytania, zaplanowaną przerwę i
+rzeczywiste oczekiwanie przed kolejnym zapytaniem. Potrzebna jest aktualizacja
+launchera Windows i klienta Debiana; sam launcher nie ogranicza całego ruchu API.
+
+To **nie jest twardy limit 65% GPU-Util, watów ani pików VRAM**. Jedno zapytanie
+nadal może chwilowo wykorzystać pełną kartę. Inne aplikacje na RTX nie dostają
+limitu i nie zmieniamy globalnej mocy karty, zegarów, sterownika ani TDR.
+Nie uznajemy tego za potwierdzone rozwiązanie blackscreen; wcześniejsze awarie
+przy dużym obciążeniu nadal wymagają diagnozy i kontrolowanego testu.

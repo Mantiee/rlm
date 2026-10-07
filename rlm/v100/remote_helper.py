@@ -6,10 +6,14 @@ admission estimate, never an exact token count or a quality baseline.
 """
 
 import copy
+import hashlib
 import ipaddress
 import json
+import math
 import re
 import threading
+import time
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -21,6 +25,23 @@ from rlm.v100.common import atomic_json
 
 MODEL = "qwen3.5:9b-q8_0"
 BACKEND = "ollama-research"
+HELPER_WORKLOAD_LOCK = threading.Lock()
+HELPER_PACING: dict[str, dict] = {}
+
+
+def helper_boot_id() -> str:
+    """Identify the Debian boot so persisted monotonic deadlines cannot cross boots."""
+    value = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    if not value:
+        raise ValueError("Missing Linux boot identity for helper workload pacing")
+    return value
+
+
+def validate_workload(batch_tokens: int, duty_percent: int) -> None:
+    if type(batch_tokens) is not int or batch_tokens not in (16, 32, 64):
+        raise ValueError("Remote helper batch must be 16, 32 or 64 tokens")
+    if type(duty_percent) is not int or not 1 <= duty_percent <= 65:
+        raise ValueError("Remote helper active wall-time target must be 1-65 percent")
 
 
 def private_origin(value: str) -> str:
@@ -52,6 +73,9 @@ def remote_profile(profile: dict) -> bool:
 def validate_remote(profile: dict) -> None:
     runtime, server, resources = profile["runtime"], profile["server"], profile["resources"]
     private_origin(runtime["base_url"])
+    validate_workload(
+        resources.get("helper_batch_tokens", 64), resources.get("helper_duty_percent", 65)
+    )
     if (
         runtime.get("backend") != BACKEND
         or runtime.get("tool_protocol") != "json"
@@ -86,9 +110,12 @@ class OllamaResearchClient(LlamaCppClient):
         model_digest: str,
         metadata_sha256: str = "",
         max_vram_gib: int = 12,
+        helper_batch_tokens: int = 64,
+        helper_duty_percent: int = 65,
         **kwargs: Any,
     ):
         origin = private_origin(base_url)
+        validate_workload(helper_batch_tokens, helper_duty_percent)
         if kwargs.get("model_name", MODEL) != MODEL or not re.fullmatch(
             r"[0-9a-f]{64}", model_digest
         ):
@@ -104,8 +131,71 @@ class OllamaResearchClient(LlamaCppClient):
         self.model_digest = model_digest
         self.metadata_sha256 = metadata_sha256
         self.max_vram_gib = max_vram_gib
+        self.helper_batch_tokens = helper_batch_tokens
+        self.helper_duty_percent = helper_duty_percent
         self.request_lock = threading.Lock()
         self.tool_protocol = "json"
+
+    @contextmanager
+    def workload_slot(self):
+        """Serialize our helper calls and wait before work, without delaying its answer."""
+        with HELPER_WORKLOAD_LOCK, ExitStack() as scope:
+            path = None
+            boot = helper_boot_id()
+            if self.activity_root:
+                import fcntl
+
+                name = hashlib.sha256(self.base_url.encode()).hexdigest()[:16]
+                path = self.activity_root / "research/state" / f"helper-{name}.workload.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                lease = scope.enter_context(path.with_suffix(".lock").open("a"))
+                fcntl.flock(lease, fcntl.LOCK_EX)
+                state = json.loads(path.read_text()) if path.exists() else {}
+            else:
+                state = HELPER_PACING.get(self.base_url, {})
+            if state and (
+                set(state) != {"boot_id", "not_before"}
+                or not isinstance(state["boot_id"], str)
+                or not state["boot_id"]
+                or type(state["not_before"]) not in (int, float)
+                or not math.isfinite(state["not_before"])
+            ):
+                raise ValueError("Invalid persisted helper workload state")
+            started = time.monotonic()
+            deadline = state["not_before"] if state.get("boot_id") == boot else started
+            while time.monotonic() < deadline:
+                time.sleep(max(0, min(1, deadline - time.monotonic())))
+            quota = {
+                "path": path,
+                "boot_id": boot,
+                "waited_seconds": max(0, time.monotonic() - started),
+            }
+            yield quota
+
+    def reserve_helper_idle(self, quota: dict, request_seconds: float) -> None:
+        idle = request_seconds * (100 - self.helper_duty_percent) / self.helper_duty_percent
+        state = {"boot_id": quota["boot_id"], "not_before": time.monotonic() + idle}
+        if quota["path"] is not None:
+            atomic_json(quota["path"], state)
+        else:
+            HELPER_PACING[self.base_url] = state
+        quota.update(request_seconds=request_seconds, planned_idle_seconds=idle)
+        if self.activity_root:
+            from rlm.v100.activity import ActivityLog
+
+            ActivityLog(self.activity_root, self.research_owner, "tester").write(
+                "steps",
+                "helper-workload-reservation",
+                {
+                    "endpoint": self.base_url,
+                    "batch_tokens": self.helper_batch_tokens,
+                    "active_wall_time_target_percent": self.helper_duty_percent,
+                    "request_seconds": request_seconds,
+                    "planned_idle_seconds_before_next_turn": idle,
+                    "waited_seconds_before_this_turn": quota["waited_seconds"],
+                    "scope": "Our controller calls only; not a GPU utilization, watts or peak VRAM cap",
+                },
+            )
 
     def remote_request(self, endpoint: str, data: dict | None = None) -> dict:
         if endpoint not in ("/api/tags", "/api/show", "/api/ps", "/api/chat"):
@@ -213,7 +303,12 @@ class OllamaResearchClient(LlamaCppClient):
             or prompt_budget + maximum > self.context_window
         ):
             raise ValueError("Remote text/context budget exceeded; reduce retrieved material")
-        options = {"num_ctx": self.context_window, "num_predict": maximum}
+        options = {
+            "num_ctx": self.context_window,
+            "num_predict": maximum,
+            "num_batch": self.helper_batch_tokens,
+            "num_thread": 4,
+        }
         for name in ("temperature", "seed", "top_p", "top_k"):
             if name in data:
                 options[name] = data[name]
@@ -230,10 +325,14 @@ class OllamaResearchClient(LlamaCppClient):
             if shape.get("type") != "json_object":
                 raise ValueError("Remote helper requires JSON-object output")
             payload["format"] = shape.get("schema", "json")
-        with self.request_lock:
+        with self.request_lock, self.workload_slot() as quota:
             self.identity()
             self.loaded()
-            response = self.remote_request("/api/chat", payload)
+            started = time.monotonic()
+            try:
+                response = self.remote_request("/api/chat", payload)
+            finally:
+                self.reserve_helper_idle(quota, max(0, time.monotonic() - started))
             measured = self.loaded()
         incoming, outgoing = response.get("prompt_eval_count"), response.get("eval_count")
         if (
@@ -269,6 +368,11 @@ class OllamaResearchClient(LlamaCppClient):
                 "count_mode": "ollama-measured; preflight-utf8-estimate",
                 "prompt_budget": prompt_budget,
                 "remote_vram_gib": measured["size_vram"] / 2**30,
+                "helper_batch_tokens": self.helper_batch_tokens,
+                "helper_active_wall_time_target_percent": self.helper_duty_percent,
+                "helper_request_seconds": quota["request_seconds"],
+                "helper_planned_idle_seconds": quota["planned_idle_seconds"],
+                "helper_waited_seconds": quota["waited_seconds"],
             },
         }
 
@@ -298,6 +402,8 @@ def prepare_remote(profile: dict, root: Path, url: str, context: int, digest: st
         "metadata_sha256": "0" * 64,
         "max_vram_gib": 12,
         "min_available_ram_gib": 0,
+        "helper_batch_tokens": 64,
+        "helper_duty_percent": 65,
     }
     chosen["memory"].update(chunk_tokens=256, fanout=2, retrieve_count=2)
     validate_remote(chosen)

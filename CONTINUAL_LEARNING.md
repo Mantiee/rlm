@@ -1,4 +1,4 @@
-# V100 continual learning, v100.19
+# V100 continual learning, v100.20
 
 ## Budżet thinking i większy kontekst, v100.16
 
@@ -783,3 +783,28 @@ silent CPU fallback or Windows process restart. Errors from inside an active job
 are not replayed by the reconnect wrapper. Complete checkpoints and the accepted
 serving profile remain available when a cycle fails. The live profile and current
 learning state are persisted before waiting for the helper.
+
+## V100 controller v100.20: helper-only workload pacing
+
+Remote helper calls default to `num_batch=64`, four CPU threads and a 65% active
+request wall-time target. After a request lasting 13 seconds, the controller
+reserves 7 seconds without another helper request. It returns the answer
+immediately so V100 work can overlap the helper's idle interval. One shared
+thread/process lease per endpoint serializes our calls, and the idle deadline
+survives controller restarts on the same Debian boot. A new boot discards stale
+deadlines. Failed requests also reserve idle time for their elapsed duration;
+this does not prove that the Windows server stopped work after a transport error.
+
+Existing remote profiles receive these defaults without changing weights,
+context capacity, identity or the Windows GPU power limit. Optional resource
+fields `helper_batch_tokens` (16/32/64) and `helper_duty_percent` (1-65) can make
+the helper more conservative; invalid settings fail before generation. The
+Windows launcher uses the smaller batch in both smoke requests and paces the
+gap between them. Update both the launcher and Debian controller before use.
+
+`helper-workload-reservation` events and inference metrics expose batch size,
+request time, planned idle time and actual wait before the next turn. This
+limits our request workload, not measured GPU utilization or watts. A single
+request can still use the full GPU; other applications and callers are unaffected.
+No clocks, board power caps, driver settings or TDR values are changed. Pacing
+does not establish the cause of a black screen or guarantee hardware stability.

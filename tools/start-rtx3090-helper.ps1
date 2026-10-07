@@ -3,6 +3,8 @@ param(
     [string]$DebianIp = '192.168.0.68',
     [int]$Port = 11435,
     [int]$Context = 32768,
+    [ValidateSet(16, 32, 64)]
+    [int]$BatchTokens = 64,
     [switch]$Stop
 )
 
@@ -217,7 +219,7 @@ $Ready = $false
     $Started = Get-Date
     $Request = @{
         model = $Model; stream = $false; think = $false; keep_alive = -1; format = $schema
-        options = @{ num_ctx = $Context; num_predict = 256; temperature = 0; seed = 42 }
+        options = @{ num_ctx = $Context; num_predict = 256; num_batch = $BatchTokens; num_thread = 4; temperature = 0; seed = 42 }
         messages = @(@{ role = 'user'; content = 'What is 2 + 2? Return JSON with the integer result.' })
     } | ConvertTo-Json -Depth 10
     $Response = Invoke-RestMethod "$Origin/api/chat" -Method Post -ContentType 'application/json' -Body $Request -TimeoutSec 600
@@ -233,12 +235,16 @@ $Ready = $false
         throw "JSON transport smoke failed. Actual response saved in $Root\logs\smoke-json.response.json."
     }
     $SmokeSeconds = ((Get-Date) - $Started).TotalSeconds
+    # Pace only our startup requests. The updated Debian controller separately
+    # reserves idle time between all its helper turns; no board-wide power change.
+    $SmokeIdleMs = [int][Math]::Ceiling(($Response.total_duration / 1e9) * 35 / 65 * 1000)
+    if ($SmokeIdleMs -gt 0) { Start-Sleep -Milliseconds $SmokeIdleMs }
 
     # Preserve the original harder question as an explicitly recorded quality
     # diagnostic, rather than claiming that the easier transport test replaces it.
     $MathRequest = @{
         model = $Model; stream = $false; think = $false; keep_alive = -1; format = $schema
-        options = @{ num_ctx = $Context; num_predict = 1024; temperature = 0; seed = 42 }
+        options = @{ num_ctx = $Context; num_predict = 1024; num_batch = $BatchTokens; num_thread = 4; temperature = 0; seed = 42 }
         messages = @(@{ role = 'user'; content = 'What is 17 * (6013 - 5347) - 319 - 367 - 113 - 79? Return JSON with result.' })
     } | ConvertTo-Json -Depth 10
     $MathResponse = Invoke-RestMethod "$Origin/api/chat" -Method Post -ContentType 'application/json' -Body $MathRequest -TimeoutSec 600
@@ -276,6 +282,8 @@ $Ready = $false
         seconds = [Math]::Round($SmokeSeconds, 2)
         generation_tps = [Math]::Round($Response.eval_count * 1e9 / [Math]::Max(1, $Response.eval_duration), 2)
         note = 'GPU memory measurement after load, not a hard or transient peak limit'
+        batch_tokens = $BatchTokens; startup_request_active_time_target_percent = 65
+        workload_note = 'Controller update required for research pacing; no hard GPU utilization or board power cap'
     }
     $Receipt | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $Root 'helper-ready.json')
     Write-Host 'RTX HELPER READY. Paste the following result back:'

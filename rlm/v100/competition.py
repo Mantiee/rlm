@@ -215,6 +215,8 @@ def helper_client(
             "model_digest": profile["resources"]["model_digest"],
             "metadata_sha256": profile["resources"]["metadata_sha256"],
             "max_vram_gib": profile["resources"]["max_vram_gib"],
+            "helper_batch_tokens": profile["resources"].get("helper_batch_tokens", 64),
+            "helper_duty_percent": profile["resources"].get("helper_duty_percent", 65),
         }
         if remote
         else {}
