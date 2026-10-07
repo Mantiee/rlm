@@ -58,7 +58,10 @@ if ($LASTEXITCODE -ne 0 -or $GpuRows.Count -ne 1 -or $GpuRows[0] -notmatch '3090
 $FreeMiB = [int](($GpuRows[0] -split ',')[-1].Trim())
 if ($FreeMiB -lt 14336) { throw 'Need at least 14 GiB free before the helper smoke test.' }
 $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($Root).Substring(0, 1))
-if ($drive.Free -lt 28GB) { throw 'Need 28 GiB free disk for the isolated runtime and model download.' }
+$RequiredFree = 2GB
+if (-not (Test-Path (Join-Path $RuntimeRoot 'runtime-ready.json'))) { $RequiredFree += 12GB }
+if (-not (Test-Path (Join-Path $Root 'models\manifests\registry.ollama.ai\library\qwen3.5\9b-q8_0'))) { $RequiredFree += 14GB }
+if ($drive.Free -lt $RequiredFree) { throw "Need $($RequiredFree / 1GB) GiB free disk for uncached downloads and working space." }
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Root 'models') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Root 'logs') -Force | Out-Null
@@ -190,26 +193,68 @@ $Ready = $false
     $PullProcess.WaitForExit()
     if ($PullProcess.ExitCode -ne 0) { throw 'Model download did not complete.' }
     $schema = @{ type = 'object'; properties = @{ result = @{ type = 'integer' } }; required = @('result'); additionalProperties = $false }
+    # Infrastructure health is separate from the earlier arithmetic quality case.
+    # A model cannot qualify financial findings by merely agreeing with itself.
     $Started = Get-Date
     $Request = @{
         model = $Model; stream = $false; think = $false; keep_alive = -1; format = $schema
-        options = @{ num_ctx = $Context; num_predict = 128; temperature = 0; seed = 42 }
-        messages = @(@{ role = 'user'; content = 'What is 17 * (6013 - 5347) - 319 - 367 - 113 - 79? Return JSON with result.' })
+        options = @{ num_ctx = $Context; num_predict = 256; temperature = 0; seed = 42 }
+        messages = @(@{ role = 'user'; content = 'What is 2 + 2? Return JSON with the integer result.' })
     } | ConvertTo-Json -Depth 10
     $Response = Invoke-RestMethod "$Origin/api/chat" -Method Post -ContentType 'application/json' -Body $Request -TimeoutSec 600
+    $Diagnostic = $Response | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    $ThinkingChars = ([string]$Response.message.thinking).Length
+    $Diagnostic.message | Add-Member -NotePropertyName thinking_chars -NotePropertyValue $ThinkingChars -Force
+    $Diagnostic.message.PSObject.Properties.Remove('thinking')
+    $Diagnostic | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 (Join-Path $Root 'logs/smoke-json.response.json')
+    Write-Host 'JSON SMOKE RESPONSE:'
+    $Diagnostic | ConvertTo-Json -Depth 20
     $Answer = $Response.message.content | ConvertFrom-Json
-    if ($Answer.result -ne 10444 -or -not $Response.done -or $Response.done_reason -ne 'stop') { throw 'JSON/math smoke test failed.' }
+    if (($Answer.result -isnot [int] -and $Answer.result -isnot [long]) -or $Answer.result -ne 4 -or -not $Response.done -or $Response.done_reason -ne 'stop') {
+        throw "JSON transport smoke failed. Actual response saved in $Root\logs\smoke-json.response.json."
+    }
+    $SmokeSeconds = ((Get-Date) - $Started).TotalSeconds
+
+    # Preserve the original harder question as an explicitly recorded quality
+    # diagnostic, rather than claiming that the easier transport test replaces it.
+    $MathRequest = @{
+        model = $Model; stream = $false; think = $false; keep_alive = -1; format = $schema
+        options = @{ num_ctx = $Context; num_predict = 1024; temperature = 0; seed = 42 }
+        messages = @(@{ role = 'user'; content = 'What is 17 * (6013 - 5347) - 319 - 367 - 113 - 79? Return JSON with result.' })
+    } | ConvertTo-Json -Depth 10
+    $MathResponse = Invoke-RestMethod "$Origin/api/chat" -Method Post -ContentType 'application/json' -Body $MathRequest -TimeoutSec 600
+    $MathPassed = $false
+    $MathError = $null
+    try {
+        $MathAnswer = $MathResponse.message.content | ConvertFrom-Json
+        $MathPassed = $MathAnswer.result -eq 10444 -and $MathResponse.done -and $MathResponse.done_reason -eq 'stop'
+    } catch { $MathError = $_.Exception.Message }
+    $MathDiagnostic = @{
+        expected = 10444; content = $MathResponse.message.content; passed = [bool]$MathPassed
+        finish_reason = $MathResponse.done_reason; parse_error = $MathError
+        prompt_tokens = $MathResponse.prompt_eval_count; output_tokens = $MathResponse.eval_count
+        output_budget = 1024; thinking_requested = $false
+        thinking_chars = ([string]$MathResponse.message.thinking).Length
+        scope = 'Direct arithmetic quality diagnostic; not the infrastructure gate or a financial benchmark'
+    }
+    $MathDiagnostic | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 (Join-Path $Root 'logs/smoke-math.diagnostic.json')
+    Write-Host 'DIRECT MATH DIAGNOSTIC:'
+    $MathDiagnostic | ConvertTo-Json -Depth 10
     $Loaded = @((Invoke-RestMethod "$Origin/api/ps" -TimeoutSec 10).models | Where-Object { $_.name -eq $Model })
     if ($Loaded.Count -ne 1 -or $Loaded[0].context_length -ne $Context) { throw 'Unexpected loaded model or context.' }
     $Item = $Loaded[0]
+    $Loaded | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 (Join-Path $Root 'logs/smoke-gpu.loaded.json')
+    Write-Host 'GPU MODEL MEASUREMENT:'
+    $Loaded | ConvertTo-Json -Depth 10
     if ($Item.size_vram -le 0 -or $Item.size_vram -lt $Item.size -or $Item.size_vram -gt 12GB) {
         throw 'Helper is not fully on GPU within 12 GiB. Inspect logs; next try can use a smaller context.'
     }
     $Receipt = @{
         model = $Model; digest = $Item.digest; context = $Context; result = $Answer.result
+        infrastructure_smoke_passed = $true; direct_math_passed = [bool]$MathPassed
         ollama_version = $RuntimeVersion; runtime = $Ollama
         origin = $Origin; debian = $DebianIp; vram_gib = [Math]::Round($Item.size_vram / 1GB, 2)
-        seconds = [Math]::Round(((Get-Date) - $Started).TotalSeconds, 2)
+        seconds = [Math]::Round($SmokeSeconds, 2)
         generation_tps = [Math]::Round($Response.eval_count * 1e9 / [Math]::Max(1, $Response.eval_duration), 2)
         note = 'GPU memory measurement after load, not a hard or transient peak limit'
     }

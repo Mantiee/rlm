@@ -30,6 +30,17 @@ zwrócił HTTP 412 przy Ollamie 0.21.2, dlatego ta wersja nie jest używana.
 Po starcie sprawdzamy też wersję `/api/version`; rzeczywista zgodność modelu
 i GPU nadal wymaga zakończenia smoke testu na Windowsie.
 
+Test infrastruktury sprawdza JSON `2+2=4`, zakończenie odpowiedzi i rezydencję
+GPU. Oddzielnie zachowujemy pierwotne trudniejsze działanie z wynikiem 10444,
+teraz z budżetem 1024 tokenów. `direct_math_passed=false` jest jawnym wynikiem
+jakościowym, a nie awarią transportu; prostszy test go nie zastępuje.
+Nie oznacza to akceptacji wyników finansowych ani pominięcia późniejszych
+testów jakości/admisji danych. Odpowiedź i liczniki smoke testu są w
+`logs/smoke-json.response.json`, działanie w `logs/smoke-math.diagnostic.json`,
+a pomiar modelu w `logs/smoke-gpu.loaded.json`. Zapisujemy liczbę znaków thinking,
+bez jego treści. Przy ponownym uruchomieniu używamy zweryfikowanego runtime
+i cache modelu; kontrola miejsca na dysku uwzględnia brakujące pobrania.
+
 Jeden slot, kontekst początkowo 32768, Flash Attention i KV Q8. Rezerwacja
 pozostałej pamięci jest wskazówką dla schedulera, **nie twardym limitem**.
 Po odpowiedzi JSON testuje faktyczne `size_vram`, kontekst i pełne GPU
