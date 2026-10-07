@@ -123,7 +123,9 @@ def paper_round(
         if observe:
             observe(book)
         client_profile = copy.deepcopy(parent_profile)
-        client_profile["runtime"]["max_output_tokens"] = 1536
+        client_profile["runtime"]["max_output_tokens"] = max(
+            1536, parent_profile["runtime"]["max_output_tokens"]
+        )
         parent = helper_client(client_profile, book.root, branch)
         findings = []
         for round_index in range(research_rounds):

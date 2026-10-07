@@ -42,7 +42,11 @@ def prepare_researcher(profile: dict, root: Path) -> Path:
         context_window=4096,
         max_output_tokens=384,
         max_timeout=90,
+        enable_thinking=False,
+        temperature=0.0,
     )
+    for name in ("top_p", "top_k"):
+        chosen["runtime"].pop(name, None)
     chosen["server"].update(
         model=str(model),
         gpu_layers=0,

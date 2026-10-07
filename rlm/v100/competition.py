@@ -108,13 +108,15 @@ def helper_client(
     profile: dict, root: Path | None = None, branch: str = "controller"
 ) -> LlamaCppClient:
     settings = profile["runtime"]
+    from rlm.v100.inference import sampling_settings, thinking_enabled
+
     client = LlamaCppClient(
         model_name=settings["model_name"],
         base_url=settings["base_url"],
         context_window=settings["context_window"],
         timeout=settings["max_timeout"],
-        sampling_args={"max_tokens": settings["max_output_tokens"]},
-        enable_thinking=False,
+        sampling_args=sampling_settings(profile),
+        enable_thinking=thinking_enabled(profile),
         activity_root=str(root) if root else None,
         activity_branch=branch,
         activity_actor="tester" if profile.get("resources", {}).get("device") == "cpu" else "model",
@@ -279,14 +281,9 @@ def run_duel(
     for parent in baselines:
         compare_reports(parent, parent)
         for item in bundle["branches"].values():
-            runtime = json.loads(Path(item["profile"]).read_text())["runtime"]
-            expected = {
-                "temperature": 0.0,
-                "seed": 42,
-                "max_tokens": runtime["max_output_tokens"],
-                "context_window": runtime["context_window"],
-                "thinking": False,
-            }
+            from rlm.v100.inference import generation_conditions
+
+            expected = generation_conditions(json.loads(Path(item["profile"]).read_text()))
             if (
                 parent["generation"] != expected
                 or parent["memory_mode"] != "fixed prompt fixtures; no live retrieval"
@@ -463,7 +460,7 @@ def evolve(
         directory = output / f"generation-{generation:02d}"
         planning_profile = output / f"planner-{generation:02d}.json"
         planner = copy.deepcopy(current)
-        planner["runtime"]["max_output_tokens"] = 1536
+        planner["runtime"]["max_output_tokens"] = max(1536, current["runtime"]["max_output_tokens"])
         atomic_json(planning_profile, planner)
         # Parent is served only while choosing the next experiments, then unloaded
         # before GPU training. CPU research is concurrent with the training itself.

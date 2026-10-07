@@ -139,6 +139,7 @@ class LlamaCppClient(BaseLM):
         return args
 
     def completion(self, prompt: str | list[dict[str, Any]], model: str | None = None) -> str:
+        self.thread_state.response_info = {}
         messages = [{"role": "user", "content": prompt}] if isinstance(prompt, str) else prompt
         model_name = model or self.model_name
         args = {"temperature": 0.0, "max_tokens": 512, "seed": 42, **self.sampling_args}
@@ -230,3 +231,6 @@ class LlamaCppClient(BaseLM):
 
     def get_last_usage(self) -> ModelUsageSummary:
         return self.thread_state.last
+
+    def get_response_info(self) -> dict[str, Any]:
+        return dict(getattr(self.thread_state, "response_info", {}))

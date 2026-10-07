@@ -47,6 +47,11 @@ def native_turn(
     )
     prompt_tokens = client.count_text(template["prompt"], parse_special=True) + 1
     max_tokens = client.sampling_args.get("max_tokens", 512)
+    sampling = {
+        key: client.sampling_args[key]
+        for key in ("temperature", "seed", "top_p", "top_k")
+        if key in client.sampling_args
+    }
     if prompt_tokens + max_tokens > client.context_window:
         raise ValueError(
             "Tool conversation exceeds the working context; shorten sources or start a new turn"
@@ -59,6 +64,7 @@ def native_turn(
             "stream": False,
             "temperature": 0.0,
             "seed": 42,
+            **sampling,
             "max_tokens": max_tokens,
             "cache_prompt": True,
             **extras,

@@ -1,7 +1,10 @@
 
 ---
 
-> **V100 fork, v100.10:** the local workflow uses your own llama.cpp server, no paid API.
+> **V100 fork, v100.11:** the local workflow uses your own llama.cpp server, no paid API.
+> v100.11 adds `prepare-thinking`: a separate reasoning profile with a 2048-token
+> output budget and explicit sampling, propagated to evaluation and parent R&D.
+> Quality reports record the actual settings and reject truncated final answers.
 > It adds A/B learning, persistent shared memory, verified-data learning cycles and
 > isolated full-weight submodel experiments. Read [CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md)
 > for installation, capabilities and limits. The upstream API examples below are

@@ -34,6 +34,11 @@ PROMPT_FILES = {
     "rlm/v100/paper_tools.py",
     "rlm/v100/paper_learning.py",
     "rlm/v100/continuous.py",
+    "rlm/v100/inference.py",
+    "rlm/v100/evaluation.py",
+    "rlm/v100/protection.py",
+    "rlm/v100/insights.py",
+    "rlm/v100/common.py",
 }
 
 

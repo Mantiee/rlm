@@ -1,4 +1,11 @@
-# Forward paper research, v100.10
+# Forward paper research, v100.11
+
+v100.11 dodaje osobny profil `prepare-thinking` opisany w
+[CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md). Rodzice A/B dziedziczą jego sampling
+i budżet rozumowania; CPU helper zachowuje osobny szybki profil. Przed uczeniem
+potrzebny jest pełny baseline w nowych warunkach. Poprawna arytmetyka w czterech
+przypadkach nie jest dowodem zyskownej strategii. Bramki opłat, świeżości danych,
+weryfikacji ćwiczeń i ochrony poprzednich wersji nadal obowiązują.
 
 Cel użytkownika: A/B mają szukać możliwie wysokiego, powtarzalnego zysku netto,
 porównując research sportowy, crypto oraz akcje, także izolowaną dźwignię.

@@ -1,4 +1,4 @@
-# V100 continual learning, v100.10
+# V100 continual learning, v100.11
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,9 +6,35 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
-Kod v100.10 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Kod v100.11 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
 Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
 pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
+
+## Osobny profil rozumowania, v100.11
+
+`prepare-thinking` tworzy `research/v100-thinking.json` z aktualnego profilu:
+`enable_thinking=true`, budżet wyjścia 2048 tokenów, temperature 1.0, top_p 0.95,
+top_k 64 i seed 42. Nie zmienia starego profilu, modelu ani portfeli. Przy ponownym
+wywołaniu akceptuje identyczny plik; odmienny istniejący profil nie jest nadpisywany.
+Przekazuj nowy plik przez `--profile` do oceny i późniejszego `learn-loop`.
+Klienci rodziców/R&D oraz ocena A/B dziedziczą te ustawienia. Osobny CPU researcher
+pozostaje w szybkim trybie bez rozumowania. Benchmark przepustowości domyślnie
+pozostaje bez rozumowania; jego `--thinking` jest osobnym pomiarem.
+
+Wstępna diagnoza na czterech zadaniach zmieniła wynik 0/4 na 4/4 przy niezmienionych
+wagach, z czasem odpowiedzi 9–38 sekund. Zmieniono jednocześnie tryb rozumowania,
+sampling i budżet; nie jest to izolowany test jednej przyczyny. Następny krok to
+pełne 41 przypadków zapisane jako `baseline-thinking.json`. Zachowaj stare
+`baseline.json` (9/41); raporty z różnymi warunkami generacji nie mogą służyć jako
+porównanie przed/po treningu. Nowe kandydaty oceniaj wobec nowego baseline w tych
+samych warunkach. Cztery zadania nie dowodzą poprawy całego modelu.
+
+Raport jakości zapisuje warunki, finish_reason, liczbę znaków rozumowania i błędy,
+bez tekstu wewnętrznego rozumowania. Rozbieżny klient jest odrzucany przed oceną;
+brak końcowej odpowiedzi lub limit tokenów oznacza niezaliczony przypadek.
+Profil nie włącza speculative decoding i nie uruchamia aktualizacji wag.
+Walidacja kodu v100.11: 475 testów zaliczonych, 63 pominięte; lint, formatter
+i hooki przeszły. To testy kontrolera na CPU, nie pełna ocena modelu na V100.
 
 ## Badania finansowe i paper trading, v100.9
 

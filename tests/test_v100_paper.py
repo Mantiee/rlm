@@ -457,7 +457,7 @@ def test_coinbase_collector_uses_public_book_and_archived_nbp_conversion(tmp_pat
 def test_financial_rnd_parent_can_reject_every_worker_and_hold(tmp_path, monkeypatch):
     book, clock, _ = setup(tmp_path)
     book.ingest(quote(clock))
-    profile = {"runtime": {"model_version": "test-gemma"}}
+    profile = {"runtime": {"model_version": "test-gemma", "max_output_tokens": 512}}
     monkeypatch.setattr(paper_agents, "helper_client", lambda *a: SimpleNamespace())
     seen = []
 

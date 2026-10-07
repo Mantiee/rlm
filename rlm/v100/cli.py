@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from rlm.clients.llamacpp import LlamaCppClient
 from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.inference import prepare_thinking, sampling_settings, thinking_enabled
 from rlm.v100.memory import Memory, digest
 from rlm.v100.protection import ExpertRegistry, compare_reports, reserve_audit_sources
 
@@ -79,9 +80,9 @@ def client_for(
         base_url=r["base_url"],
         context_window=r["context_window"],
         timeout=r["max_timeout"],
-        sampling_args={"max_tokens": max_tokens or r["max_output_tokens"]},
+        sampling_args=sampling_settings(profile, max_tokens),
         metrics_path=str(root / "research/logs/inference.jsonl"),
-        enable_thinking=enable_thinking,
+        enable_thinking=thinking_enabled(profile, enable_thinking),
         activity_root=str(root),
         activity_branch=r.get("activity_branch", "controller"),
         activity_context={
@@ -102,6 +103,7 @@ def main() -> None:
 
     add_commands(sub)
     sub.add_parser("doctor")
+    sub.add_parser("prepare-thinking", help="Create a separate reasoning and sampling profile")
     objective = sub.add_parser(
         "set-goal",
         help="Set the user-owned shared A/B objective and bind its fixed development suite",
@@ -267,6 +269,9 @@ def main() -> None:
         return
     profile = load_profile(args.profile or root / "research/v100.toml", root)
     registry = ExpertRegistry(root / "research/experts")
+    if args.command == "prepare-thinking":
+        print("Thinking profile:", prepare_thinking(profile, root))
+        return
     if args.command == "set-goal":
         from rlm.v100.goals import set_goal
 
@@ -361,7 +366,9 @@ def main() -> None:
         print(json.dumps(check_code(args.directory.resolve(), args.timeout), indent=2))
         return
     if args.command in ("plan-duel", "propose-code"):
-        planning_client = client_for(profile, root, max_tokens=1536, enable_thinking=False)
+        planning_client = client_for(
+            profile, root, max_tokens=max(1536, profile["runtime"]["max_output_tokens"])
+        )
         if args.command == "plan-duel":
             from rlm.v100.experiments import plan_duel
 
@@ -526,9 +533,7 @@ def main() -> None:
 
         if expert is None:
             assert_served_expert(client, profile, root)
-        evaluate_suite(
-            client_for(profile, root, enable_thinking=False), profile, args.suite, args.output
-        )
+        evaluate_suite(client_for(profile, root), profile, args.suite, args.output)
         return
     if args.command == "bench":
         if args.repeats < 1:
