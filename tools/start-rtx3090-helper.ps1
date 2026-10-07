@@ -89,7 +89,7 @@ if (Test-Path $RuntimeReceipt) {
         if (-not (Test-Path $Archive)) {
             $Partial = "$Archive.partial"
             $DownloadUrl = "https://github.com/ollama/ollama/releases/download/v$RuntimeVersion/$($Asset.name)"
-            Write-Host "Downloading isolated Ollama $RuntimeVersion: $($Asset.name) ..."
+            Write-Host "Downloading isolated Ollama ${RuntimeVersion}: $($Asset.name) ..."
             Invoke-WebRequest -UseBasicParsing -Uri $DownloadUrl -OutFile $Partial -TimeoutSec 7200
             if ((Get-FileHash -Algorithm SHA256 $Partial).Hash.ToLowerInvariant() -ne $Asset.sha256) {
                 throw "Runtime download checksum mismatch: $($Asset.name). Nothing started."
@@ -106,7 +106,7 @@ if (Test-Path $RuntimeReceipt) {
     @{ version = $RuntimeVersion; executable_sha256 = (Get-FileHash -Algorithm SHA256 $Ollama).Hash.ToLowerInvariant(); assets = $Assets } |
         ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $RuntimeReceipt
 }
-Write-Host "Using isolated Ollama $RuntimeVersion: $Ollama"
+Write-Host "Using isolated Ollama ${RuntimeVersion}: $Ollama"
 # Explicit port-specific blocks also protect against a pre-existing broad
 # application allow rule. Keep the Windows self-test address accessible.
 function Ip-Number([string]$Address) {
