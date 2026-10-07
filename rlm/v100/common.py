@@ -35,11 +35,11 @@ def load_profile(path: Path, root: Path) -> dict[str, Any]:
         raise ValueError("Retrieved chunks cannot fit the configured working context")
     for section, names in (
         ("server", ("binary", "model", "draft_model")),
-        ("memory", ("database",)),
-        ("training", ("base_model", "output", "init_adapter")),
+        ("memory", ("database", "encoder_path")),
+        ("training", ("base_model", "output", "init_adapter", "teacher_adapter", "split_ledger")),
     ):
         for name in names:
-            raw = profile[section][name]
+            raw = profile[section].get(name, "")
             if raw:
                 path_value = Path(raw).expanduser()
                 profile[section][name] = str(

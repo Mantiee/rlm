@@ -1,88 +1,137 @@
-# Uczenie kolejnych rund: wymagania projektu
+# V100 continual learning, v100.4
 
-## Catastrophic forgetting
+Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
+`bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
+i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działającego
+środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
+`memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
+To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
 
-Wymaganie użytkownika: nie tracić zaakceptowanych wcześniejszych umiejętności.
-Przegląd badań i granice możliwej ochrony opisuje [FORGETTING_RESEARCH.md](FORGETTING_RESEARCH.md).
-Architektura ma zachowywać niezmienną bazę oraz niezmienne zaakceptowane adaptery
-z jawnymi, wersjonowanymi ścieżkami uruchomienia. Nowe uczenie zmienia osobnego
-kandydata i nie zastępuje automatycznie chronionego eksperta. Routing, prompt,
-retrieval, tokenizer i cache należą do warunków działania chronionej ścieżki.
-Nie oznacza to ogólnej gwarancji zerowej regresji całego systemu dla wszystkich wejść.
+## Zachowanie wcześniejszych wersji
 
-Obecny eksport pamięci zachowuje wszystkie zatwierdzone przykłady jako replay.
-Bazowe wagi pozostają osobno, a nowy adapter jest kandydatem z możliwością powrotu
-do wcześniejszej wersji. To ogranicza ryzyko, ale nie dowodzi zachowania umiejętności bazowych.
-Obecne `init_adapter` ładuje wcześniejszy adapter jako trenowalną kopię: nowy kandydat
-może zapominać. Bank chronionych ekspertów i ich routing są wymaganiami do wdrożenia,
-nie istniejącą funkcją tej wersji.
+`protect-baseline ID --description ...` zapisuje niezależne kopie oryginalnego
+GGUF, llama-server i jego lokalnych bibliotek. `serve --expert ID` weryfikuje
+ich SHA256 i uruchamia przypięte ustawienia. Pliki są tylko do odczytu, rejestracja
+istniejącego ID i zapis treningu w chronione ścieżki są odrzucane. Wymagane miejsce
+na dysku: kolejna kopia modelu i bibliotek na każdego eksperta.
 
-Przed treningiem kolejnych rund trzeba zamrozić podział danych między rundami.
-Obecne `load_records` izoluje powiązane źródła w pojedynczym zbiorze, lecz po dodaniu
-nowych grup może zmienić wybór grup walidacyjnych. Rekordy użyte kiedyś do treningu
-nie mogą później uchodzić za niezależny holdout. Potrzebne są osobne, niezmienne testy
-starych umiejętności, nowych umiejętności, polskiego, kodu i cytowania źródeł.
-Nowe dane powinny być mieszane ze sprawdzonymi wcześniejszymi przykładami i reprezentatywnymi
-zadaniami ogólnymi. Proporcje replay oraz ewentualną regularizację dobieramy z regresji,
-nie zakładamy, że większy rank LoRA automatycznie zapobiega zapominaniu.
+Ochrona oznacza zachowanie poprzednich plików i jawnej ścieżki uruchomienia.
+Nie dowodzi braku pogorszenia odpowiedzi nowego kandydata ani poprawności routera.
+Zmiana systemowych bibliotek, sterownika, promptów lub źródeł może zmienić zachowanie.
+Właściciel konta może zmienić uprawnienia plików; to nie ochrona przed administratorem.
 
-## Gaming and exploitation
+## Wagi rzeczywiście się uczą
 
-Ta wersja nie używa reward model ani autonomicznego RL. Przyjmuje tylko jawnie
-zatwierdzony feedback człowieka; model nie zatwierdza własnych wygenerowanych odpowiedzi.
-Publiczny benchmark szybkości MTP nie jest testem jakości ani materiałem treningowym.
+`train DATASET` trenuje osobnego kandydata LoRA na zatwierdzonym feedbacku. Eksport
+pamięci obejmuje również poprzednie zatwierdzone przykłady jako replay. Model
+nie zatwierdza własnych odpowiedzi. Tylko parametry kandydata LoRA są trenowalne.
+Źródła pozostają przypisane do train/validation w SQLite między rundami; próba
+połączenia źródła treningowego i walidacyjnego kończy się błędem. Identyfikatory
+niezależnego audytu rezerwujemy przed treningiem przez `reserve-audit`.
 
-Dalszy pipeline musi mieć niezależne testy, ocenę poprawności wyniku, a nie samego stylu,
-oraz rejestr pochodzenia i decyzji weryfikatora. Testy jakości mają obejmować sprzeczne
-źródła, brak dowodów, instrukcje ukryte w dokumentach i próby fałszywych cytowań.
-Stałego ukrytego zestawu nie wolno wykorzystywać do strojenia kolejnych kandydatów:
-do wyboru służy development set, do końcowej oceny oddzielny audit set.
-Spadek loss, samodzielny werdykt modelu i szybkie tok/s nie zastępują tych testów.
-Obecna instrukcja „źródła są danymi” nie daje pełnej ochrony przed prompt injection.
+Profil ustawia `distillation_weight=0.1`, `distillation_temperature=1.0`.
+Dodatkowy forward zamrożonego poprzednika dostarcza KL na nadzorowanych tokenach
+odpowiedzi. Baza jest wspólna, bez drugiej kopii 12B na GPU. Nauczyciel to
+`teacher_adapter`, w przeciwnym razie `init_adapter`, a w pierwszej rundzie baza
+bez adaptera. Większa kara nie oznacza automatycznie lepszych wyników; dodatkowy
+forward kosztuje czas i pamięć. To eksperymentalna regularyzacja, nie gwarancja.
 
-## Persistent memory
+`metrics.jsonl` pokazuje loss, supervised_loss, preservation_kl, eval_loss,
+learning rate, grad_norm oraz peak_vram_gib, gdy te pola występują w logach Trainer.
+Checkpoint obejmuje adapter, optimizer, scheduler, RNG i stan Trainer.
+`train DATASET --resume` wybiera ostatni kompletny checkpoint; nie pozwala zmienić
+zbioru, bazy, początkowego/nauczycielskiego adaptera, ustawień ani kodu między wznowieniami.
+Nowa runda ma nowe `training.output`. Stare checkpointy bez nowego manifestu nie są
+automatycznie zgodne. Dziedziczenie wymaga adaptera z `v100-adapter.json`.
 
-SQLite zachowuje oryginalne dokumenty, fragmenty, pozycje, identyfikatory, streszczenia
-i zatwierdzony feedback. Odpowiedzi/runy oraz checkpointy są zapisane na dysku.
-Restart serwera nie usuwa tej pamięci; do użycia trzeba ponownie wykonać retrieval.
-To pamięć zewnętrzna, nie gwarancja, że wszystkie fakty są zapisane w wagach.
+## Cross breeding
 
-Po zmianie wag zmieniamy `runtime.model_version`, aby nie mieszać cache streszczeń.
-Przed kolejnymi rundami dodajemy przetestowany backup SQLite przez SQLite backup API,
-wersjonowany snapshot danych, deduplikację i obsługę korekt/sprzeczności źródeł.
-Sam plik WAL i checkpoint na tym samym dysku nie są niezależnym backupem.
+`breed-adapters FIRST SECOND --output ROUND --alpha W` tworzy
+`ROUND/candidate` z dwóch zgodnych adapterów tej samej dokładnej bazy.
+SHA256 wag, konfiguracji i tokenizera identyfikują bazę. Ranki rodziców mogą się różnić;
+pozostałe ustawienia LoRA muszą być zgodne. Obsługiwane są standardowe liniowe LoRA
+bez dodatkowych trenowanych embeddingów, bias, DoRA, RSLoRA i wzorców rank/alpha.
 
-## Promocja modelu
+Metoda: konkatenacja faktorów, która daje dokładnie
+`delta_child = W * delta_first + (1-W) * delta_second`, z uwzględnieniem skalowania
+alpha/r każdego rodzica. To nie jest średnia faktorów A i B, która dodawałaby
+niezamierzone iloczyny. Obliczenia dotyczą adapterów na CPU, bez ładowania 12B.
+Rank potomka jest sumą ranków; dalszy trening będzie więc droższy. Nie wprowadzono
+SVD, TIES ani DARE, bo wymagają osobnych pomiarów strat i jakości.
 
-Oryginalny model, adapter i konfiguracja są wersjonowane oddzielnie.
-Każdy kandydat wymaga jakościowego porównania z bazą i poprzednią zaakceptowaną wersją,
-zapisania regresji oraz świadomej promocji. Obecny fork niczego nie promuje automatycznie.
-Nowe funkcje z powyższej listy pozostają wymaganiami do wdrożenia przed automatycznym
-uczeniem kolejnych rund; nie są jeszcze w całości zaimplementowane.
+Rodzice pozostają identyczni. Potomek jest tylko kandydatem. Można utworzyć kilka
+osobnych mieszanek (np. 0.25, 0.5, 0.75), wybrać je na development set, a potem
+kontynuować trening na zweryfikowanych przykładach obu rodziców. W profilu następnej
+rundy `init_adapter` wskazuje `ROUND/candidate`, a `training.output` nowy katalog.
+Nie uruchomiono automatycznej ewolucji, selekcji bez oceny ani samopotwierdzania danych.
+Nie ma obecnie gotowych dwóch wytrenowanych rodziców na Twoim serwerze.
 
-## Jev i połączenie mechanizmów ochrony
+`export-model` scala kandydata z bazą do osobnego FP16 i Q6_K. Dla potomka trzeba
+najpierw wyeksportować obu rodziców. Zapis eksportu wiąże ich adaptery z konkretnymi
+SHA modeli GGUF; ręcznie podmienione wagi/eksporty są odrzucane.
 
-Jev jest uwzględniony w projekcie jako opcjonalna usługa wyboru eksperta i oceny
-przydatności kontekstu. [Dokumentacja routingu](https://docs.typesafe.ai/patterns/intent-routing)
-opisuje ten sposób użycia. To plan integracji, nie działający klient w tej wersji.
-Aktywacja wymaga lokalnie skonfigurowanego klucza API. Nie uruchomiono wywołań usługi.
+## Bramka jakości
 
-Jawnie przypięta chroniona wersja eksperta ma pierwszeństwo przed decyzją routera.
-Jev wybiera wyłącznie z listy dostępnych zaakceptowanych ekspertów i może wskazać
-niepewność. Nie zatwierdza sam danych treningowych, nie promuje modeli ani nie
-uznaje własnej oceny za dowód poprawności. Jego wersję, decyzję i warunki wyboru
-trzeba rejestrować i oceniać niezależnie.
+`evaluate-suite SUITE --output REPORT` sprawdza deterministyczne zadania z JSONL.
+Każdy rekord ma `id`, `skill`, `messages`, `expected`, `match` (exact albo contains).
+To ograniczone walidatory, nie ogólny sędzia poprawności. Sam expected/contains nie
+wystarczy do oceny dużych programów, rozumowania i fałszywych cytowań.
 
-Rozwijany kandydat ma łączyć zweryfikowane nowe przykłady, reprezentatywny replay
-oraz eksperymentalną regularizację odpowiedzi względem zamrożonego poprzednika
-(distillation/KL). [Learning without Forgetting](https://arxiv.org/abs/1606.09282)
-jest wzorcem zachowywania zachowania poprzednika przez destylację, pierwotnie badanym
-dla CNN. Przeniesienie do autoregresywnej Gemmy, koszt dodatkowych forwardów i dobór
-siły kar wymagają pomiaru. Nie ma tu gwarancji zachowania nieobserwowanych zachowań.
+Raport wiąże suite SHA, model SHA, warunki generacji i wykonania. Serwer musi być
+uruchomiony tą wersją kontrolera, aby mieć lokalny receipt procesu. Profile i
+warunki generacji obu porównań muszą się zgadzać. `compare-quality` odrzuca każdy
+przypadek wcześniej poprawny, który teraz jest błędny, nawet jeśli średnia rośnie.
 
-Pamięć zewnętrzna zachowuje oryginały; indeks embeddingów pomaga je odnaleźć.
-Niezmienne wersje chronią wcześniejsze wagi i ścieżki, replay i regularizacja mają
-ograniczać regresje nowego kandydata, a niezależne testy wykrywają regresje na próbach.
-Te mechanizmy pełnią różne role. Połączenie nie daje ogólnego dowodu zerowego
-zapominania całego systemu. Porównanie LoRA i sieci bocznej na V100 pozostaje konieczne
-przed nazwaniem któregoś rozwiązania najlepszym dla tego setupu.
+`register-expert ID --description ... --baseline-report OLD --candidate-report NEW`
+przyjmuje nowego eksperta dopiero po tej bramce. Dla krzyżowanego potomka podaj
+`--baseline-report` dla każdego rodzica. Oba raporty muszą dotyczyć rzeczywistych
+eksportów rodziców i tej samej połączonej suite; potomek musi zachować każdy
+przypadek zaliczony przez któregokolwiek rodzica. Dotyczy to wyłącznie skończonych
+prób, nie wszystkich możliwych wejść. Spadek loss i wzrost tok/s nie dowodzą jakości.
+
+Do wybierania mieszanek używamy development set; oddzielny ukryty audit służy
+końcowej ocenie. Ten kontroler nie zapewnia procesu ukrywania audytu przed operatorem
+ani odporności na manipulowanie raportami przez właściciela plików.
+
+## Pamięć i lokalne narzędzia, bez Jev
+
+`prepare-embeddings` pobiera przypiętą wersję
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` i zapisuje SHA plików.
+`index-memory` indeksuje oryginalne fragmenty do wersjonowanych wektorów w SQLite.
+Encoder działa domyślnie na CPU, aby nie zabierać VRAM V100. Długie fragmenty dzieli
+na okna zamiast obcinać; retrieval łączy cosine i FTS przez reciprocal rank fusion.
+Wyszukiwanie cosine jest dokładne i liniowe względem rozmiaru indeksu, bez FAISS
+wymagającego dodatkowych binarek. Dla dużych zbiorów trzeba zmierzyć koszt i dodać ANN.
+
+Po przygotowaniu i indeksowaniu ustaw `memory.retrieval=hybrid`; domyślny profil
+pozostaje lexical, aby instalacja działała bez dodatkowego pobrania encodera.
+Nowo dodane źródła trzeba zaindeksować przed wyszukiwaniem hybrid. Zmiana encodera
+wymaga nowej wersji indeksu. `backup-memory DEST` atomowo zapisuje niezależny snapshot
+SQLite przez backup API, z uwzględnieniem WAL. Kopię trzeba też przenieść na inny dysk.
+
+`ask QUESTION --agent` pozwala lokalnej Gemmie wybrać `search_memory` i `read_source`.
+Narzędzia czytają źródła, mają limit tur, walidację argumentów i budżet kontekstu.
+Nie wykonują powłoki ani wygenerowanego Python i nie zmieniają wag.
+To nie pełna ochrona przed prompt injection; model może błędnie wybrać źródła/narzędzia.
+Ślad wyboru zapisuje się w runie. Rozmowa agentowa nie jest automatycznie materiałem treningowym.
+
+`route-expert QUESTION` wybiera tylko z zarejestrowanych ekspertów, przez lokalny model.
+Jawne `--expert ID` ma pierwszeństwo. `ask --auto-expert` sprawdza, czy wybrany ekspert
+jest rzeczywiście uruchomiony. Jedna V100 nie ma tu automatycznie załadowanego całego
+banku; jeśli działa inny ekspert, komenda odmawia zamiast udawać poprawne przełączenie.
+Nie zaimplementowano automatycznej orkiestracji restartów/model swapping.
+
+## Stan walidacji
+
+Mechanizmy sprawdzono lokalnie na CPU, w tym prawdziwy trening małej Llamy z PEFT,
+checkpointowanym backward i KL: baza oraz nauczyciel nie zmieniły się, kandydat się zmienił.
+Testy obejmują dokładność sumy delt, niezmienność rodziców, split leakage, backup,
+semantyczny retrieval na mock encoderze, narzędzia, snapshoty i odmowę regresji obu rodziców.
+Nie uruchomiono nowego treningu Gemma 12B, rzeczywistego encodera ani tool calling Gemmy
+na Twojej V100. Nie ma zmierzonego wzrostu jakości lub szybkości tej wersji.
+Bazowy pomiar użytkownika nadal wynosi około 48 tok/s, bez spekulacji.
+Walidacja tej wersji: 323 testy zaliczone, 63 pominięte; wszystkie hooki pre-commit
+zaliczone. Mały encoder Bert sprawdza też rzeczywisty tokenizing i forward na CPU,
+nie tylko mocki wyszukiwania.
+Ladder side network, przebudowa Gemmy i inne metody pozostają eksperymentami do porównania,
+nie istniejącą funkcją. Granice badań: [FORGETTING_RESEARCH.md](FORGETTING_RESEARCH.md).

@@ -6,10 +6,12 @@ import subprocess
 from importlib.metadata import version
 from pathlib import Path
 
+from rlm.v100.breeding import base_signature, parent_exports, record_adapter, verified_adapter
 from rlm.v100.common import atomic_json
+from rlm.v100.protection import assert_candidate_output, file_hash, fixed_split
 
 
-def load_records(path: Path) -> tuple[list[dict], list[dict]]:
+def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], list[dict]]:
     records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     if not records:
         raise ValueError("Empty dataset")
@@ -19,6 +21,8 @@ def load_records(path: Path) -> tuple[list[dict], list[dict]]:
             raise ValueError("Only explicit verified feedback is supported in this release")
         if not record.get("group") or record["messages"][-1]["role"] != "assistant":
             raise ValueError("Each record needs group and final assistant answer")
+    if ledger is not None:
+        return fixed_split(records, ledger)
     # Connected source groups stay together, avoiding leakage when one answer uses multiple docs.
     groups: list[set[str]] = []
     for record in records:
@@ -68,7 +72,7 @@ def completed_checkpoint(output: Path) -> Path:
     return checkpoint
 
 
-def train_model(profile: dict, dataset_path: Path, resume: bool) -> None:
+def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | None = None) -> None:
     # Lazy imports keep the controller free of CUDA/PyTorch dependencies.
     import torch
     from datasets import Dataset
@@ -90,9 +94,23 @@ def train_model(profile: dict, dataset_path: Path, resume: bool) -> None:
         raise ValueError("Stop inference server before training: need at least 28 GiB free VRAM")
     settings = profile["training"]
     output = Path(settings["output"])
-    output.mkdir(parents=True, exist_ok=True)
-    train, evaluation = load_records(dataset_path)
     base = Path(settings["base_model"])
+    root = root or output.parents[2]
+    adapter = Path(settings["init_adapter"]) if settings["init_adapter"] else None
+    assert_candidate_output(output, base, adapter, root)
+    if settings.get("teacher_adapter"):
+        assert_candidate_output(output, base, Path(settings["teacher_adapter"]), root)
+    signature = base_signature(base)
+    parent_metadata = None
+    if adapter is not None:
+        parent_metadata, _ = verified_adapter(adapter)
+        if parent_metadata["base"] != signature:
+            raise ValueError("Initial adapter was trained on a different base")
+    ledger = Path(settings.get("split_ledger", root / "research/state/splits.sqlite3"))
+    train, evaluation = load_records(dataset_path, ledger)
+    if not resume and output.exists() and any(output.iterdir()):
+        raise FileExistsError("New training round requires an empty, separate output directory")
+    output.mkdir(parents=True, exist_ok=True)
     indices = sorted(base.glob("*.safetensors"))
     if not indices:
         raise ValueError("Missing local base safetensors")
@@ -100,15 +118,27 @@ def train_model(profile: dict, dataset_path: Path, resume: bool) -> None:
         "data_sha256": hashlib.sha256(dataset_path.read_bytes()).hexdigest(),
         "settings": settings,
         "base_config_sha256": hashlib.sha256((base / "config.json").read_bytes()).hexdigest(),
+        "base_signature": signature,
         "base_files": [(p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in indices],
         "torch": torch.__version__,
         "packages": {
             name: version(name)
             for name in ("transformers", "peft", "accelerate", "bitsandbytes", "datasets")
         },
-        "training_code_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "training_code_sha256": {
+            name: file_hash(Path(__file__).with_name(name))
+            for name in ("training.py", "distillation.py", "protection.py", "breeding.py")
+        },
         "train_records": len(train),
         "eval_records": len(evaluation),
+        "split_roles": sorted(
+            {
+                (source, role)
+                for role, records in (("train", train), ("validation", evaluation))
+                for record in records
+                for source in record.get("document_ids") or [record["group"]]
+            }
+        ),
     }
     # JSON round-trip makes tuples identical after reading the saved manifest.
     manifest = json.loads(json.dumps(manifest))
@@ -119,6 +149,12 @@ def train_model(profile: dict, dataset_path: Path, resume: bool) -> None:
             for name in ("adapter_config.json", "adapter_model.safetensors")
         }
     manifest_path = output / "manifest.json"
+    if settings.get("teacher_adapter"):
+        teacher_path = Path(settings["teacher_adapter"])
+        teacher_metadata, _ = verified_adapter(teacher_path)
+        if teacher_metadata["base"] != signature:
+            raise ValueError("Teacher was trained on a different base")
+        manifest["teacher_files"] = teacher_metadata["files"]
     if manifest_path.exists():
         if json.loads(manifest_path.read_text()) != manifest:
             raise ValueError(
@@ -182,6 +218,20 @@ def train_model(profile: dict, dataset_path: Path, resume: bool) -> None:
             ),
         )
     model.print_trainable_parameters()
+    trainable = [name for name, parameter in model.named_parameters() if parameter.requires_grad]
+    if not trainable or any("lora_" not in name for name in trainable):
+        raise ValueError("Only candidate LoRA parameters may be trainable; base must be frozen")
+    strength = float(settings.get("distillation_weight", 0.0))
+    temperature = float(settings.get("distillation_temperature", 1.0))
+    if not 0 <= strength <= 10 or not 0 < temperature <= 10:
+        raise ValueError("Invalid distillation weight or temperature")
+    teacher_adapter = settings.get("teacher_adapter", "") or settings["init_adapter"]
+    if strength and teacher_adapter:
+        model.load_adapter(teacher_adapter, adapter_name="teacher", is_trainable=False)
+        model.set_adapter("default")
+        for name, parameter in model.named_parameters():
+            if ".teacher." in name:
+                parameter.requires_grad_(False)
 
     class Progress(TrainerCallback):
         def on_log(self, args, state, control, logs=None, **kwargs):
@@ -226,7 +276,10 @@ def train_model(profile: dict, dataset_path: Path, resume: bool) -> None:
         dataloader_num_workers=0,
         include_num_input_tokens_seen=True,
     )
-    trainer = Trainer(
+    from rlm.v100.distillation import preserving_trainer
+
+    trainer_type = preserving_trainer(Trainer, strength, temperature, bool(teacher_adapter))
+    trainer = trainer_type(
         model=model,
         args=args,
         train_dataset=train_dataset,
@@ -235,12 +288,17 @@ def train_model(profile: dict, dataset_path: Path, resume: bool) -> None:
         data_collator=DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100),
         callbacks=[Progress()],
     )
+    # compute_loss uses each microbatch's mean loss, not a num_items_in_batch
+    # denominator. Ask Trainer to apply gradient-accumulation scaling itself.
+    if strength:
+        trainer.model_accepts_loss_kwargs = False
     if not resume:
         atomic_json(output / "baseline_eval.json", trainer.evaluate())
     trainer.train(resume_from_checkpoint=str(checkpoint) if checkpoint else None)
     candidate = output / "candidate"
     trainer.save_model(str(candidate))
     tokenizer.save_pretrained(candidate)
+    record_adapter(candidate, signature, parent_metadata["parents"] if parent_metadata else None)
     atomic_json(output / "candidate_eval.json", trainer.evaluate())
     print(
         "Candidate saved. Serving model unchanged. Compare held-out task quality before merging/exporting."
@@ -254,7 +312,17 @@ def export_candidate(profile: dict, root: Path) -> None:
 
     settings = profile["training"]
     output = Path(settings["output"])
+    assert_candidate_output(
+        output,
+        Path(settings["base_model"]),
+        Path(settings["init_adapter"]) if settings["init_adapter"] else None,
+        root,
+    )
     adapter = output / "candidate"
+    metadata, _ = verified_adapter(adapter)
+    parent_model_hashes = parent_exports(metadata)
+    if metadata["base"] != base_signature(Path(settings["base_model"])):
+        raise ValueError("Candidate base changed before export")
     destination = output / "export-fp16"
     converter_python = root / "venvs/convert/bin/python"
     llama_source = Path(profile["server"]["binary"]).parents[2]
@@ -319,6 +387,23 @@ def export_candidate(profile: dict, root: Path) -> None:
             str(profile["server"]["threads"]),
         ],
         check=True,
+    )
+    atomic_json(
+        quant_gguf.with_suffix(".provenance.json"),
+        {
+            "schema": "v100-gguf-v1",
+            "model_sha256": file_hash(quant_gguf),
+            "adapter": metadata,
+            "parent_model_sha256": parent_model_hashes,
+        },
+    )
+    atomic_json(
+        adapter / "v100-export.json",
+        {
+            "model_path": str(quant_gguf),
+            "model_sha256": file_hash(quant_gguf),
+            "adapter_sha256": metadata["files"]["adapter_model.safetensors"],
+        },
     )
     print("Export ready:", quant_gguf)
     print(

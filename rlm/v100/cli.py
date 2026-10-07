@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from rlm.clients.llamacpp import LlamaCppClient
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.memory import Memory, digest
+from rlm.v100.protection import ExpertRegistry, compare_reports, reserve_audit_sources
 
 
 def server_command(profile: dict) -> list[str]:
@@ -116,6 +117,43 @@ def main() -> None:
     tree.add_argument("document_id")
     ask = sub.add_parser("ask")
     ask.add_argument("question")
+    ask.add_argument(
+        "--agent", action="store_true", help="Let the local model select read-only memory tools"
+    )
+    ask.add_argument("--expert", help="Use an immutable expert and its pinned execution settings")
+    ask.add_argument(
+        "--auto-expert",
+        action="store_true",
+        help="Ask the local model to select a registered expert",
+    )
+    serve_parser = sub.choices["serve"]
+    serve_parser.add_argument("--expert", help="Serve an immutable expert snapshot")
+    sub.add_parser("prepare-embeddings")
+    sub.add_parser("index-memory")
+    backup = sub.add_parser("backup-memory")
+    backup.add_argument("destination", type=Path)
+    protect = sub.add_parser("protect-baseline")
+    protect.add_argument("expert_id")
+    protect.add_argument("--description", required=True)
+    register = sub.add_parser("register-expert")
+    register.add_argument("expert_id")
+    register.add_argument("--description", required=True)
+    register.add_argument("--baseline-report", type=Path, required=True, action="append")
+    register.add_argument("--candidate-report", type=Path, required=True)
+    sub.add_parser("experts")
+    route = sub.add_parser("route-expert")
+    route.add_argument("question")
+    audit = sub.add_parser("reserve-audit")
+    audit.add_argument(
+        "sources", type=Path, help="JSON array of source IDs reserved before training"
+    )
+    quality = sub.add_parser("evaluate-suite")
+    quality.add_argument("suite", type=Path)
+    quality.add_argument("--output", type=Path, required=True)
+    quality.add_argument("--expert")
+    gate = sub.add_parser("compare-quality")
+    gate.add_argument("baseline", type=Path)
+    gate.add_argument("candidate", type=Path)
     feedback = sub.add_parser("feedback")
     feedback.add_argument("run_id")
     feedback.add_argument("answer_file", type=Path)
@@ -130,9 +168,95 @@ def main() -> None:
     train.add_argument("dataset", type=Path)
     train.add_argument("--resume", action="store_true")
     sub.add_parser("export-model")
+    breed = sub.add_parser(
+        "breed-adapters", help="Create an unpromoted child from two same-base LoRAs"
+    )
+    breed.add_argument("first", type=Path)
+    breed.add_argument("second", type=Path)
+    breed.add_argument("--output", type=Path, required=True)
+    breed.add_argument("--alpha", type=float, default=0.5)
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     profile = load_profile(args.profile or root / "research/v100.toml", root)
+    registry = ExpertRegistry(root / "research/experts")
+    if args.command == "breed-adapters":
+        from rlm.v100.breeding import breed_adapters
+
+        print(
+            json.dumps(
+                breed_adapters(
+                    args.first,
+                    args.second,
+                    args.output,
+                    args.alpha,
+                    Path(profile["training"]["base_model"]),
+                    root,
+                ),
+                indent=2,
+            )
+        )
+        return
+    expert = None
+    if getattr(args, "expert", None) and getattr(args, "auto_expert", False):
+        raise ValueError("An explicitly pinned expert cannot be overridden by automatic routing")
+    if getattr(args, "expert", None):
+        expert = registry.get(args.expert, verify=args.command == "serve")
+        profile = expert["profile"]
+    if args.command == "experts":
+        print(
+            json.dumps(
+                [
+                    {"id": item["id"], "description": item["description"]}
+                    for item in registry.list()
+                ],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if args.command in ("protect-baseline", "register-expert"):
+        if args.command == "protect-baseline":
+            if registry.list():
+                raise ValueError("Baseline already protected; new experts require quality reports")
+            baseline = candidate = None
+        else:
+            baseline = [json.loads(path.read_text()) for path in args.baseline_report]
+            candidate = json.loads(args.candidate_report.read_text())
+        print(
+            json.dumps(
+                registry.register(args.expert_id, profile, args.description, baseline, candidate),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if args.command == "compare-quality":
+        result = compare_reports(
+            json.loads(args.baseline.read_text()), json.loads(args.candidate.read_text())
+        )
+        print(json.dumps(result, indent=2))
+        if not result["passed"]:
+            raise SystemExit(1)
+        return
+    if args.command == "reserve-audit":
+        ledger = Path(
+            profile["training"].get("split_ledger", root / "research/state/splits.sqlite3")
+        )
+        reserve_audit_sources(ledger, json.loads(args.sources.read_text()))
+        print("Audit source IDs reserved")
+        return
+    if args.command == "prepare-embeddings":
+        from rlm.v100.semantic import prepare_encoder
+
+        print(
+            json.dumps(
+                prepare_encoder(
+                    Path(profile["memory"].get("encoder_path", root / "models/memory-encoder"))
+                ),
+                indent=2,
+            )
+        )
+        return
     if args.command == "prepare-mtp":
         from rlm.v100.speculative import prepare_mtp
 
@@ -160,12 +284,19 @@ def main() -> None:
             if value and not Path(value).is_file():
                 raise FileNotFoundError(value)
         command = server_command(profile)
+        from rlm.v100.serving import write_receipt
+
+        write_receipt(profile, root)
+        if profile["server"].get("library_path"):
+            os.environ["LD_LIBRARY_PATH"] = (
+                profile["server"]["library_path"] + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+            )
         print("Starting:", json.dumps(command), flush=True)
         os.execv(command[0], command)
     if args.command == "train":
         from rlm.v100.training import train_model
 
-        train_model(profile, args.dataset, args.resume)
+        train_model(profile, args.dataset, args.resume, root)
         return
     if args.command == "export-model":
         from rlm.v100.training import export_candidate
@@ -175,6 +306,33 @@ def main() -> None:
     client = client_for(
         profile, root, enable_thinking=args.thinking if args.command == "bench" else None
     )
+    if args.command == "route-expert" or getattr(args, "auto_expert", False):
+        from rlm.v100.agent import select_expert
+
+        decision = select_expert(
+            client_for(profile, root, enable_thinking=False), args.question, registry.list()
+        )
+        if args.command == "route-expert":
+            print(json.dumps(decision, indent=2))
+            return
+        expert = registry.get(decision["expert_id"], verify=False)
+        profile = expert["profile"]
+        client = client_for(profile, root)
+        print("Selected expert:", expert["id"], flush=True)
+    if expert and args.command in ("ask", "evaluate-suite"):
+        from rlm.v100.serving import assert_served_expert
+
+        assert_served_expert(client, profile, root, expert)
+    if args.command == "evaluate-suite":
+        from rlm.v100.evaluation import evaluate_suite
+        from rlm.v100.serving import assert_served_expert
+
+        if expert is None:
+            assert_served_expert(client, profile, root)
+        evaluate_suite(
+            client_for(profile, root, enable_thinking=False), profile, args.suite, args.output
+        )
+        return
     if args.command == "bench":
         if args.repeats < 1:
             raise ValueError("repeats must be positive")
@@ -253,6 +411,25 @@ def main() -> None:
     )
     memory = Memory(Path(profile["memory"]["database"]), version)
     try:
+        encoder = None
+        if args.command == "index-memory" or (
+            args.command == "ask" and profile["memory"].get("retrieval", "lexical") == "hybrid"
+        ):
+            from rlm.v100.semantic import Encoder
+
+            encoder = Encoder(
+                Path(profile["memory"].get("encoder_path", root / "models/memory-encoder")),
+                profile["memory"].get("encoder_device", "cpu"),
+            )
+        if args.command == "index-memory":
+            from rlm.v100.semantic import index_memory
+
+            print("Indexed source chunks:", index_memory(memory, encoder))
+            return
+        if args.command == "backup-memory":
+            memory.backup(args.destination)
+            print("Memory backup:", args.destination)
+            return
         if args.command == "ingest":
             print(
                 memory.ingest(
@@ -280,7 +457,29 @@ def main() -> None:
 
             print(memory.build_tree(args.document_id, summarize, profile["memory"]["fanout"]))
         elif args.command == "ask":
-            sources = memory.retrieve(args.question, profile["memory"]["retrieve_count"])
+
+            def retrieve(question: str):
+                if encoder is not None:
+                    from rlm.v100.semantic import hybrid_retrieve
+
+                    return hybrid_retrieve(
+                        memory, encoder, question, profile["memory"]["retrieve_count"]
+                    )
+                return memory.retrieve(question, profile["memory"]["retrieve_count"])
+
+            agent_result = None
+            if args.agent:
+                from rlm.v100.agent import answer_with_tools
+
+                agent_result = answer_with_tools(
+                    client_for(profile, root, enable_thinking=False),
+                    args.question,
+                    retrieve,
+                    profile["runtime"].get("tool_turns", 6),
+                )
+                sources = agent_result["sources"]
+            else:
+                sources = retrieve(args.question)
             if not sources:
                 raise ValueError(
                     "No matching sources. Import documents first or use relevant search words."
@@ -293,7 +492,7 @@ def main() -> None:
                 },
                 {"role": "user", "content": f"Źródła:\n{source_text}\n\nPytanie: {args.question}"},
             ]
-            answer = client.completion(messages)
+            answer = agent_result["answer"] if agent_result else client.completion(messages)
             run_id = uuid.uuid4().hex
             run = {
                 "question": args.question,
@@ -303,6 +502,8 @@ def main() -> None:
                 "source_ids": [s["id"] for s in sources],
                 "group": digest(json.dumps(sorted({s["document_id"] for s in sources}))),
                 "document_ids": sorted({s["document_id"] for s in sources}),
+                "expert_id": expert["id"] if expert else None,
+                "tool_trace": agent_result["trace"] if agent_result else [],
             }
             atomic_json(root / "research/runs" / f"{run_id}.json", run)
             print(answer, "\nRUN:", run_id)

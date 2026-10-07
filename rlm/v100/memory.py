@@ -2,8 +2,10 @@
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -55,6 +57,23 @@ class Memory:
 
     def close(self) -> None:
         self.db.close()
+
+    def backup(self, destination: Path) -> None:
+        if destination.exists():
+            raise FileExistsError(f"Refusing to overwrite memory backup: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, raw = tempfile.mkstemp(prefix=".backup-", dir=destination.parent)
+        os.close(descriptor)
+        temporary = Path(raw)
+        try:
+            with sqlite3.connect(temporary) as target:
+                self.db.backup(target)
+            with temporary.open("rb") as handle:
+                os.fsync(handle.fileno())
+            # Same-filesystem link is an exclusive, atomic commit of the completed backup.
+            os.link(temporary, destination)
+        finally:
+            temporary.unlink()
 
     def node(self, node_id: str) -> dict[str, Any]:
         row = self.db.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
@@ -184,7 +203,8 @@ class Memory:
         if not correct_answer.strip():
             raise ValueError("Feedback must supply a nonempty corrected or confirmed answer")
         record = {
-            "messages": run["messages"] + [{"role": "assistant", "content": correct_answer}],
+            "messages": run.get("training_messages", run["messages"])
+            + [{"role": "assistant", "content": correct_answer}],
             "group": run["group"],
             "source_ids": run["source_ids"],
             "document_ids": run.get("document_ids", []),
