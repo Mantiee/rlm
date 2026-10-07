@@ -38,7 +38,10 @@ def native_turn(
     messages: list[dict],
     tools: list[dict] | None = None,
     response_format: dict | None = None,
+    response_info: dict | None = None,
 ) -> dict:
+    if response_info is not None:
+        response_info.clear()
     extras = {"tools": tools, "tool_choice": "auto", "parallel_tool_calls": False} if tools else {}
     if response_format:
         extras["response_format"] = response_format
@@ -72,6 +75,11 @@ def native_turn(
         },
     )
     choice = result["choices"][0]
+    if response_info is not None:
+        response_info.update(
+            finish_reason=choice.get("finish_reason"),
+            reasoning_chars=len(choice["message"].get("reasoning_content") or ""),
+        )
     if choice.get("finish_reason") == "length":
         raise ValueError("Tool turn exhausted output budget; no partial answer is accepted")
     return choice["message"]

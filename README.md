@@ -1,7 +1,10 @@
 
 ---
 
-> **V100 fork, v100.11:** the local workflow uses your own llama.cpp server, no paid API.
+> **V100 fork, v100.12:** the local workflow uses your own llama.cpp server, no paid API.
+> v100.12 adds `prepare-challenge`, `challenge-smoke` and `challenge-baseline`:
+> 81 offline development cases, bounded calculator/source tools, and a disjoint
+> verified curriculum with replay. Preparation and evaluation do not train weights.
 > v100.11 adds `prepare-thinking`: a separate reasoning profile with a 2048-token
 > output budget and explicit sampling, propagated to evaluation and parent R&D.
 > Quality reports record the actual settings and reject truncated final answers.

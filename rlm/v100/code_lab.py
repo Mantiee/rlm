@@ -39,6 +39,8 @@ PROMPT_FILES = {
     "rlm/v100/protection.py",
     "rlm/v100/insights.py",
     "rlm/v100/common.py",
+    "rlm/v100/challenge.py",
+    "rlm/v100/fixture_tools.py",
 }
 
 

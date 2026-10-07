@@ -1,4 +1,4 @@
-# V100 continual learning, v100.11
+# V100 continual learning, v100.12
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,9 +6,52 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
-Kod v100.11 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Kod v100.12 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
 Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
 pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
+
+## Trudniejsze ćwiczenia i rzeczywiste wywołania narzędzi, v100.12
+
+Po pełnym wyniku 41/41 w `income-bootstrap-v1/baseline-thinking.json` użyj nowego
+profilu `research/v100-thinking.json` przez `--profile` i `prepare-challenge`.
+Komenda potwierdza hash modelu, zestawu oraz warunki generacji z ukończonego
+baseline. Tworzy osobny katalog `research/income-challenge-v1`:
+
+- `pool.jsonl`: 256 nowych ćwiczeń z dzieleniem całkowitym, modulo oraz równaniami,
+  plus poprzednie 128 przykładów jako replay. Wszystkie odpowiedzi oblicza stały
+  referencyjny kontroler. Zachowuje dotychczasowe przypisania train/validation.
+- `development.jsonl`: 41 dotychczasowych przypadków plus 24 nowe zadania
+  matematyczne, 8 zadań pracy na źródłach/kontekście i 8 przypadków narzędziowych.
+  Nowe źródła oceny są zarezerwowane przed tworzeniem podziału treningowego.
+- `smoke.jsonl`: dwa przypadki sprawdzające kalkulator i odczyt źródła z pamięci.
+- `manifest.json`: hashe plików, ustawienia generacji oraz liczebności podziałów.
+
+Istniejące pliki o odmiennej treści nie są zastępowane. Przygotowanie nie zmienia
+wag, oryginalnego zestawu, live memory ani portfeli. To jawny zestaw deweloperski,
+nie tajny audit i nie dowód skuteczności na realnym rynku. Replay i testy regresji
+nie dają uniwersalnej gwarancji braku zapominania.
+
+Najpierw uruchom `challenge-smoke` w tym samym profilu. Zarządza jednym serwerem
+GPU, odmawia zajętej karty i wyłącza własny serwer po ocenie. Po sprawdzeniu dwóch
+przypadków uruchom `challenge-baseline`, aby ocenić wszystkie 81. Raporty
+`tool-smoke.json` oraz `baseline.json` nie są nadpisywane. Dane źródłowe trafiają
+do osobnego SQLite, który jest zamykany i otwierany ponownie przed odczytem.
+Rekordy z czasem publikacji późniejszym niż cutoff nie trafiają do tej pamięci.
+Testuje to zapis/odczyt i dobór narzędzi w stałych warunkach, nie całą długotrwałą
+pamięć użytkownika ani odporność na wszystkie możliwe ataki.
+
+`calculate` używa istniejącego ograniczonego parsera wyrażeń całkowitych;
+nie wykonuje kodu modelu. Każda stała ma wartość bezwzględną do 10000, a wynik
+pośredni do 10^12. Ćwiczenia kosztowe podają grosze oraz jawne fikcyjne opłaty,
+funding i dodatkowy slippage. To dane zadania, nie taryfa prawdziwego brokera.
+Wywołania narzędzi, argumenty i wyniki są w `tool_trace` raportu i dzienniku
+aktywności. Samo zgadnięcie poprawnej liczby bez wymaganego narzędzia nie zalicza
+przypadku; wynik kosztowy musi odpowiadać wynikowi kalkulatora. Raport podaje
+czas całego przypadku, finish_reason i liczbę znaków rozumowania bez jego tekstu.
+
+Ten etap nie uruchamia treningu A/B, speculative decoding ani transakcji.
+Walidacja kontrolera v100.12: 492 testy zaliczone, 63 pominięte; lint, formatter
+i hooki przeszły. Obsługa narzędzi przez model na V100 wymaga lokalnego smoke testu.
 
 ## Osobny profil rozumowania, v100.11
 

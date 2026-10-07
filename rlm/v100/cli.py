@@ -104,6 +104,11 @@ def main() -> None:
     add_commands(sub)
     sub.add_parser("doctor")
     sub.add_parser("prepare-thinking", help="Create a separate reasoning and sampling profile")
+    sub.add_parser(
+        "prepare-challenge", help="Prepare verified curriculum and 81 fixed development cases"
+    )
+    sub.add_parser("challenge-smoke", help="Run two isolated offline tool cases, without training")
+    sub.add_parser("challenge-baseline", help="Evaluate all 81 prepared cases, without training")
     objective = sub.add_parser(
         "set-goal",
         help="Set the user-owned shared A/B objective and bind its fixed development suite",
@@ -271,6 +276,20 @@ def main() -> None:
     registry = ExpertRegistry(root / "research/experts")
     if args.command == "prepare-thinking":
         print("Thinking profile:", prepare_thinking(profile, root))
+        return
+    if args.command in ("prepare-challenge", "challenge-smoke", "challenge-baseline"):
+        from rlm.v100.challenge import evaluate_challenge, prepare_challenge
+
+        if args.command == "prepare-challenge":
+            result = prepare_challenge(profile, root)
+        else:
+            result = evaluate_challenge(
+                args.profile or root / "research/v100.toml",
+                root,
+                smoke=args.command == "challenge-smoke",
+            )
+        print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+        print("Weights unchanged. No paper orders submitted.", flush=True)
         return
     if args.command == "set-goal":
         from rlm.v100.goals import set_goal

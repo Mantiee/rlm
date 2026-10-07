@@ -1,4 +1,9 @@
-# Forward paper research, v100.11
+# Forward paper research, v100.12
+
+v100.12 dodaje offline `prepare-challenge` oraz osobny test użycia narzędzi.
+Ćwiczenia kosztowe mają fikcyjne wartości opłat, funding i slippage w groszach;
+nie konfigurują realnych taryf ani instrumentów. Odczyt źródeł respektuje cutoff
+publikacji. Testy nie składają zleceń i nie generują wyników strategii finansowej.
 
 v100.11 dodaje osobny profil `prepare-thinking` opisany w
 [CONTINUAL_LEARNING.md](CONTINUAL_LEARNING.md). Rodzice A/B dziedziczą jego sampling

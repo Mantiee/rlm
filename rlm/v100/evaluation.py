@@ -1,6 +1,7 @@
 """Fixed finite quality suites, independent from training loss and model self-grading."""
 
 import json
+import time
 from pathlib import Path
 
 from rlm.v100.common import atomic_json
@@ -27,6 +28,10 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
             message["role"] == "assistant" for message in row["messages"]
         ):
             raise ValueError("Quality prompts must not contain the expected assistant answer")
+        if "tool_fixture" in row:
+            from rlm.v100.fixture_tools import visible_sources
+
+            visible_sources(row["tool_fixture"])
     report = {
         "schema": "v100-quality-v1",
         "suite_sha256": file_hash(suite),
@@ -40,12 +45,23 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
     }
     for row in rows:
         error = None
+        trace = []
+        response_info = {}
+        started = time.perf_counter()
         try:
-            answer = client.completion(row["messages"])
+            if "tool_fixture" in row:
+                from rlm.v100.fixture_tools import fixture_answer
+
+                result = fixture_answer(client, row)
+                answer, trace = result["answer"], result["trace"]
+                response_info = result["response_info"]
+            else:
+                answer = client.completion(row["messages"])
         except ValueError as failure:
             # Missing final answers and context errors are failed cases, not gold labels.
             answer, error = "", str(failure)[:400]
-        response_info = client.get_response_info() if hasattr(client, "get_response_info") else {}
+        if "tool_fixture" not in row and hasattr(client, "get_response_info"):
+            response_info = client.get_response_info()
         passed = (
             answer.strip() == row["expected"].strip()
             if row["match"] == "exact"
@@ -53,6 +69,16 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
         )
         if error is not None or response_info.get("finish_reason") == "length":
             passed = False
+        if "tool_fixture" in row:
+            if not set(row["tool_fixture"]["required_tools"]) <= {step["tool"] for step in trace}:
+                passed = False
+                error = error or "Required fixture tool was not used"
+            if "calculate" in row["tool_fixture"]["required_tools"] and not any(
+                step["tool"] == "calculate" and step["result"]["answer"] == answer.strip()
+                for step in trace
+            ):
+                passed = False
+                error = error or "Final answer is not supported by a calculator result"
         report["cases"].append(
             {
                 "id": row["id"],
@@ -63,6 +89,8 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
                 "finish_reason": response_info.get("finish_reason"),
                 "reasoning_chars": response_info.get("reasoning_chars", 0),
                 "error": error,
+                "seconds": time.perf_counter() - started,
+                "tool_trace": trace,
             }
         )
         print(json.dumps({"case": row["id"], "skill": row["skill"], "passed": passed}), flush=True)
