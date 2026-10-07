@@ -18,6 +18,16 @@ from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn, tool_schema, tool_turn
 from rlm.v100.tool_protocol import json_object
 
+COMPACT_CPU_TOOLS = {
+    "search_memory",
+    "read_source",
+    "read_public_page",
+    "paper_status",
+    "paper_observed_results",
+    "paper_test_position",
+    "check_code_candidate",
+}
+
 TOOLS = [
     tool_schema(
         "search_memory",

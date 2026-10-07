@@ -1,4 +1,4 @@
-# V100 continual learning, v100.13
+# V100 continual learning, v100.14
 
 Nowy workflow ma osobne środowisko `venvs/v100-continual`, komendę
 `bin/v100-continual`, profil `research/v100-continual.toml`, kopię pamięci SQLite
@@ -6,9 +6,42 @@ i port 8089. Instalator `install-continual-v100.sh` kopiuje zależności działa
 środowiska treningowego, zachowując Torch 2.6.0 CUDA 12.4. Nie aktualizuje `train`,
 `memory-lab`, `v100-lab` ani istniejącego profilu i nie uruchamia treningu/serwera.
 To pełne osobne środowisko, nie optymalizacja globalnych sterowników lub CUDA.
-Kod v100.13 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
+Kod v100.14 jest przygotowany do instalacji; sam commit nie aktualizuje serwera
 Debian ani nie uruchamia procesu. Nowe zależności opcjonalne `selflab` obejmują
 pytest i psutil; trening wymaga istniejącego Torch/Transformers/PEFT.
+
+## Poprawka CPU i widoczny postęp, v100.14
+
+Log użytkownika pokazał, że CPU helper przetworzył około 45% promptu po 84 s,
+po czym klient anulował żądanie przy limicie 90 s. Snapshot nowej misji ma limit
+900 s na żądanie oraz krótszy katalog narzędzi CPU: pamięć, publiczne źródła,
+stan/wyniki paper, koszty pozycji i sprawdzanie kandydata kodu. Rodzic GPU zachowuje
+pełny katalog. Jest to poprawka budżetu i objętości promptu, nie zmierzone
+przyspieszenie CPU. Oryginalny profil researchera pozostaje bez zmian.
+
+Przy jednym slocie CPU zadania researchera i krytyka są wykonywane kolejno;
+drugi klient nie czeka już w kolejce podczas obsługi pierwszego. Profile CPU
+z co najmniej dwoma slotami nadal pozwalają na dwa równoległe zadania. Pomocnik
+nadal działa na CPU podczas treningu GPU i nie zajmuje pamięci karty.
+
+Ocena drukuje rozpoczęcie przypadku, numer i liczebność oraz czas/wynik po
+zakończeniu. Osobny `baseline-32768.progress.json` (lub dla wybranego kontekstu)
+zawiera postęp i jest pokazywany przez `mission-status`. Plik progress nie jest
+ukończonym raportem jakości i nie może służyć jako baseline.
+
+Nowa misja może wykorzystać ukończony baseline z wcześniejszego katalogu misji.
+Wymaga identycznego modelu, binarnego wykonania i ustawień inferencji, tego samego
+zestawu i wszystkich jego przypadków. Nie akceptuje częściowej oceny. Pochodzenie
+i hash raportu są zapisane w `baseline-reused.json`. Nie wznawia przez to
+optymalizatora ani wcześniejszego zwycięzcy A/B. Aktualizacja pakietu nie zmienia
+już uruchomionego procesu; nowy snapshot pomocnika wymaga nowej misji. Aby nie
+powtarzać oceny, zachowaj ukończony raport przed przełączeniem wersji.
+
+Walidacja v100.14: 524 testy zaliczone, 63 pominięte; lint, format, hooki i
+ścisłe sprawdzenie typów zmienionych modułów kontrolera przeszły. Obejmuje
+kolejkowanie według liczby slotów, krótszy katalog CPU, licznik oceny i odmowę
+ponownego użycia niekompletnego lub niezgodnego baseline'u. Nowego budżetu
+researchu na Xeonie nie zmierzono jeszcze na maszynie użytkownika.
 
 ## Research celu i uczenie w tle, v100.13
 

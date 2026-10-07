@@ -1,4 +1,8 @@
-# Forward paper research, v100.13
+# Forward paper research, v100.14
+
+v100.14 skraca katalog narzędzi pomocnika CPU, poprawia jego limit czasu oraz
+wykonuje jego zadania kolejno przy pojedynczym slocie. Nie zmienia opłat,
+instrumentów, portfeli ani zasad składania zleceń paper.
 
 v100.13 dodaje `mission-start`, `mission-status` i `mission-stop`: background
 research celu, trwałe źródła i streszczenia oraz automatyczną kalibrację przed

@@ -13,7 +13,8 @@ from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import command, helper_client, managed_server, require_idle_gpu
 from rlm.v100.evaluation import evaluate_suite
 from rlm.v100.goals import load_goal, set_goal
-from rlm.v100.protection import file_hash
+from rlm.v100.inference import generation_conditions
+from rlm.v100.protection import compare_reports, execution_hash, file_hash
 from rlm.v100.serving import process_identity
 
 OBJECTIVE = (
@@ -47,10 +48,13 @@ def status(root: Path) -> dict:
     phase = Path(result["run"]) / "status.json"
     learning = Path(result["run"]) / "learning/state.json"
     progress = json.loads(learning.read_text()) if learning.exists() else {}
+    state = json.loads(phase.read_text()) if phase.exists() else {"phase": "starting"}
+    evaluation = Path(result["run"]) / f"baseline-{state.get('context_window')}.progress.json"
     return {
         **result,
         "running": running,
-        "state": json.loads(phase.read_text()) if phase.exists() else {"phase": "starting"},
+        "state": state,
+        "evaluation": json.loads(evaluation.read_text()) if evaluation.exists() else None,
         "learning": {
             "completed_cycles": len(progress.get("cycles", [])),
             "last_cycle": progress.get("cycles", [None])[-1] if progress.get("cycles") else None,
@@ -144,6 +148,44 @@ def setup_profile(profile: dict, context: int) -> dict:
     return chosen
 
 
+def setup_helper(profile: dict) -> dict:
+    chosen = copy.deepcopy(profile)
+    chosen["runtime"].update(
+        tool_protocol="json",
+        max_output_tokens=768,
+        max_timeout=max(900, chosen["runtime"]["max_timeout"]),
+    )
+    chosen["resources"]["compact_research_tools"] = True
+    return chosen
+
+
+def previous_baseline(root: Path, profile: dict, suite: Path) -> tuple[dict, Path] | None:
+    """Reuse only complete matching evaluations, never partially finished cases."""
+    contexts = root / "research/mission"
+    paths = list(contexts.glob(f"run-*/baseline-{profile['runtime']['context_window']}.json"))
+    if not paths:
+        return None
+    suite_hash = file_hash(suite)
+    model_hash = file_hash(Path(profile["server"]["model"]))
+    execution = execution_hash(profile)
+    case_ids = {json.loads(line)["id"] for line in suite.read_text().splitlines() if line.strip()}
+    for path in sorted(paths, key=lambda item: item.stat().st_mtime_ns, reverse=True)[:16]:
+        report = json.loads(path.read_text())
+        if (
+            report.get("schema") != "v100-quality-v1"
+            or report.get("suite_sha256") != suite_hash
+            or report.get("model_sha256") != model_hash
+            or report.get("execution_sha256") != execution
+            or report.get("generation") != generation_conditions(profile)
+            or report.get("memory_mode") != "fixed prompt fixtures; no live retrieval"
+            or {row["id"] for row in report.get("cases", [])} != case_ids
+        ):
+            continue
+        compare_reports(report, report)
+        return report, path
+    return None
+
+
 def run(root: Path, profile: dict, directory: Path) -> None:
     from rlm.v100.continuous import learn_loop
     from rlm.v100.mission_memory import archive, compress
@@ -173,9 +215,7 @@ def run(root: Path, profile: dict, directory: Path) -> None:
     }
     paper_settings = directory / "income-settings.json"
     atomic_json(paper_settings, settings)
-    helper_original = load_profile(root / "research/researcher-cpu.toml", root)
-    helper_original["runtime"]["tool_protocol"] = "json"
-    helper_original["runtime"]["max_output_tokens"] = 768
+    helper_original = setup_helper(load_profile(root / "research/researcher-cpu.toml", root))
     helper_path = directory / "cpu-helper.json"
     atomic_json(helper_path, helper_original)
     helper_path = financial_helper_profile(helper_path, root)
@@ -195,7 +235,7 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                 "source-error:" + url,
                 "Research source unavailable: " + url + "\n" + str(error)[:300],
             )
-            print("Source unavailable:", url, type(error).__name__, flush=True)
+            print("Source unavailable:", url, type(error).__name__, str(error)[:300], flush=True)
     selected, baseline, selected_path = None, None, None
     for context in (32768, 16384, 8192):
         chosen = setup_profile(profile, context)
@@ -225,9 +265,19 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                         except (ValueError, RuntimeError, OSError) as error:
                             print("Income research error; see activity logs:", error, flush=True)
                 note(directory, "baseline-before-weight-updates", context_window=context)
-                baseline = evaluate_suite(
-                    client, serving, suite, directory / f"baseline-{context}.json"
-                )
+                cached = previous_baseline(root, serving, suite)
+                if cached:
+                    baseline, original_report = cached
+                    atomic_json(directory / f"baseline-{context}.json", baseline)
+                    atomic_json(
+                        directory / "baseline-reused.json",
+                        {"source": str(original_report), "sha256": file_hash(original_report)},
+                    )
+                    print("Reused complete matching baseline:", original_report, flush=True)
+                else:
+                    baseline = evaluate_suite(
+                        client, serving, suite, directory / f"baseline-{context}.json"
+                    )
             break
         except (RuntimeError, TimeoutError) as error:
             selected = None

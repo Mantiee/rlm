@@ -11,16 +11,19 @@ from rlm.v100 import (
     continuous,
     mission,
     mission_memory,
+    paper_agents,
     paper_learning,
     research_tools,
     serving,
 )
 from rlm.v100.challenge import prepare_challenge, tool_cases
 from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.evaluation import evaluate_suite
 from rlm.v100.fixture_tools import fixture_answer
+from rlm.v100.inference import generation_conditions
 from rlm.v100.insights import verified_record
 from rlm.v100.paper import PaperBook
-from rlm.v100.protection import file_hash
+from rlm.v100.protection import execution_hash, file_hash
 from rlm.v100.tool_protocol import json_object, json_tool_turn, validate_value
 from tests.test_v100_challenge import bootstrap, fake_client
 
@@ -162,6 +165,164 @@ def test_context_profile_keeps_working_inputs_and_gpu_headroom_policy(tmp_path):
         assert chosen["server"]["draft_model"] == ""
         assert chosen["training"]["max_steps"] == 50
     assert json.dumps(profile, sort_keys=True) == old
+
+
+def test_mission_helper_has_finite_cpu_budget_and_shorter_catalog(tmp_path):
+    profile = load_profile(Path(__file__).parents[1] / "profiles/v100.toml", tmp_path)
+    profile["resources"] = {"device": "cpu"}
+    profile["runtime"]["max_timeout"] = 90
+    old = json.dumps(profile, sort_keys=True)
+    chosen = mission.setup_helper(profile)
+    client = competition.helper_client(chosen)
+    assert client.timeout == 900
+    assert client.sampling_args["max_tokens"] == 768
+    assert client.research_tool_names == research_tools.COMPACT_CPU_TOOLS
+    assert {"read_public_page", "search_memory", "read_source"} <= client.research_tool_names
+    chosen["resources"]["device"] = "gpu"
+    assert competition.helper_client(chosen).research_tool_names is None
+    assert json.dumps(profile, sort_keys=True) == old
+
+
+@pytest.mark.parametrize("slots", [1, 2])
+def test_paper_workers_match_cpu_slots_and_keep_compact_catalog(tmp_path, monkeypatch, slots):
+    from tests.test_v100_paper import setup
+
+    book, _, _ = setup(tmp_path)
+    parent = {"runtime": {"model_version": "test-gemma", "max_output_tokens": 512}}
+    helper = {"runtime": {"model_version": "test-cpu"}, "server": {"gpu_layers": 0, "slots": slots}}
+    monkeypatch.setattr(
+        paper_agents,
+        "helper_client",
+        lambda profile, *args: SimpleNamespace(
+            research_tool_names=set(research_tools.COMPACT_CPU_TOOLS) if profile is helper else None
+        ),
+    )
+    parallel, work = [], []
+
+    class Executor:
+        def __init__(self, max_workers):
+            parallel.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def map(self, function, jobs):
+            return map(function, jobs)
+
+    monkeypatch.setattr(paper_agents, "ThreadPoolExecutor", Executor)
+
+    def research(client, branch, job, *args):
+        assert client.research_tool_names <= research_tools.COMPACT_CPU_TOOLS
+        work.append((branch, job["role"]))
+        return {
+            "role": job["role"],
+            "observation": "No verified edge",
+            "hypothesis": "Research only",
+            "suggested_test": "Independent forward test",
+        }
+
+    monkeypatch.setattr(paper_agents, "research_task", research)
+    monkeypatch.setattr(
+        paper_agents,
+        "review_research",
+        lambda *args: {"useful_indices": [], "conclusion": "Reject all"},
+    )
+    monkeypatch.setattr(
+        paper_agents,
+        "native_turn",
+        lambda *args, **kwargs: {
+            "content": json.dumps(
+                {
+                    "action": "hold",
+                    "symbol": "",
+                    "side": "long",
+                    "budget": 0,
+                    "leverage": 1,
+                    "rationale": "No verified edge",
+                    "accepted_research": [],
+                }
+            )
+        },
+    )
+    try:
+        paper_agents.paper_round(book, parent, helper, research_rounds=1)
+        assert parallel == ([] if slots == 1 else [2, 2])
+        assert work == [("A", "researcher"), ("A", "critic"), ("B", "researcher"), ("B", "critic")]
+    finally:
+        book.close()
+
+
+@pytest.mark.parametrize("change", [None, "suite", "weights", "execution", "generation", "missing"])
+def test_cached_baseline_requires_complete_matching_evaluation(tmp_path, change):
+    profile = mission.setup_profile(bootstrap(tmp_path), 32768)
+    prepare_challenge(load_profile(tmp_path / "research/v100-thinking.json", tmp_path), tmp_path)
+    suite = tmp_path / "research/income-challenge-v1/development.jsonl"
+    rows = [json.loads(line) for line in suite.read_text().splitlines()]
+    report = {
+        "schema": "v100-quality-v1",
+        "suite_sha256": file_hash(suite),
+        "model_sha256": file_hash(Path(profile["server"]["model"])),
+        "execution_sha256": execution_hash(profile),
+        "generation": generation_conditions(profile),
+        "memory_mode": "fixed prompt fixtures; no live retrieval",
+        "cases": [{"id": row["id"], "passed": True} for row in rows],
+    }
+    if change == "suite":
+        report["suite_sha256"] = "different suite"
+    elif change == "weights":
+        report["model_sha256"] = "different model"
+    elif change == "execution":
+        report["execution_sha256"] = "different binary or configuration"
+    elif change == "generation":
+        report["generation"]["thinking"] = False
+    elif change == "missing":
+        report["cases"].pop()
+    path = tmp_path / "research/mission/run-previous/baseline-32768.json"
+    atomic_json(path, report)
+    before = path.read_bytes()
+    reused = mission.previous_baseline(tmp_path, profile, suite)
+    assert reused == (report, path) if change is None else reused is None
+    assert path.read_bytes() == before
+
+
+def test_evaluation_progress_marks_current_case_before_inference(tmp_path):
+    profile = bootstrap(tmp_path)
+    suite = tmp_path / "two-cases.jsonl"
+    suite.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "id": str(index),
+                    "skill": "logic",
+                    "messages": [{"role": "user", "content": "2+2?"}],
+                    "expected": "4",
+                    "match": "exact",
+                }
+            )
+            + "\n"
+            for index in range(2)
+        )
+    )
+    output = tmp_path / "evaluation.json"
+    client = competition.helper_client(profile)
+    observed = []
+
+    def completion(messages):
+        progress = json.loads(output.with_suffix(".progress.json").read_text())
+        assert not output.exists()
+        observed.append(progress["completed"])
+        return "4"
+
+    client.completion = completion
+    client.get_response_info = lambda: {"finish_reason": "stop"}
+    evaluate_suite(client, profile, suite, output)
+    assert observed == [0, 1]
+    progress = json.loads(output.with_suffix(".progress.json").read_text())
+    assert progress["state"] == "finished" and progress["completed"] == progress["total"] == 2
+    assert progress["passed"] == 2
 
 
 def mission_inputs(root):

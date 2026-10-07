@@ -1,7 +1,10 @@
 
 ---
 
-> **V100 fork, v100.13:** the local workflow uses your own llama.cpp server, no paid API.
+> **V100 fork, v100.14:** the local workflow uses your own llama.cpp server, no paid API.
+> v100.14 fixes CPU research request budgets and one-slot job scheduling, trims
+> the CPU tool catalog, exposes evaluation progress, and reuses only fully matching
+> completed mission baselines. Updating the package does not hot-reload a mission.
 > v100.13 adds background `mission-start/status/stop`, income R&D before automatic
 > evaluation and repeated verified-data A/B updates, schema-constrained JSON tools,
 > adaptive 32k/16k/8k context and source-preserving hierarchical research memory.

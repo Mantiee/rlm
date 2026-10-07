@@ -43,7 +43,19 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
         "cases": [],
         "scope": "Finite suite only; exact/contains validators do not assess all aspects of quality",
     }
-    for row in rows:
+    progress_path = output.with_suffix(".progress.json")
+    for index, row in enumerate(rows, start=1):
+        progress = {
+            "schema": "v100-evaluation-progress-v1",
+            "state": "running",
+            "total": len(rows),
+            "completed": index - 1,
+            "passed": sum(case["passed"] for case in report["cases"]),
+            "current_case": row["id"],
+            "case_index": index,
+        }
+        atomic_json(progress_path, progress)
+        print(json.dumps({"phase": "evaluation", **progress}), flush=True)
         error = None
         trace = []
         response_info = {}
@@ -93,6 +105,24 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
                 "tool_trace": trace,
             }
         )
-        print(json.dumps({"case": row["id"], "skill": row["skill"], "passed": passed}), flush=True)
+        progress.update(
+            completed=index,
+            passed=sum(case["passed"] for case in report["cases"]),
+            state="finished" if index == len(rows) else "running",
+        )
+        atomic_json(progress_path, progress)
+        print(
+            json.dumps(
+                {
+                    "case": row["id"],
+                    "skill": row["skill"],
+                    "passed": passed,
+                    "completed": index,
+                    "total": len(rows),
+                    "seconds": round(time.perf_counter() - started, 2),
+                }
+            ),
+            flush=True,
+        )
     atomic_json(output, report)
     return report

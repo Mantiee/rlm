@@ -193,6 +193,7 @@ def paper_round(
 
             def work(job, selected_profile=profile, selected_branch=branch, data=observations):
                 worker = helper_client(selected_profile, book.root, selected_branch)
+                available = getattr(worker, "research_tool_names", None)
                 worker.research_tool_names = {
                     "search_memory",
                     "read_source",
@@ -207,6 +208,8 @@ def paper_round(
                     worker.research_tool_names.update(
                         {"create_submodel", "support_submodel", "test_submodel"}
                     )
+                if available is not None:
+                    worker.research_tool_names &= available
                 return research_task(
                     worker,
                     selected_branch,
@@ -215,8 +218,13 @@ def paper_round(
                     book.root,
                 )
 
-            # Two small CPU workers may overlap; when sharing the GPU model, serialize.
-            if researcher_profile and researcher_profile.get("server", {}).get("gpu_layers") == 0:
+            # A single CPU slot queues concurrent jobs and evicts their prompt cache.
+            # Match workers to actual slots; one-slot CPU and shared GPU serialize.
+            if (
+                researcher_profile
+                and researcher_profile.get("server", {}).get("gpu_layers") == 0
+                and researcher_profile["server"].get("slots", 1) > 1
+            ):
                 with ThreadPoolExecutor(max_workers=2) as workers:
                     current = list(workers.map(work, jobs))
             else:

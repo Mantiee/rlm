@@ -129,6 +129,13 @@ def helper_client(
     )
     client.research_config = profile.get("research", {})
     client.tool_protocol = settings.get("tool_protocol", "native")
+    if (
+        profile.get("resources", {}).get("device") == "cpu"
+        and profile.get("resources", {}).get("compact_research_tools") is True
+    ):
+        from rlm.v100.research_tools import COMPACT_CPU_TOOLS
+
+        client.research_tool_names = set(COMPACT_CPU_TOOLS)
     return client
 
 
@@ -213,6 +220,7 @@ def train_branch(
                         flush=True,
                     )
                 if jobs and submitted < len(jobs) and future is None and observed:
+                    assert researcher is not None
                     if available_ram_gib() >= researcher.get("resources", {}).get(
                         "min_available_ram_gib", 6
                     ):
