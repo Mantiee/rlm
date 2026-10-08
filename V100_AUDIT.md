@@ -1,4 +1,9 @@
-# V100 mission release v100.22
+# V100 mission release v100.23
+
+v100.23 fixes Kraken's geolocated Polish fee page: the parser recognizes the
+published English and Polish spot sections, decimal separators and optional
+futures-volume column. It still rejects missing or duplicate lowest-volume rows
+and excludes cross-platform and maker-rebate tables. No fees are hardcoded.
 
 This is an implementation and evidence audit, not a claim of best possible speed,
 a money-making policy or zero catastrophic forgetting. Install only in the existing

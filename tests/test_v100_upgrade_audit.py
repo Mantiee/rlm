@@ -117,6 +117,31 @@ def test_fee_parser_uses_exact_spot_table_and_rejects_ambiguity():
         spot_bootstrap.fee_bps("<p>Instant Buy 1%</p>")
 
 
+@pytest.mark.parametrize("futures", ["", "< 5 mln USD "])
+def test_polish_fee_table_preserves_product_and_lowest_volume_scope(futures):
+    # Cross-platform and rebate tables must not supply the spot fee.
+    row = f"Poziom 1 Ponad 0 USD {futures}NIE DOTYCZY 0,40 % 0,80 %"
+    html = (
+        "<p>Poziom 1 Ponad 0 USD NIE DOTYCZY 0,10 % 0,20 %</p>"
+        "<h2>Krypto spot</h2><p>Maker spot (%) Taker spot (%)</p>"
+        f"<p>{row.replace(' ', '&nbsp;')}</p>"
+        "<h2>Zwrot opłaty maker w handlu spot</h2>"
+        "<p>Poziom 1 Ponad 0 USD NIE DOTYCZY 0,38 % 0,70 %</p>"
+    )
+    assert spot_bootstrap.fee_bps(html) == "80.00"
+    with pytest.raises(ValueError):
+        spot_bootstrap.fee_bps(html.replace("<h2>Zwrot", f"<p>{row}</p><h2>Zwrot"))
+    with pytest.raises(ValueError):
+        spot_bootstrap.fee_bps(html.replace("Ponad", "Od"))
+
+
+def test_english_fee_table_with_futures_column_and_changed_rates():
+    html = (
+        "<h2>Spot Crypto</h2><p>Tier 1 $0+ &lt; $5M N/A 0.21 % 0.43 %</p><h2>Spot Maker Rebate</h2>"
+    )
+    assert spot_bootstrap.fee_bps(html) == "43.00"
+
+
 def test_spot_prepare_uses_primary_rules_does_not_reset_capital(tmp_path, monkeypatch):
     book = PaperBook(tmp_path)
     book.initialize("10000", "PLN")

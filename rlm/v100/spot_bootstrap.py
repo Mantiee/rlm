@@ -19,17 +19,31 @@ PAIRS_URL = "https://api.kraken.com/0/public/AssetPairs?pair=XBTUSD,ETHUSD"
 def fee_bps(body: str) -> str:
     parser = TextOnly()
     parser.feed(body)
-    text = " ".join(parser.parts)
-    if "Spot Crypto" not in text or "Spot Maker Rebate" not in text:
+    text = " ".join(" ".join(parser.parts).split())
+    layouts = [
+        (
+            "Spot Crypto",
+            "Spot Maker Rebate",
+            r"Tier\s*1\s*\$0\+\s*(?:<\s*\$5M\s*)?N/A\s*",
+        ),
+        (
+            "Krypto spot",
+            "Zwrot opłaty maker w handlu spot",
+            r"Poziom\s*1\s*Ponad\s*0\s*USD\s*(?:<\s*5\s*mln\s*USD\s*)?NIE DOTYCZY\s*",
+        ),
+    ]
+    matches = [(start, end, row) for start, end, row in layouts if start in text and end in text]
+    if len(matches) != 1:
         raise ValueError("Could not identify the spot-crypto fee table")
-    sections = [part.split("Spot Maker Rebate", 1)[0] for part in text.split("Spot Crypto")[1:]]
-    section = " ".join(part for part in sections if "Tier 1" in part)
-    rows = re.findall(
-        r"Tier\s*1\s*\$0\+\s*N/A\s*(\d+(?:\.\d+)?)\s*%\s*(\d+(?:\.\d+)?)\s*%", section
-    )
-    if len(rows) != 1 or not Decimal("0") <= Decimal(rows[0][1]) < Decimal("10"):
+    start, end, row = matches[0]
+    sections = [part.split(end, 1)[0] for part in text.split(start)[1:]]
+    section = " ".join(part for part in sections if re.search(row, part))
+    rows = re.findall(row + r"(\d+(?:[.,]\d+)?)\s*%\s*(\d+(?:[.,]\d+)?)\s*%", section)
+    if len(rows) != 1 or any(
+        not Decimal("0") <= Decimal(value.replace(",", ".")) < Decimal("10") for value in rows[0]
+    ):
         raise ValueError("Lowest-volume taker fee missing or ambiguous; no guessed fee")
-    return str(Decimal(rows[0][1]) * 100)
+    return str(Decimal(rows[0][1].replace(",", ".")) * 100)
 
 
 def discover(root: Path, limit: int = 40) -> dict:
