@@ -864,3 +864,14 @@ Sandbox bootstrap refreshes signed Debian package lists under its own tools
 directory, downloads and extracts bubblewrap without installation. APT config,
 lists, cache, logs and status are private; host APT configuration hooks are not
 loaded. Archive signatures and the user-namespace probe remain required.
+
+## V100 controller v100.26: verified BOS-template normalization for MTP
+
+The pinned assistant also prepends `<bos>` ID 2 in its single and pair
+post-processing templates, while the target templates pass through A and A/B.
+Preparation permits precisely those two TemplateProcessing structures with
+the same shared `<bos>` vocabulary ID. It stages the target's post-processor
+alongside the missing video annotation, preserving source tokenizers and weights.
+Different BOS IDs, EOS additions, sequence type IDs, normalizers and any other
+unverified template changes remain errors. MTP uses the target's input token IDs;
+conversion success still does not establish a speed or quality improvement.

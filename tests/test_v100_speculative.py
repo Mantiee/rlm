@@ -276,6 +276,73 @@ def test_video_annotation_may_fill_an_unused_embedding_slot():
     assert speculative.assistant_tokenizer(target, draft, 10) == target
 
 
+def bos_tokenizer_fixture(video_difference=True):
+    target, draft = video_tokenizer_fixture()
+    target["model"]["vocab"] = {"x": 1, "<bos>": 2, "<|video|>": 3}
+    draft["model"] = target["model"]
+    target["added_tokens"][0]["id"] = 3
+    if not video_difference:
+        draft["added_tokens"] = target["added_tokens"]
+    sequence_a = {"Sequence": {"id": "A", "type_id": 0}}
+    sequence_b = {"Sequence": {"id": "B", "type_id": 1}}
+    bos_a = {"SpecialToken": {"id": "<bos>", "type_id": 0}}
+    bos_b = {"SpecialToken": {"id": "<bos>", "type_id": 1}}
+    target["post_processor"] = {
+        "type": "TemplateProcessing",
+        "single": [sequence_a],
+        "pair": [sequence_a, sequence_b],
+        "special_tokens": {},
+    }
+    draft["post_processor"] = {
+        "type": "TemplateProcessing",
+        "single": [bos_a, sequence_a],
+        "pair": [bos_a, sequence_a, bos_b, sequence_b],
+        "special_tokens": {"<bos>": {"id": "<bos>", "ids": [2], "tokens": ["<bos>"]}},
+    }
+    return target, draft
+
+
+@pytest.mark.parametrize("video_difference", [False, True])
+def test_bos_normalization_with_and_without_missing_video(video_difference):
+    target, draft = bos_tokenizer_fixture(video_difference)
+    original = json.dumps(draft, sort_keys=True)
+    assert speculative.assistant_tokenizer(target, draft, 10) == target
+    assert json.dumps(draft, sort_keys=True) == original
+
+
+@pytest.mark.parametrize("change", ["bos-id", "vocab-id", "eos", "pair", "target", "normalizer"])
+def test_bos_normalization_rejects_unverified_processor_changes(change):
+    target, draft = bos_tokenizer_fixture()
+    if change == "bos-id":
+        draft["post_processor"]["special_tokens"]["<bos>"]["ids"] = [1]
+    elif change == "vocab-id":
+        target["model"]["vocab"]["<bos>"] = 4
+    elif change == "eos":
+        draft["post_processor"]["single"].append({"SpecialToken": {"id": "<eos>", "type_id": 0}})
+    elif change == "pair":
+        draft["post_processor"]["pair"].pop(2)
+    elif change == "target":
+        target["post_processor"]["single"] = []
+    else:
+        draft["normalizer"] = {"type": "Lowercase"}
+    with pytest.raises(ValueError):
+        speculative.assistant_tokenizer(target, draft, 10)
+
+
+def test_combined_processor_and_video_changes_are_staged_without_source_mutation(tmp_path):
+    target, draft = bos_tokenizer_fixture()
+    source = tmp_path / "assistant"
+    source.mkdir()
+    path = source / "tokenizer.json"
+    path.write_text(json.dumps(draft))
+    before = path.read_bytes()
+    normalized = speculative.assistant_tokenizer(target, draft, 10)
+    with speculative.assistant_conversion_input(source, tmp_path, normalized) as staged:
+        assert json.loads((staged / "tokenizer.json").read_text()) == target
+        assert path.read_bytes() == before
+    assert path.read_bytes() == before
+
+
 @pytest.mark.parametrize("change", ["ordinary", "flags", "pipeline", "embedding", "id-collision"])
 def test_video_exception_does_not_allow_other_changes(change):
     target, draft = video_tokenizer_fixture()

@@ -343,18 +343,58 @@ def test_mtp(
     return destination
 
 
+def assistant_post_processor(target: dict, draft: dict, vocab, vocab_size: int) -> dict:
+    """Match the observed Gemma BOS-only template difference, not arbitrary processors."""
+    sequence_a = {"Sequence": {"id": "A", "type_id": 0}}
+    sequence_b = {"Sequence": {"id": "B", "type_id": 1}}
+    bos_a = {"SpecialToken": {"id": "<bos>", "type_id": 0}}
+    bos_b = {"SpecialToken": {"id": "<bos>", "type_id": 1}}
+    target_expected = {
+        "type": "TemplateProcessing",
+        "single": [sequence_a],
+        "pair": [sequence_a, sequence_b],
+        "special_tokens": {},
+    }
+    draft_expected = {
+        "type": "TemplateProcessing",
+        "single": [bos_a, sequence_a],
+        "pair": [bos_a, sequence_a, bos_b, sequence_b],
+        "special_tokens": {"<bos>": {"id": "<bos>", "ids": [2], "tokens": ["<bos>"]}},
+    }
+    bos_id = (
+        vocab.get("<bos>")
+        if isinstance(vocab, dict)
+        else next((i for i, token in enumerate(vocab) if token[0] == "<bos>"), None)
+    )
+    if target != target_expected or draft != draft_expected or bos_id != 2 or vocab_size <= 2:
+        raise ValueError(
+            "Assistant/target post-processor mismatch is not the verified BOS-only case"
+        )
+    # MTP consumes the target's token IDs. Its template owns sequence boundaries.
+    return target
+
+
 def assistant_tokenizer(target: dict, draft: dict, vocab_size: int) -> dict:
-    """Permit only the observed missing video special-token annotation."""
-    if {k: v for k, v in target.items() if k != "added_tokens"} != {
-        k: v for k, v in draft.items() if k != "added_tokens"
+    """Permit only the observed video annotation and BOS-template differences."""
+    metadata = {"added_tokens", "post_processor"}
+    if {k: v for k, v in target.items() if k not in metadata} != {
+        k: v for k, v in draft.items() if k not in metadata
     }:
         raise ValueError("Assistant/target token vocabulary or tokenizer pipeline mismatch")
+    normalized = dict(draft)
+    if target.get("post_processor") != draft.get("post_processor"):
+        normalized["post_processor"] = assistant_post_processor(
+            target.get("post_processor"),
+            draft.get("post_processor"),
+            target["model"]["vocab"],
+            vocab_size,
+        )
     a = {item["id"]: item for item in target["added_tokens"]}
     b = {item["id"]: item for item in draft["added_tokens"]}
     if len(a) != len(target["added_tokens"]) or len(b) != len(draft["added_tokens"]):
         raise ValueError("Duplicate added-token IDs")
     if a == b:
-        return draft
+        return normalized
     missing = set(a) - set(b)
     if set(b) - set(a) or any(a[i] != b[i] for i in set(a) & set(b)) or len(missing) != 1:
         raise ValueError("Assistant/target token vocabulary mismatch")
@@ -380,7 +420,7 @@ def assistant_tokenizer(target: dict, draft: dict, vocab_size: int) -> dict:
     occupied = set(vocab.values()) if isinstance(vocab, dict) else set(range(len(vocab)))
     if shared_id != identity and (shared_id is not None or identity in occupied):
         raise ValueError("Missing video annotation conflicts with a shared vocabulary ID")
-    return {**draft, "added_tokens": target["added_tokens"]}
+    return {**normalized, "added_tokens": target["added_tokens"]}
 
 
 @contextmanager
