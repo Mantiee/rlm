@@ -1,4 +1,4 @@
-# V100 campaign v30
+# V100 campaign v31
 
 Use `tools/upgrade-v100-campaign.sh RELEASE_COMMIT` on Debian after any existing training/calibration/MTP sweep completes. It updates only the existing isolated continual venv, repairs the launcher atomically, retains checkpoints, prepares optional components and starts the owned supervisor. Preparation prints each stage and records failures as `deferred`; a deferred feature is not operational.
 
@@ -62,3 +62,5 @@ The operator configures an authenticated dedicated shared folder with `compute-c
 `colab-import` can import pinned safe-tensor notebook output into this same local validation queue. Each proposal uses new calculator-verified examples. Notebook GPU usage is explicitly interactive, bounded to 120 seconds and separate from the owned worker service. A smaller heldout loss alone is neither a mastered general ability nor evidence of income.
 
 The feature-branch CI performs CPU tensor/training tests and parses Windows PowerShell scripts on standard public-repository runners. CUDA performance, guest boot, the LAN mount and RTX stability still require the operator's hardware; CI does not certify them.
+
+Verified CPU/Windows checks: [run 37791661812](https://github.com/Mantiee/rlm/actions/runs/37791661812), 504 tests passed with none skipped, and all PowerShell scripts parsed successfully. This includes real tiny GRU/transformer training, the owned worker-to-host tensor round trip, adapter gradients, breeding and checkpoint resume. Native V100/RTX execution and private-VM boot were not run in CI.
