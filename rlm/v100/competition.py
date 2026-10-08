@@ -24,6 +24,7 @@ from rlm.v100.researchers import available_ram_gib, research_task, review_resear
 def command(root: Path, profile: Path, *arguments: str) -> list[str]:
     return [
         sys.executable,
+        "-u",
         "-m",
         "rlm.v100.cli",
         "--root",

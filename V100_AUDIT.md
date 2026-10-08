@@ -1,4 +1,11 @@
-# V100 mission release v100.23
+# V100 mission release v100.24
+
+v100.24 normalizes Transformers 5 chat-tokenization mappings and handles Gemma's
+exact empty-thought inference suffix when encoding answer-only training records.
+The full token prefix must still match; prompts are never supervised and records
+are never silently truncated. Tokenization is checked before large weight hashes,
+and training logs explicitly announce tokenization, hashing, loading, validation
+and optimizer stages. Child Python processes use unbuffered output.
 
 v100.23 fixes Kraken's geolocated Polish fee page: the parser recognizes the
 published English and Polish spot sections, decimal separators and optional

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import subprocess
+from collections.abc import Mapping
 from importlib.metadata import version
 from pathlib import Path
 
@@ -65,10 +66,38 @@ def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], li
     return train, evaluation
 
 
+def chat_token_ids(value) -> list[int]:
+    """Normalize single-conversation tokenization, including Transformers 5 mappings."""
+    if isinstance(value, Mapping):
+        value = value["input_ids"]
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
+        value = value[0]
+    if not isinstance(value, list) or not value or any(type(token) is not int for token in value):
+        raise ValueError("Expected one nonempty token-ID sequence from the chat template")
+    return value
+
+
 def encode_record(record: dict, tokenizer, max_length: int) -> dict:
     messages = record["messages"]
-    prefix = tokenizer.apply_chat_template(messages[:-1], tokenize=True, add_generation_prompt=True)
-    full = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False)
+    prefix = chat_token_ids(
+        tokenizer.apply_chat_template(messages[:-1], tokenize=True, add_generation_prompt=True)
+    )
+    full = chat_token_ids(
+        tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False)
+    )
+    if full[: len(prefix)] != prefix and hasattr(tokenizer, "encode"):
+        # Gemma's inference prompt suppresses reasoning with an empty thought
+        # channel. Complete answer-only training turns omit that inference marker.
+        # Remove only this exact suffix after the explicit model-turn header;
+        # never guess a boundary using a longest-common-prefix heuristic.
+        marker = chat_token_ids(
+            tokenizer.encode("<|channel>thought\n<channel|>", add_special_tokens=False)
+        )
+        header = chat_token_ids(tokenizer.encode("<|turn>model\n", add_special_tokens=False))
+        if prefix[-len(marker) :] == marker:
+            candidate = prefix[: -len(marker)]
+            if candidate[-len(header) :] == header and full[: len(candidate)] == candidate:
+                prefix = candidate
     if full[: len(prefix)] != prefix:
         raise ValueError(
             "Chat template prefix mismatch; assistant-only masking requires explicit template support"
@@ -128,14 +157,32 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     assert_candidate_output(output, base, adapter, root)
     if settings.get("teacher_adapter"):
         assert_candidate_output(output, base, Path(settings["teacher_adapter"]), root)
+    ledger = Path(settings.get("split_ledger", root / "research/state/splits.sqlite3"))
+    train, evaluation = load_records(dataset_path, ledger)
+    print(json.dumps({"training_stage": "tokenizing-verified-examples"}), flush=True)
+    tokenizer = AutoTokenizer.from_pretrained(base, local_files_only=True)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+    encoded_train = [encode_record(r, tokenizer, settings["max_length"]) for r in train]
+    encoded_evaluation = [encode_record(r, tokenizer, settings["max_length"]) for r in evaluation]
+    print(
+        json.dumps(
+            {
+                "training_stage": "verifying-base-file-hashes",
+                "train_records": len(encoded_train),
+                "validation_records": len(encoded_evaluation),
+            }
+        ),
+        flush=True,
+    )
     signature = base_signature(base)
+    print(json.dumps({"training_stage": "base-file-hashes-verified"}), flush=True)
     parent_metadata = None
     if adapter is not None:
         parent_metadata, _ = verified_adapter(adapter)
         if parent_metadata["base"] != signature:
             raise ValueError("Initial adapter was trained on a different base")
-    ledger = Path(settings.get("split_ledger", root / "research/state/splits.sqlite3"))
-    train, evaluation = load_records(dataset_path, ledger)
     if not resume and output.exists() and any(output.iterdir()):
         raise FileExistsError("New training round requires an empty, separate output directory")
     output.mkdir(parents=True, exist_ok=True)
@@ -208,16 +255,8 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         raise ValueError("Cannot resume without manifest")
     atomic_json(manifest_path, manifest)
     checkpoint = completed_checkpoint(output) if resume else None
-    tokenizer = AutoTokenizer.from_pretrained(base, local_files_only=True)
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "right"
-    train_dataset = Dataset.from_list(
-        [encode_record(r, tokenizer, settings["max_length"]) for r in train]
-    )
-    eval_dataset = Dataset.from_list(
-        [encode_record(r, tokenizer, settings["max_length"]) for r in evaluation]
-    )
+    train_dataset = Dataset.from_list(encoded_train)
+    eval_dataset = Dataset.from_list(encoded_evaluation)
     if settings["precision"] not in ("nf4", "fp16"):
         raise ValueError("precision must be nf4 or fp16")
     quant = BitsAndBytesConfig(
@@ -227,6 +266,10 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         bnb_4bit_compute_dtype=torch.float16,
     )
     kwargs = {"quantization_config": quant} if settings["precision"] == "nf4" else {}
+    print(
+        json.dumps({"training_stage": "loading-model", "precision": settings["precision"]}),
+        flush=True,
+    )
     model = Gemma4UnifiedForConditionalGeneration.from_pretrained(
         base,
         local_files_only=True,
@@ -358,7 +401,9 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     if strength:
         trainer.model_accepts_loss_kwargs = False
     if not resume:
+        print(json.dumps({"training_stage": "baseline-validation"}), flush=True)
         atomic_json(output / "baseline_eval.json", trainer.evaluate())
+    print(json.dumps({"training_stage": "optimizer-steps"}), flush=True)
     trainer.train(resume_from_checkpoint=str(checkpoint) if checkpoint else None)
     record_best(output, trainer.state, file_hash(manifest_path))
     candidate = output / "candidate"
