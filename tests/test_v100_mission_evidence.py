@@ -106,6 +106,7 @@ def test_archive_paging_reads_complete_unicode_without_path_escape(tmp_path):
             "read_tool_result", {"sha256": preview["full_result_sha256"], "offset": offset}
         )
         chunks.append(page["content"])
+        assert len(json.dumps(page, ensure_ascii=False).encode()) < 2048
         offset = page["next_offset"]
     assert json.loads("".join(chunks)) == original
     with pytest.raises(ValueError, match="Invalid archive identity"):
@@ -113,6 +114,16 @@ def test_archive_paging_reads_complete_unicode_without_path_escape(tmp_path):
     Path(preview["full_result_path"]).write_text("tampered")
     with pytest.raises(ValueError, match="Archived tool result changed"):
         tool.execute("read_tool_result", {"sha256": preview["full_result_sha256"], "offset": 0})
+
+
+def test_escaped_archive_pages_fit_the_helper_without_recursive_preview(tmp_path):
+    preview = json.loads(research_tools.bounded_tool_result(tmp_path, {"text": '\\"' * 4000}, 2048))
+    tool = research_tools.ResearchTools(tmp_path, {})
+    page = tool.execute(
+        "read_tool_result", {"sha256": preview["full_result_sha256"], "offset": 512}
+    )
+    visible = json.loads(research_tools.bounded_tool_result(tmp_path, page, 2048))
+    assert visible == page and "truncated" not in visible
 
 
 def test_archive_offset_cannot_split_utf8_or_pass_end(tmp_path):

@@ -34,7 +34,7 @@ COMPACT_CPU_TOOLS = {
 TOOLS = [
     tool_schema(
         "read_tool_result",
-        "Read the next 2048 UTF-8 bytes of a complete archived tool result using its SHA256 and byte offset. Validate every page against the archive hash; continue until next_offset is null. An excerpt is incomplete evidence.",
+        "Read the next 512 UTF-8 bytes of a complete archived tool result using its SHA256 and byte offset. Pages fit the small helper tool-response budget even with JSON escaping. Validate every page against the archive hash; continue until next_offset is null. An excerpt is incomplete evidence.",
         {
             "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
             "offset": {"type": "integer", "minimum": 0},
@@ -496,7 +496,7 @@ class ResearchTools:
                 raise ValueError("Archived tool result changed")
             if offset > len(raw):
                 raise ValueError("Byte offset exceeds the archive")
-            end = min(offset + 2048, len(raw))
+            end = min(offset + 512, len(raw))
             while end < len(raw) and raw[end] & 0xC0 == 0x80:
                 end -= 1
             try:
