@@ -141,6 +141,24 @@ def test_canonical_migration_still_rejects_semantic_changes_or_unloaded_model(tr
     assert path.read_bytes() == original
 
 
+def test_late_helper_preparation_applies_low_workload_only_after_verified_identity(
+    transport, tmp_path
+):
+    from rlm.v100.campaign import configure_helper
+
+    path, _ = prepared(tmp_path)
+    result = configure_helper(tmp_path)
+    actual = load_profile(path, tmp_path)
+    assert actual["resources"]["helper_batch_tokens"] == 16
+    assert actual["resources"]["helper_duty_percent"] == 15
+    assert result["loaded"]["context_length"] == 32768
+    transport[1]["info"]["template"] = "unauthorized template"
+    previous = path.read_bytes()
+    with pytest.raises(ValueError, match="metadata"):
+        configure_helper(tmp_path)
+    assert path.read_bytes() == previous
+
+
 def test_stable_metadata_ignores_only_date_and_keeps_legacy_semantics(transport):
     first = {**INFO, "modified_at": "before"}
     second = {**INFO, "modified_at": "after"}

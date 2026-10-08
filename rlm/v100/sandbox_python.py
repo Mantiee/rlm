@@ -24,9 +24,15 @@ def runtime_mounts(python: Path | None = None) -> list[Path]:
         seen.add(current)
         target = Path(os.readlink(current))
         current = Path(os.path.abspath(target if target.is_absolute() else current.parent / target))
-        # Bind only the interpreter's bin directories, never the whole home or
-        # project root just to resolve an intermediate train-venv Python link.
-        prefixes.append(current.parent)
+        # Intermediate venv links need only bin/. A distribution alias also
+        # needs lib/ to discover encodings instead of its compiled /install path.
+        # Neither case exposes the whole home or project root.
+        runtime_alias = current.parent.parent
+        prefixes.append(
+            runtime_alias
+            if runtime_alias.resolve() == Path(sys.base_prefix).resolve()
+            else current.parent
+        )
     if not current.is_file():
         raise ValueError("Sandbox interpreter symlink target is missing")
     return [path for path in dict.fromkeys(prefixes) if path.exists()]

@@ -1,4 +1,6 @@
-# V100 campaign v33
+# V100 campaign v34
+
+v34 addresses the follow-up deployment report: the sandbox exposes a managed Python runtime's complete standard library at its executable alias, not only `bin/`; official grader setup explicitly targets its own virtual environment for spaCy language-model installation. NLTK resources include stopwords and are verified locally during offline grading without a downloader/index request. Hardware acceptance retries strict helper preparation after the Windows startup opportunity, applies batch 16 and 15% request pacing only to a verified model, and preserves exact metadata differences if a semantic change is rejected. These repairs do not establish RTX reachability or hardware acceptance until the on-device checks run.
 
 v33 repairs the deployment failures observed on Debian: systemd receives an unquoted absolute `WorkingDirectory` and validates the generated unit before starting it; the first supervisor start keeps the newly prepared configuration instead of reverting to an old failed run. NLTK downloads into an explicitly created, owner-private resource directory without disabling its security enforcement or changing the user's home permissions. Canonical helper migration checks the newly requested 32768 context and retains the old metadata snapshot; actual template, value or manifest changes still fail. Sandbox mounts include intermediate `uv` interpreter symlinks without exposing the whole project/home, and failed hardware probes preserve the full child diagnostic in `sandbox-probe.log`.
 

@@ -569,7 +569,20 @@ def canonicalize_remote(root: Path, context_window: int | None = None) -> dict:
     info = client.identity()
     client.loaded()
     if metadata_sha(info, ORDERED_METADATA) != metadata_sha(previous, ORDERED_METADATA):
-        raise ValueError("Metadata changed beyond parameter order/date; inspect the exact diff")
+        changed = [
+            key
+            for key in sorted(set(info) | set(previous))
+            if key != "modified_at"
+            and metadata_sha({key: info.get(key)}, ORDERED_METADATA)
+            != metadata_sha({key: previous.get(key)}, ORDERED_METADATA)
+        ]
+        audit = root / "research/helper-metadata" / f"rejected-{time.time_ns()}"
+        atomic_json(audit / "profile-before.json", original)
+        atomic_json(audit / "show-before.json", previous)
+        atomic_json(audit / "show-current.json", info)
+        raise ValueError(
+            f"Metadata changed beyond parameter order/date; fields={changed}; audit={audit}"
+        )
     audit = root / "research/helper-metadata" / f"canonical-{time.time_ns()}"
     atomic_json(audit / "profile-before.json", original)
     atomic_json(audit / "show.json", info)

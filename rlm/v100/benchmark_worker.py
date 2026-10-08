@@ -7,6 +7,13 @@ import stat
 import sys
 from pathlib import Path
 
+NLTK_RESOURCES = {
+    "punkt": "tokenizers/punkt",
+    "punkt_tab": "tokenizers/punkt_tab",
+    "averaged_perceptron_tagger_eng": "taggers/averaged_perceptron_tagger_eng",
+    "stopwords": "corpora/stopwords",
+}
+
 
 def key(row):
     return "/".join(str(row[k]) for k in ("category", "task", "question_id"))
@@ -22,9 +29,23 @@ def prepare_nltk(folder):
     info = resources.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
         raise ValueError("Official grader resources must use an owned private directory")
-    for package in ("punkt", "punkt_tab", "averaged_perceptron_tagger_eng"):
+    for package in NLTK_RESOURCES:
         if not nltk.download(package, download_dir=str(resources), quiet=True):
             raise RuntimeError("Official grader resource download failed: " + package)
+
+
+def offline_nltk():
+    import nltk
+
+    def present(package, *args, **kwargs):
+        # IFBench calls nltk.download('stopwords') even while grading. Check
+        # the frozen local resource instead of fetching an index without network.
+        if package not in NLTK_RESOURCES:
+            raise ValueError("Unprepared official grader resource: " + str(package))
+        nltk.data.find(NLTK_RESOURCES[package])
+        return True
+
+    nltk.download = present
 
 
 def prepare(folder, limit, coding=False):
@@ -114,6 +135,7 @@ def prepare(folder, limit, coding=False):
 
 
 def grade(request, output):
+    offline_nltk()
     from livebench.common import MatchSingle
     from livebench.gen_ground_truth_judgment import play_a_match_gt
 

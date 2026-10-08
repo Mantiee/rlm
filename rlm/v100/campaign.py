@@ -67,6 +67,36 @@ def choose_profile(root: Path) -> Path:
     return max(candidates, key=lambda path: path.stat().st_mtime_ns)
 
 
+def configure_helper(root: Path) -> dict:
+    from rlm.v100.competition import helper_client
+    from rlm.v100.remote_helper import canonicalize_remote
+
+    evidence = canonicalize_remote(root, context_window=32768)
+    helper_path = root / "research/researcher-rtx3090.json"
+    selected = load_profile(helper_path, root)
+    selected["runtime"]["context_window"] = 32768
+    selected["server"]["context_per_slot"] = 32768
+    selected["resources"].update(helper_batch_tokens=16, helper_duty_percent=15)
+    client = helper_client(selected, root)
+    client.identity()
+    measured = client.loaded()
+    atomic_json(
+        helper_path.with_name(
+            "researcher-rtx3090.before-campaign-" + str(time.time_ns()) + ".json"
+        ),
+        json.loads(helper_path.read_text()),
+    )
+    atomic_json(helper_path, selected)
+    return {
+        **evidence,
+        "context": 32768,
+        "batch": 16,
+        "active_request_target_percent": 15,
+        "loaded": measured,
+        "scope": "Helper request pacing; no hard GPU peak/power cap",
+    }
+
+
 def prepare(
     root: Path,
     path: Path | None = None,
@@ -77,7 +107,6 @@ def prepare(
     from rlm.v100.mission import status
     from rlm.v100.public_benchmarks import current
     from rlm.v100.public_benchmarks import prepare as prepare_benchmarks
-    from rlm.v100.remote_helper import canonicalize_remote
     from rlm.v100.self_code import prepare as prepare_code
 
     if status(root)["running"]:
@@ -103,34 +132,7 @@ def prepare(
         atomic_json(folder / "stages.json", stages)
         print(json.dumps({"campaign": name, **stages[name]}), flush=True)
 
-    def helper():
-        evidence = canonicalize_remote(root, context_window=32768)
-        from rlm.v100.competition import helper_client
-
-        helper_path = root / "research/researcher-rtx3090.json"
-        selected = load_profile(helper_path, root)
-        selected["runtime"]["context_window"] = 32768
-        selected["server"]["context_per_slot"] = 32768
-        selected["resources"].update(helper_batch_tokens=16, helper_duty_percent=15)
-        client = helper_client(selected, root)
-        client.identity()
-        client.loaded()
-        atomic_json(
-            helper_path.with_name(
-                "researcher-rtx3090.before-campaign-" + str(time.time_ns()) + ".json"
-            ),
-            json.loads(helper_path.read_text()),
-        )
-        atomic_json(helper_path, selected)
-        return {
-            **evidence,
-            "context": 32768,
-            "batch": 16,
-            "active_request_target_percent": 15,
-            "scope": "Helper request pacing; no hard GPU peak/power cap",
-        }
-
-    stage("helper-identity", helper)
+    stage("helper-identity", lambda: configure_helper(root))
     stage("own-source-and-cpu-sandbox", lambda: prepare_code(root))
     if benchmarks:
         stage("official-public-benchmarks", lambda: current(root) or prepare_benchmarks(root, 20))

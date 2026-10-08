@@ -2,6 +2,7 @@
 
 import json
 import math
+import os
 import statistics
 import subprocess
 import sys
@@ -50,9 +51,12 @@ def prepare(root: Path, limit: int = 20, coding: bool = False) -> Path:
         check=True,
     )
     worker = Path(__file__).with_name("benchmark_worker.py")
+    resources = folder / "nltk"
+    resources.mkdir(mode=0o700)
     subprocess.run(
         [str(python), str(worker), "prepare", str(folder), str(limit)]
         + (["--coding"] if coding else []),
+        env=preparation_environment(environment, resources),
         check=True,
     )
     frozen = subprocess.check_output(
@@ -74,6 +78,18 @@ def prepare(root: Path, limit: int = 20, coding: bool = False) -> Path:
     atomic_json(folder / "manifest.json", manifest)
     atomic_json(root / "research/public-benchmarks/current.json", {"snapshot": str(folder)})
     return folder
+
+
+def preparation_environment(environment: Path, resources: Path | None = None) -> dict:
+    # LiveBench imports IFBench, whose official spaCy grader downloads its
+    # compatible language model if absent. uv must target this isolated venv.
+    selected = dict(os.environ)
+    selected["VIRTUAL_ENV"] = str(environment)
+    selected["UV_PYTHON"] = str(environment / "bin/python")
+    selected["PATH"] = str(environment / "bin") + os.pathsep + selected.get("PATH", "")
+    if resources is not None:
+        selected["NLTK_DATA"] = str(resources)
+    return selected
 
 
 def current(root: Path) -> Path | None:

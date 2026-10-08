@@ -120,11 +120,11 @@ def run(root: Path, profile_path: Path, desktop: bool = False) -> Path:
     check("private-code-sandbox", lambda: sandbox_probe(folder))
 
     def rtx():
-        path = root / "research/researcher-rtx3090.json"
-        selected = load_profile(path, root)
-        client = helper_client(selected, root)
-        client.identity()
-        return client.loaded()
+        from rlm.v100.campaign import configure_helper
+
+        # Windows may finish loading after the first preparation attempt.
+        # Retry the strict migration now, with the mission still stopped.
+        return configure_helper(root)
 
     check("rtx-helper-identity-and-loaded-model", rtx)
     if desktop:

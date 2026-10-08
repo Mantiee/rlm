@@ -12,6 +12,7 @@ from rlm.v100 import (
     code_lab,
     hardware_acceptance,
     mission,
+    public_benchmarks,
     sandbox_python,
     supervisor,
 )
@@ -32,7 +33,7 @@ def test_nltk_private_root_is_created_before_authorization_without_changing_pare
 
     monkeypatch.setitem(sys.modules, "nltk", SimpleNamespace(download=download))
     benchmark_worker.prepare_nltk(tmp_path)
-    assert len(calls) == 3 and tmp_path.stat().st_mode & 0o777 == 0o775
+    assert len(calls) == 4 and tmp_path.stat().st_mode & 0o777 == 0o775
 
 
 @pytest.mark.parametrize("unsafe", ["writable", "link"])
@@ -157,6 +158,62 @@ def test_uv_python_chain_mounts_intermediate_bin_without_exposing_project_root(t
     assert train.parent in mounts and base.parent in mounts
     assert current.parent.parent in mounts
     assert tmp_path not in mounts and tmp_path / "venvs" not in mounts
+
+
+def test_managed_python_runtime_alias_mounts_its_stdlib_not_just_bin(tmp_path, monkeypatch):
+    distribution = tmp_path / "python/cpython-3.11.15-linux-x86_64-gnu"
+    alias = distribution.with_name("cpython-3.11-linux-x86_64-gnu")
+    python = distribution / "bin/python3.11"
+    python.parent.mkdir(parents=True)
+    python.write_text("managed interpreter fixture")
+    stdlib = distribution / "lib/python3.11/encodings"
+    stdlib.mkdir(parents=True)
+    (stdlib / "__init__.py").write_text("codec fixture")
+    alias.symlink_to(distribution, target_is_directory=True)
+    venv_python = tmp_path / "venvs/continual/bin/python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(alias / "bin/python3.11")
+    monkeypatch.setattr(sandbox_python.sys, "base_prefix", str(distribution))
+    mounts = sandbox_python.runtime_mounts(venv_python)
+    assert alias in mounts and (alias / "lib/python3.11/encodings").is_dir()
+    assert alias / "bin" not in mounts
+    assert tmp_path not in mounts and distribution.parent not in mounts
+
+
+def test_official_grader_installation_targets_its_own_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIRTUAL_ENV", "/wrong/train-venv")
+    monkeypatch.setenv("UV_PYTHON", "/wrong/system-python")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    environment = tmp_path / "venvs/official-benchmarks"
+    selected = public_benchmarks.preparation_environment(environment)
+    assert selected["VIRTUAL_ENV"] == str(environment)
+    assert selected["UV_PYTHON"] == str(environment / "bin/python")
+    assert selected["PATH"] == str(environment / "bin") + ":/usr/bin"
+    assert os.environ["VIRTUAL_ENV"] == "/wrong/train-venv"
+    resources = tmp_path / "snapshot/nltk"
+    assert public_benchmarks.preparation_environment(environment, resources)["NLTK_DATA"] == str(
+        resources
+    )
+
+
+def test_offline_grader_requires_actual_frozen_nltk_resources_without_network(monkeypatch):
+    found = []
+
+    def find(path):
+        found.append(path)
+        if path == "tokenizers/punkt":
+            raise LookupError("Missing frozen punkt")
+        return path
+
+    nltk = SimpleNamespace(data=SimpleNamespace(find=find))
+    monkeypatch.setitem(sys.modules, "nltk", nltk)
+    benchmark_worker.offline_nltk()
+    assert nltk.download("stopwords")
+    assert found == ["corpora/stopwords"]
+    with pytest.raises(LookupError, match="frozen punkt"):
+        nltk.download("punkt")
+    with pytest.raises(ValueError, match="Unprepared"):
+        nltk.download("unapproved")
 
 
 def test_sandbox_probe_failure_preserves_actual_child_error_and_log(tmp_path, monkeypatch):
