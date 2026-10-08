@@ -17,6 +17,7 @@ import urllib3
 
 from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn, research_output_limit, tool_schema, tool_turn
+from rlm.v100.insights import PROOF_DOMAINS
 from rlm.v100.tool_protocol import json_object
 
 COMPACT_CPU_TOOLS = {
@@ -31,6 +32,19 @@ COMPACT_CPU_TOOLS = {
 }
 
 TOOLS = [
+    tool_schema(
+        "read_tool_result",
+        "Read the next 2048 UTF-8 bytes of a complete archived tool result using its SHA256 and byte offset. Validate every page against the archive hash; continue until next_offset is null. An excerpt is incomplete evidence.",
+        {
+            "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "offset": {"type": "integer", "minimum": 0},
+        },
+    ),
+    tool_schema(
+        "mission_evidence",
+        "Read actual mission training health, successful optimizer counters, accepted updates, complete baseline paths and recorded errors. Missing evidence is unknown; GUI boot and arithmetic training do not block unrelated work. Does not expose hidden audit answers or run an experiment.",
+        {},
+    ),
     tool_schema(
         "configure_free_market_adapter",
         "Configure current public Bybit research or free IEX/sports data by exact documented mapping. No paid histories, trading endpoints or model-supplied secrets. Free keys must already exist in operator environment. Sports execution requires separately registered fees/instrument and an explicit bookmaker settlement rule; provider odds have no certified liquidity.",
@@ -53,11 +67,11 @@ TOOLS = [
     ),
     tool_schema(
         "request_fresh_curriculum",
-        "Request 1-32 NEW independent calculator-verified training examples in a useful proof domain. Only when relevant to the operator goal or a demonstrated weakness. Never draws from benchmark/audit cases. Admission is not an optimizer update.",
+        "Request 1-32 NEW independently verified arithmetic, decimal, equation, sequence or structured-extraction examples. Only when relevant to the operator goal or a demonstrated weakness. Never draws from benchmark/audit cases. Admission is not an optimizer update.",
         {
             "domain": {
                 "type": "string",
-                "enum": ["arithmetic", "linear_equation", "decimal_calculation"],
+                "enum": list(PROOF_DOMAINS),
             },
             "count": {"type": "integer", "minimum": 1, "maximum": 32},
         },
@@ -190,7 +204,7 @@ TOOLS = [
             "purpose": {"type": "string", "maxLength": 600},
             "domain": {
                 "type": "string",
-                "enum": ["arithmetic", "linear_equation", "decimal_calculation"],
+                "enum": list(PROOF_DOMAINS),
             },
         },
     ),
@@ -465,6 +479,43 @@ class ResearchTools:
         self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name == "read_tool_result" and set(arguments) == {"sha256", "offset"}:
+            digest, offset = arguments["sha256"], arguments["offset"]
+            if (
+                not isinstance(digest, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", digest)
+                or type(offset) is not int
+                or offset < 0
+            ):
+                raise ValueError("Invalid archive identity or byte offset")
+            path = self.root / "research/tool-results" / f"{digest}.json"
+            if path.is_symlink() or path.stat().st_size > 8 * 2**20:
+                raise ValueError("Archive exceeds its read budget or is a symlink")
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest:
+                raise ValueError("Archived tool result changed")
+            if offset > len(raw):
+                raise ValueError("Byte offset exceeds the archive")
+            end = min(offset + 2048, len(raw))
+            while end < len(raw) and raw[end] & 0xC0 == 0x80:
+                end -= 1
+            try:
+                page = raw[offset:end].decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise ValueError("Byte offset splits a UTF-8 character") from error
+            return {
+                "sha256": digest,
+                "path": str(path),
+                "offset": offset,
+                "next_offset": end if end < len(raw) else None,
+                "total_bytes": len(raw),
+                "content": page,
+                "scope": "One verified archive excerpt; inspect remaining pages before inferring absent facts.",
+            }
+        if name == "mission_evidence" and not arguments:
+            from rlm.v100.mission_evidence import collect
+
+            return collect(self.root)
         if name == "propose_foundation_trial" and set(arguments) == {
             "model_id",
             "revision",

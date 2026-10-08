@@ -151,6 +151,8 @@ def execute(root: Path, job: dict) -> dict:
     client.identity()
     client.activity_actor = "resident-" + job["kind"]
     client.research_tool_names = {
+        "mission_evidence",
+        "read_tool_result",
         "read_public_page",
         "parallel_source_research",
         "search_memory",

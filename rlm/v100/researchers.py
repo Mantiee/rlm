@@ -8,7 +8,7 @@ from pathlib import Path
 from rlm.v100.agent import native_turn, research_output_limit
 from rlm.v100.common import atomic_json
 from rlm.v100.experiments import SharedLab
-from rlm.v100.insights import InsightQueue
+from rlm.v100.insights import PROOF_DOMAINS, InsightQueue
 from rlm.v100.memory import digest
 from rlm.v100.protection import file_hash
 from rlm.v100.research_tools import research_turn
@@ -141,7 +141,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
             "properties": {
                 "kind": {
                     "type": "string",
-                    "enum": ["arithmetic", "linear_equation", "decimal_calculation"],
+                    "enum": list(PROOF_DOMAINS),
                 },
                 "expression": {"type": "string", "maxLength": 160},
             },

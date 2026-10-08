@@ -17,6 +17,14 @@ OPS = {
     ast.Mod: operator.mod,
 }
 
+PROOF_DOMAINS = (
+    "arithmetic",
+    "linear_equation",
+    "decimal_calculation",
+    "sequence_transform",
+    "structured_extraction",
+)
+
 
 def reference(task: dict) -> tuple[dict, str]:
     if not isinstance(task, dict) or set(task) != {"kind", "expression"}:
@@ -24,7 +32,57 @@ def reference(task: dict) -> tuple[dict, str]:
     expression = task["expression"]
     if not isinstance(expression, str) or not 1 <= len(expression) <= 160:
         raise ValueError("Formal expression exceeds its budget")
-    if task["kind"] == "decimal_calculation":
+    if task["kind"] in ("sequence_transform", "structured_extraction"):
+        payload = json.loads(expression)
+        if not isinstance(payload, dict):
+            raise ValueError("Structured proof task must be a JSON object")
+        if task["kind"] == "sequence_transform":
+            if set(payload) != {"operation", "values"} or payload["operation"] not in (
+                "sort",
+                "reverse",
+                "unique_sorted",
+            ):
+                raise ValueError("Unsupported sequence operation")
+            values = payload["values"]
+            if (
+                not isinstance(values, list)
+                or not 1 <= len(values) <= 16
+                or any(type(value) is not int or abs(value) > 10000 for value in values)
+            ):
+                raise ValueError("Sequence values exceed the proof budget")
+            answer = (
+                sorted(set(values))
+                if payload["operation"] == "unique_sorted"
+                else sorted(values)
+                if payload["operation"] == "sort"
+                else values[::-1]
+            )
+        else:
+            if (
+                set(payload) != {"data", "field"}
+                or not isinstance(payload["data"], dict)
+                or not isinstance(payload["field"], str)
+                or payload["field"] not in payload["data"]
+            ):
+                raise ValueError("Extraction requires an existing exact field")
+            if len(payload["data"]) > 8 or any(
+                type(value) not in (str, int, bool, type(None))
+                or type(value) is int
+                and abs(value) > 10000
+                or isinstance(value, str)
+                and len(value) > 64
+                for value in payload["data"].values()
+            ):
+                raise ValueError("Extraction supports bounded scalar fields only")
+            answer = payload["data"][payload["field"]]
+        answer = json.dumps(answer, ensure_ascii=False, separators=(",", ":"))
+        normalized = {
+            "kind": task["kind"],
+            "expression": json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ),
+        }
+    elif task["kind"] == "decimal_calculation":
         from rlm.v100.calculator import calculate
 
         answer = calculate(expression)["result"]
@@ -80,7 +138,11 @@ def verified_record(task: dict) -> dict:
     task, answer = reference(task)
     identity = hashlib.sha256(json.dumps(task, sort_keys=True).encode()).hexdigest()
     prompt = (
-        "Calculate these explicit decimal costs. Market assumptions are not validated."
+        "Apply operation to values. unique_sorted removes duplicates and sorts. Output a compact JSON array."
+        if task["kind"] == "sequence_transform"
+        else "Return the exact data[field] as a compact JSON scalar; quote strings. No prose."
+        if task["kind"] == "structured_extraction"
+        else "Calculate these explicit decimal costs. Market assumptions are not validated."
         if task["kind"] == "decimal_calculation"
         else "Calculate this integer expression. // is floor division and % is modulo."
         if task["kind"] == "arithmetic"
@@ -90,7 +152,16 @@ def verified_record(task: dict) -> dict:
         "group": "formal-" + identity,
         "document_ids": ["formal-" + identity],
         "messages": [
-            {"role": "user", "content": prompt + " Return only the result.\n" + task["expression"]},
+            {
+                "role": "user",
+                "content": prompt
+                + (
+                    "\n"
+                    if task["kind"] in ("sequence_transform", "structured_extraction")
+                    else " Return only the result.\n"
+                )
+                + task["expression"],
+            },
             {"role": "assistant", "content": answer},
         ],
         "verification": {"kind": "deterministic_reference", "accepted": True, "task": task},

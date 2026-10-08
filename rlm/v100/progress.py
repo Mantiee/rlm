@@ -125,6 +125,9 @@ def report(root: Path) -> dict:
     from rlm.v100.planning import read as read_plans
 
     value["plans"] = read_plans(root)
+    from rlm.v100.mission_evidence import collect
+
+    value["mission_evidence"] = collect(root)
     for name, path in (
         ("drones", root / "research/drones-status.json"),
         ("external_compute", root / "research/compute-status.json"),
@@ -149,6 +152,9 @@ def report(root: Path) -> dict:
     lines = [
         f"Phase: {value['phase']} | Running: {value['running']}",
         f"Learning cycles: {len(cycles)} | Accepted weight updates in this run: {value['accepted_weight_updates_this_run']}",
+        "Successful optimizer updates observed in this run: "
+        + str(value["mission_evidence"]["optimizer_updates_observed"])
+        + " (None means no verified counters; not proof of zero)",
         f"Audited paper outcomes available for training: {len(outcomes)} (including losses; availability is not proof that an adapter used them)",
         f"Fixed baseline: {value['fixed_suite_baseline']['passed']}/{value['fixed_suite_baseline']['total']}",
         "Accepted independent branches: "

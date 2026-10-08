@@ -1,4 +1,84 @@
-# V100 mission release v100.24
+# V100 mission audit v100.38
+
+This inventory separates source implementation from configuration, execution and
+demonstrated improvement. Passing controller tests does not certify GPU stability,
+profitable trading or a successful model promotion. It is not a declaration that
+every requested feature is complete or optimal.
+
+## Current requirements inventory
+
+| Requirement | Source mechanism | Limit or evidence still needed |
+|---|---|---|
+| Autonomous self-upgrade loop | `mission.py`, `continuous.py`, `supervisor.py` | Accepted updates and numerical health, not loop count alone |
+| Operator-owned long-term objective | `goals.py`, `chat_goals.py`, `planning.py` | Only a clear current operator request can change it; upgrades preserve old goals |
+| Short/mid-term plans from ordinary chat | `mission_chat.py`, `planning.py` | Versioned host receipts; a written plan does not mean its experiment ran |
+| Chat while research continues | Persistent queue, accepted master and explicit RTX delegate | One V100 slot shares inference; exclusive training prevents accepted-master chat temporarily |
+| Factual status in chat | `mission_evidence.py`, supplied automatically and as a research tool | Report paths, successful optimizer counters and accepted versions are distinct; missing counters mean unknown |
+| Long context, Flash Attention, KV | Native configuration and fit checks | Device execution and long-input accuracy; free VRAM alone does not establish speed |
+| Adaptive thinking/output | Validated `research_policy.py` budgets | Research only; fixed evaluations retain comparable settings |
+| Adaptive batching/speed | MTP/calibration/performance measurements | Master batch is a stopped-server benchmark proposal, not unrestricted live reconfiguration |
+| Parallel master/helper research | `paper_agents.py`, resident drones | One RTX request and bounded CPU jobs; concurrent master training/inference models on the single V100 are not enabled |
+| Independent A/B evolution/crossbreeding | `lineages.py`, `competition.py`, `crossbreeding.py` | Accepted separate ancestors require passing updates; initial branches share the base |
+| Architecture activation/rollback | `architecture_promotion.py`, foundation/custom trials | Fixed/public/fresh gates and actual inference probe; no hardware promotion inferred |
+| New independent training/audit tasks | `curriculum.py`, split ledgers, `fresh_audit.py` | Fresh calculations, sequences and typed extraction; finite synthetic coverage is not all-domain robustness |
+| Official AI benchmark comparisons | Pinned LiveBench tasks/scorers, same-question published references | A selected panel is not the full leaderboard; provider settings differ; scorer errors block certification |
+| Source/CPU/RTX drones | Bounded persistent job queue | Configured and running jobs differ; limits and game pauses can defer work |
+| Full tool evidence and compact context | SHA256 archives, paged reads and compact capability routing | Previews are incomplete; oversized original input can still fail explicitly |
+| Original memory and summaries | Archive, hierarchical summaries, CPU lexical/embedding retrieval | Retrieval/provenance quality; recursive model transcripts are not facts |
+| Read/copy own code, sandbox files | `self_code.py`, private namespace and guest | Host controller protected; arbitrary shell and modified copies operate in private guest |
+| Linux GUI/browser/tools/vision | Debian VM, public HTTP(S) broker, RTX vision | Guest/device verification; GUI is not required for native training or calculators |
+| Resource/error recovery and uptime | Bounded resources, deadlines, restart backoff, rollback | Best-effort recovery, not unconditional 24/7 uptime or stability |
+| Restrict helper only on Windows | Isolated runtime, smaller batches/context, pacing, LoL pause | No hard per-process GPU-utilization/power cap; blackscreen cause unproven |
+| Use Windows CPU/RAM/owned machines | Authenticated shared-folder workers, leases and tensor validation | Worker launcher must run there; mailbox configuration alone is insufficient |
+| Additional Colab compute | Bounded interactive notebook and safe result import | No autonomous managed-free worker farm or cookie/account quota evasion |
+| Free external model consultation | Documented services, zero-price catalog, guest browser, explicit key routing | Existing session/key and allowance needed; stop or hand off at authentication/payment/limit walls |
+| Research beyond fixed assets | Catalog discovery, model-selected spot and configurable feeds | Equities/sports require verified fees, rights, liquidity and settlement semantics |
+| Historical/event-timed backtests | Chronological splits, events, cash/buy-hold and cost stress | Historical availability/leakage; past sample performance does not prove future income |
+| Learn from profitable/losing outcomes | Audited paper accounting, causal DPO, shadow reward head | Resolved valid outcomes required; not unbiased profit-maximizing policy RL |
+| Net results and local alerts | Audited paper reports and labeled rejected/accepted proposals | No real orders or demonstrated income edge inferred from signals |
+
+## v100.38 additions
+
+Campaign setup automatically creates a separate public benchmark snapshot when
+the installed official-grading adapter changed. A baseline from a different
+snapshot is retained as historical evidence, while accepted weights must be
+evaluated on the new snapshot before comparison/promotion. Existing input hashes
+are checked first; corrupted benchmark inputs are not silently replaced.
+
+`mission_evidence` reads bounded current-run health records and aggregate baseline
+summaries. Hidden audit answers never enter this tool. Attempted/global steps are
+not successful optimizer updates; old benchmark errors are labeled historical.
+Ordinary chat receives evidence even when it does not select the tool. The prompt
+rejects invented scorer causes, a GUI prerequisite for unrelated work, and claims
+that arithmetic practice is necessary for income.
+
+`read_tool_result` reads complete archived outputs in UTF-8-safe pages, checking
+SHA256 on every page. Arbitrary file paths and symlinks are rejected. A preview is
+still explicitly incomplete evidence. Original task/resource limits remain enforced.
+
+Fresh training and post-freeze audits add independently checked sequence operations
+and typed JSON extraction to the existing three calculation domains. Generation
+never reads benchmark answers. Audits stay single-use, drawn after candidate
+identities are frozen and reserved against training. Owned-worker examples are
+tested to fit without truncation. This adds coverage, not an income policy or
+universal no-forgetting proof.
+
+Earlier device logs established native inference, a small CUDA backward probe,
+private code namespaces and RTX identity/loading. They did not establish complete
+GUI readiness, master architecture promotion, latest-release GPU training or
+repeatable net profit. Those claims require fresh device reports.
+
+The official [NVIDIA MPS documentation](https://docs.nvidia.com/deploy/mps/when-to-use-mps.html)
+limits MPS support to Linux/QNX; it is not a Windows per-helper utilization cap.
+The [Colab FAQ](https://research.google.com/colaboratory/faq.html) distinguishes
+ordinary interactive work from distributed workers on free managed runtimes and
+disallows multiple accounts to bypass limits. Owned workers and interactive
+notebooks remain the implemented routes; no quota-evasion mechanism is added.
+
+## Historical release notes and earlier scope
+
+The sections below record earlier releases. Their test counts and resource defaults
+are historical, not evidence that every current feature is active.
 
 v100.24 normalizes Transformers 5 chat-tokenization mappings and handles Gemma's
 exact empty-thought inference suffix when encoding answer-only training records.

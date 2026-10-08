@@ -210,6 +210,7 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
     from rlm.v100.mission import status
+    from rlm.v100.mission_evidence import collect as collect_evidence
     from rlm.v100.planning import read as read_plans
     from rlm.v100.planning import update as update_plan
     from rlm.v100.research_policy import settings
@@ -323,6 +324,10 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
                 "not an immediate native reconfiguration. No real trading, arbitrary host commands or quota bypass. "
                 "Describe missing capabilities honestly. Actions apply only after host validation; do not claim "
                 "weights changed, profit learned or settings executed before the host receipt. "
+                "Use mission_evidence for factual training/status claims; cite its report paths. Missing counters mean unknown, "
+                "not zero. Global/attempted steps differ from successful optimizer updates, which differ from accepted weight versions. "
+                "Never invent a grader error cause. GUI readiness does not block calculator/native inference/GPU training. "
+                "Arithmetic practice is optional; do not claim it is necessary for income or that it proves a profitable strategy. "
                 "Unused action fields: text empty, target master, thinking false, max_tokens256, batch_tokens128, enabled false."
                 " Use sandbox action to queue a shell script (text) inside the private Debian VM, never the host. "
                 "The guest has /workspace for persistent files and /opt/master-source as readonly own source; "
@@ -343,6 +348,7 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
                 {
                     "message": request["message"],
                     "mission": mission,
+                    "mission_evidence": collect_evidence(root),
                     "settings": settings(root),
                     "preferences": preferences(root),
                     "plans": read_plans(root),
@@ -356,6 +362,8 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
 
         client.research_owner = "A"
         client.research_tool_names = {
+            "mission_evidence",
+            "read_tool_result",
             "get_plan",
             "drone_status",
             "sandbox_state",

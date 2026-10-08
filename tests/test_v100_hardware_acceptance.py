@@ -39,6 +39,7 @@ def test_capability_audit_before_any_mission_has_no_fake_hardware_evidence(tmp_p
                 "last_learning_cycle",
                 "accepted_weight_updates_this_run",
                 "training_metrics",
+                "mission_evidence",
                 "paper_blockers",
                 "available_audited_paper_outcomes",
                 "drones",

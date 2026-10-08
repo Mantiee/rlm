@@ -45,24 +45,14 @@ def mailbox_path(root: Path) -> Path:
 
 
 def fresh_records(domain: str, count: int = 64) -> list[dict]:
-    from rlm.v100.insights import verified_record
+    from rlm.v100.curriculum import draw_task
+    from rlm.v100.insights import PROOF_DOMAINS, verified_record
 
-    if (
-        domain not in ("arithmetic", "linear_equation", "decimal_calculation")
-        or not 32 <= count <= 128
-    ):
+    if domain not in PROOF_DOMAINS or not 32 <= count <= 128:
         raise ValueError("Compute examples require a trusted proof domain and 32-128 records")
     rng, rows = secrets.SystemRandom(), {}
     while len(rows) < count:
-        a, b, c = (rng.randint(2, 999) for _ in range(3))
-        expression = (
-            f"({a}-{b})*{c}"
-            if domain == "arithmetic"
-            else f"{a}*x+{b}={c}"
-            if domain == "linear_equation"
-            else f"{a}.{b:03d}*{c}/10000"
-        )
-        row = verified_record({"kind": domain, "expression": expression})
+        row = verified_record(draw_task(domain, rng))
         rows[row["group"]] = row
     return list(rows.values())
 

@@ -97,6 +97,26 @@ def current(root: Path) -> Path | None:
     return Path(json.loads(path.read_text())["snapshot"]) if path.exists() else None
 
 
+def prepare_current(root: Path, limit: int = 20) -> Path:
+    """Keep immutable evidence, rebuilding a snapshot only for a changed adapter."""
+    snapshot = current(root)
+    if snapshot is None:
+        return prepare(root, limit)
+    manifest = json.loads((snapshot / "manifest.json").read_text())
+    if any(
+        file_hash(snapshot / name) != manifest[key]
+        for name, key in (
+            ("questions.json", "questions_sha256"),
+            ("references.json", "references_sha256"),
+        )
+    ):
+        raise ValueError("Pinned public benchmark inputs changed")
+    worker = Path(__file__).with_name("benchmark_worker.py")
+    if manifest["worker_sha256"] != file_hash(worker):
+        return prepare(root, limit)
+    return snapshot
+
+
 def grade(root: Path, snapshot: Path, question: dict, answer: dict, folder: Path) -> dict:
     if question.get("category") == "coding":
         from rlm.v100.guest_benchmarks import grade as guest_grade

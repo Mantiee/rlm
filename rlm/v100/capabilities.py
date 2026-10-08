@@ -29,6 +29,7 @@ def audit(root: Path) -> dict:
         "last_cycle": evidence["last_learning_cycle"],
         "accepted_updates_this_run": evidence["accepted_weight_updates_this_run"],
         "training_metrics": evidence["training_metrics"],
+        "mission_evidence": evidence["mission_evidence"],
         "paper_blockers": evidence["paper_blockers"],
         "audited_paper_outcomes": evidence["available_audited_paper_outcomes"],
         "research_policy": settings(root),
@@ -88,6 +89,9 @@ def audit(root: Path) -> dict:
         ],
         "not_implemented": [
             "profit-maximizing policy RL",
+            "hard per-helper GPU utilization or power cap on Windows WDDM",
+            "accepted-master chat inference during exclusive master training on the single V100; RTX delegation is used instead",
+            "autonomous distributed free managed Colab workers",
             "automatic certification of sports/equities provider fees, account rights and settlement semantics",
             "automatic account creation or bypassing browser authentication/quotas",
         ],

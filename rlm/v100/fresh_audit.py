@@ -5,7 +5,8 @@ import secrets
 from pathlib import Path
 
 from rlm.v100.common import atomic_json
-from rlm.v100.insights import verified_record
+from rlm.v100.curriculum import draw_task
+from rlm.v100.insights import PROOF_DOMAINS, verified_record
 from rlm.v100.protection import compare_reports, file_hash, reserve_audit_sources
 
 
@@ -20,15 +21,7 @@ def create(root: Path, parent: dict, candidate: Path, folder: Path, count: int =
     folder.mkdir(parents=True, exist_ok=False)
     rng, rows, sources = secrets.SystemRandom(), [], []
     while len(rows) < count:
-        a, b, c = (rng.randint(2, 999) for _ in range(3))
-        kind = len(rows) % 3
-        task = (
-            {"kind": "arithmetic", "expression": f"({a}-{b})*{c}"}
-            if kind == 0
-            else {"kind": "linear_equation", "expression": f"{a}*x+{b}={c}"}
-            if kind == 1
-            else {"kind": "decimal_calculation", "expression": f"{a}.{b:03d}*{c}/10000"}
-        )
+        task = draw_task(PROOF_DOMAINS[len(rows) % len(PROOF_DOMAINS)], rng)
         record = verified_record(task)
         if record["group"] in sources:
             continue
@@ -57,7 +50,7 @@ def create(root: Path, parent: dict, candidate: Path, folder: Path, count: int =
             **identities,
             "suite_sha256": file_hash(suite),
             "count": count,
-            "scope": "Fresh finite arithmetic/equation/decimal checks, not proof of any user goal or universal retention",
+            "scope": "Fresh finite arithmetic/equation/decimal/sequence/extraction checks, not proof of any user goal or universal retention",
         },
     )
     return folder

@@ -106,7 +106,7 @@ def prepare(
 ) -> Path:
     from rlm.v100.mission import status
     from rlm.v100.public_benchmarks import current
-    from rlm.v100.public_benchmarks import prepare as prepare_benchmarks
+    from rlm.v100.public_benchmarks import prepare_current as prepare_benchmarks
     from rlm.v100.self_code import prepare as prepare_code
 
     if status(root)["running"]:
@@ -135,12 +135,28 @@ def prepare(
     stage("helper-identity", lambda: configure_helper(root))
     stage("own-source-and-cpu-sandbox", lambda: prepare_code(root))
     if benchmarks:
-        stage("official-public-benchmarks", lambda: current(root) or prepare_benchmarks(root, 20))
+        stage("official-public-benchmarks", lambda: prepare_benchmarks(root, 20))
     if desktop:
         from rlm.v100.desktop import prepare as prepare_desktop
 
         stage("private-desktop", lambda: prepare_desktop(root))
     resources = profile.setdefault("resources", {})
+    if benchmarks and current(root) and resources.get("public_baseline"):
+        from rlm.v100.protection import file_hash
+
+        baseline = Path(resources["public_baseline"])
+        if file_hash(baseline) != resources["public_baseline_sha256"]:
+            raise ValueError("Pinned public baseline evidence changed")
+        old = json.loads(baseline.read_text())
+        snapshot_hash = file_hash(current(root) / "manifest.json")
+        if old.get("snapshot_sha256") != snapshot_hash:
+            resources["public_baseline_requires_refresh"] = {
+                "previous_report": str(baseline),
+                "new_snapshot_sha256": snapshot_hash,
+                "reason": "Evaluate accepted weights again; do not compare different public task snapshots",
+            }
+            resources.pop("public_baseline")
+            resources.pop("public_baseline_sha256")
     resources.update(
         fresh_audit_required=True,
         paper_research_enabled=resources.get("paper_research_enabled", False)
