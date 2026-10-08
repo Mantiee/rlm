@@ -24,17 +24,12 @@ from rlm.v100.protection import compare_reports, execution_hash, file_hash
 from rlm.v100.serving import process_identity
 
 OBJECTIVE = (
-    "Find the fastest and largest lawful, repeatable net income with no deposits or paid APIs. "
-    "Compare sports research, crypto and equities in forward-only paper simulations, plus "
-    "other zero-deposit income opportunities. Include documented fees, funding, financing, "
-    "slippage, FX and tax limitations. Minimize losses and correlated exposure. Research "
-    "primary public sources, quarterly filings and relevant social evidence without future "
-    "data. Compete as A/B, share useful evidence, use CPU researchers, and independently "
-    "test self-upgrades. Train only independently verified examples; retain originals, "
-    "prior model versions and checkpoints. No real orders, paid services, sales, account "
-    "creation or spending are executed by this controller. Do not claim guaranteed profit "
-    "or universal zero forgetting."
+    "Improve the system's verified capabilities, efficiency and reliability through measured "
+    "self-upgrades. Follow the operator's long-term goal and current short/mid-term plans. "
+    "Find new independently verifiable learning data; preserve previous versions and skills. "
+    "Do not optimize merely for published benchmark scores. No paid APIs or real orders."
 )
+
 SEEDS = (
     "https://help.coinbase.com/en/exchange/trading-and-funding/exchange-fees",
     "https://api.exchange.coinbase.com/products/BTC-USD/book?level=1",
@@ -93,7 +88,10 @@ def start(
         from rlm.v100.remote_helper import selected_helper
 
         load_profile(selected_helper(root), root)
-        if not (root / "research/paper/ledger.sqlite3").exists():
+        if (
+            profile.get("resources", {}).get("paper_research_enabled", False)
+            and not (root / "research/paper/ledger.sqlite3").exists()
+        ):
             raise ValueError("Missing initialized paper ledger; run paper-init")
         require_idle_gpu()
         run = directory / ("run-" + uuid.uuid4().hex[:12])
@@ -232,9 +230,10 @@ def run(root: Path, profile: dict, directory: Path) -> None:
             raise ValueError("Mission curriculum or evaluation suite changed")
     goal = load_goal(root)
     goal = set_goal(root, goal["text"] if goal else OBJECTIVE, suite)
-    book = PaperBook(root)
+    financial = profile.get("resources", {}).get("paper_research_enabled", False)
+    book = PaperBook(root) if financial else None
     try:
-        configured = book.state()
+        configured = book.state() if book else {"instruments": {}}
         crypto_ready = any(
             item["market"] == "crypto"
             and item["product"] == "spot"
@@ -242,7 +241,8 @@ def run(root: Path, profile: dict, directory: Path) -> None:
             for item in configured["instruments"].values()
         )
     finally:
-        book.close()
+        if book:
+            book.close()
     settings = {
         "schema": "v100-paper-learning-v1",
         "objective": goal["text"],
@@ -260,15 +260,16 @@ def run(root: Path, profile: dict, directory: Path) -> None:
     helper_original = setup_helper(load_profile(selected_helper(root), root))
     helper_path = directory / "research-helper.json"
     atomic_json(helper_path, helper_original)
-    helper_path = financial_helper_profile(helper_path, root)
+    if financial:
+        helper_path = financial_helper_profile(helper_path, root)
     tool_reader = ResearchTools(root, {}, "A")
     note(
         directory,
-        "collecting-income-sources",
+        "collecting-income-sources" if financial else "goal-research",
         goal=goal["text"],
         paper_trades="blocked until verified fees and feeds exist",
     )
-    for url in SEEDS:
+    for url in SEEDS if financial else ():
         try:
             tool_reader.execute("read_public_page", {"url": url})
         except Exception as error:
@@ -300,7 +301,7 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                 selected, selected_path = serving, path
                 note(
                     directory,
-                    "income-research",
+                    "income-research" if financial else "goal-research",
                     context_window=context,
                     free_vram_gib=round(free, 2),
                     flash_attention_requested=serving["server"]["flash_attention"],
@@ -309,12 +310,26 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                 with waiting_researcher(
                     helper_path, root, directory / "research-helper.log", fallback=serving
                 ) as helper:
-                    with PaperLearning(root, paper_settings) as income:
-                        try:
-                            income.research(serving, helper)
-                            compress(root, serving)
-                        except (ValueError, RuntimeError, OSError) as error:
-                            print("Income research error; see activity logs:", error, flush=True)
+                    try:
+                        if financial:
+                            with PaperLearning(root, paper_settings) as income:
+                                income.research(serving, helper)
+                        else:
+                            from rlm.v100.competition import research_task
+
+                            research_task(
+                                helper_client(helper, root, "A"),
+                                "A",
+                                {
+                                    "role": "researcher",
+                                    "brief": "Investigate the operator goal and propose a new independently testable self-upgrade.",
+                                },
+                                [],
+                                root,
+                            )
+                        compress(root, serving)
+                    except (ValueError, RuntimeError, OSError) as error:
+                        print("Goal research error; see activity logs:", error, flush=True)
                 note(directory, "baseline-before-weight-updates", context_window=context)
                 cached = previous_baseline(root, serving, suite)
                 if cached:
@@ -385,17 +400,18 @@ def run(root: Path, profile: dict, directory: Path) -> None:
             cycles=0,
             interval=300,
             train_timeout=7200,
-            paper_config=paper_settings,
+            paper_config=paper_settings if financial else None,
             initial_update=True,
         )
     finally:
-        book = PaperBook(root)
-        try:
-            from rlm.v100.paper_reports import write_report
+        if financial:
+            book = PaperBook(root)
+            try:
+                from rlm.v100.paper_reports import write_report
 
-            print("Final income paper report:", write_report(book), flush=True)
-        finally:
-            book.close()
+                print("Final income paper report:", write_report(book), flush=True)
+            finally:
+                book.close()
 
 
 def worker(root: Path, profile: dict, directory: Path) -> None:

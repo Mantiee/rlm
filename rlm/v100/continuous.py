@@ -279,6 +279,12 @@ def learn_loop(
                     if initial_update and cycle == 1 and not changed:
                         expanded.write_bytes(current_pool.read_bytes())
                         changed = True
+                    from rlm.v100.foundation import pending as pending_foundations
+
+                    foundation_queue = pending_foundations(root)
+                    if not changed and foundation_queue:
+                        expanded.write_bytes(current_pool.read_bytes())
+                        changed = True
                     if not changed:
                         history.append(
                             {"cycle": cycle, "status": "no new verified and admitted examples"}
@@ -321,6 +327,24 @@ def learn_loop(
                         paper.check()
                     time.sleep(max(0, min(1, deadline - time.monotonic())))
                 continue
+            from rlm.v100.foundation import pending as pending_foundations
+            from rlm.v100.foundation import trial as foundation_trial
+
+            foundation_queue = pending_foundations(root)
+            if foundation_queue:
+                if paper is not None:
+                    paper.phase("alternative-architecture-trial", cycle, current)
+                architecture_result = foundation_trial(
+                    root, current, expanded, suite, gates, foundation_queue[0]
+                )
+                history.append(
+                    {
+                        "cycle": cycle,
+                        "status": "alternative architecture tested; predecessor retained",
+                        "architecture_trial": architecture_result,
+                    }
+                )
+                save_progress(root, output, state)
             trial = output / f"update-{cycle:04d}"
             if paper is not None:
                 paper.phase("training-started", cycle, current)

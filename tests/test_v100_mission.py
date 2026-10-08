@@ -405,11 +405,13 @@ def test_stop_only_signals_verified_mission_session(tmp_path, monkeypatch, owned
 @pytest.mark.parametrize(
     "ceiling, first, selected", [(32768, 32768, 16384), (131072, 131072, 65536)]
 )
+@pytest.mark.parametrize("financial", [False, True])
 def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
-    tmp_path, monkeypatch, ceiling, first, selected
+    tmp_path, monkeypatch, ceiling, first, selected, financial
 ):
     profile = mission_inputs(tmp_path)
     profile.setdefault("resources", {})["mission_max_context"] = ceiling
+    profile["resources"]["paper_research_enabled"] = financial
     directory = tmp_path / "research/mission/run-test"
     directory.mkdir(parents=True)
     events, capacities = [], iter([3, 20])
@@ -436,6 +438,9 @@ def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
     monkeypatch.setattr(
         paper_learning.PaperLearning, "research", lambda self, *args: events.append(("research",))
     )
+    from rlm.v100 import competition
+
+    monkeypatch.setattr(competition, "research_task", lambda *args: events.append(("research",)))
     monkeypatch.setattr(mission_memory, "compress", lambda *args: 0)
     monkeypatch.setattr(
         mission,

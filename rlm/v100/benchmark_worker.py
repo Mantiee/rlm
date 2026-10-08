@@ -10,13 +10,15 @@ def key(row):
     return "/".join(str(row[k]) for k in ("category", "task", "question_id"))
 
 
-def prepare(folder, limit):
+def prepare(folder, limit, coding=False):
     from datasets import load_dataset
     from huggingface_hub import HfApi
     from livebench.common import LIVE_BENCH_RELEASES, load_questions
 
     release = max(LIVE_BENCH_RELEASES)
     categories = ["reasoning", "math", "data_analysis", "language", "instruction_following"]
+    if coding:
+        categories.append("coding")
     questions, revisions = [], {}
     for category in categories:
         name = "livebench/" + category
@@ -83,7 +85,8 @@ def prepare(folder, limit):
                 "available": len(questions),
                 "categories": categories,
                 "reference_error": reference_error,
-                "coding_included": False,
+                "coding_included": coding,
+                "full_snapshot_requested": limit == 0,
             },
             indent=2,
         )
@@ -108,7 +111,7 @@ def grade(request, output):
 
 if __name__ == "__main__":
     if sys.argv[1] == "prepare":
-        prepare(Path(sys.argv[2]), int(sys.argv[3]))
+        prepare(Path(sys.argv[2]), int(sys.argv[3]), "--coding" in sys.argv[4:])
     elif sys.argv[1] == "grade":
         grade(Path(sys.argv[2]), Path(sys.argv[3]))
     else:

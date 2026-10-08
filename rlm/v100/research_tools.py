@@ -32,6 +32,56 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "request_fresh_curriculum",
+        "Request 1-32 NEW independent calculator-verified training examples in a useful proof domain. Only when relevant to the operator goal or a demonstrated weakness. Never draws from benchmark/audit cases. Admission is not an optimizer update.",
+        {
+            "domain": {
+                "type": "string",
+                "enum": ["arithmetic", "linear_equation", "decimal_calculation"],
+            },
+            "count": {"type": "integer", "minimum": 1, "maximum": 32},
+        },
+    ),
+    tool_schema(
+        "propose_foundation_trial",
+        "Queue an exclusive alternate pretrained architecture trial. Choose a free HF model, exact commit and falsifiable rationale. Safe weights <=28GiB, library models only, native context cannot shrink. While queued the predecessor keeps serving; optimizer, fixed/public gates run in the next exclusive window. Successful models become independent immutable experts; original Gemma stays available.",
+        {
+            "model_id": {"type": "string"},
+            "revision": {"type": "string"},
+            "rationale": {"type": "string", "maxLength": 1200},
+        },
+    ),
+    tool_schema(
+        "foundation_trial_status",
+        "Inspect proposed architecture changes, their failures, fixed/public quality and expert registration. Proposal is not deployment evidence.",
+        {},
+    ),
+    tool_schema(
+        "public_feed_status",
+        "List normalized public read-only equity/sports/crypto feed mappings and their limitations. Existing verified instrument rules are mandatory for prices/settlements.",
+        {},
+    ),
+    tool_schema(
+        "register_public_feed",
+        "Register a public JSON feed for an already verified instrument/feed, or timestamped research news. Does not certify fees, bookmaker rules, source reliability or live account eligibility. No private/paid endpoints. New feeds are picked up by the observer next tick.",
+        {"configuration": {"type": "object"}},
+    ),
+    tool_schema(
+        "reward_policy_status",
+        "Inspect the branch's reward-trained CPU shadow policy. Actual realized paper outcomes include losses and modeled costs. Observational reward learning is not unbiased RL or proof of profit; no orders are authorized by the head.",
+        {},
+    ),
+    tool_schema(
+        "train_reward_policy",
+        "Train a bounded CPU shadow policy from the immutable audited ledger, with chronological outcome purging and immutable weight versions. Requires at least 40 resolved orders. Does not replace Gemma or change trading authority.",
+        {},
+    ),
+    tool_schema(
+        "consult_browser_model",
+        "Open a previously researched free model service inside the private guest browser. Returns page observation; use sandbox_gui to enter the question/read replies. Authentication/captcha needs operator handoff; respect quotas/payment walls, never rotate accounts/cookies to bypass them.",
+        {"url": {"type": "string"}, "question": {"type": "string", "maxLength": 3000}},
+    ),
+    tool_schema(
         "read_master_code",
         "Read the full pinned master source, including readonly controller files. Empty filename lists files. Copies inside the guest can change; the running controller remains protected.",
         {"filename": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}},
@@ -369,6 +419,43 @@ class ResearchTools:
         self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name == "propose_foundation_trial" and set(arguments) == {
+            "model_id",
+            "revision",
+            "rationale",
+        }:
+            from rlm.v100.foundation import propose
+
+            return propose(self.root, self.branch, **arguments)
+        if name == "foundation_trial_status" and not arguments:
+            return {
+                "trials": [
+                    json.loads(p.read_text())
+                    for p in sorted(
+                        (self.root / "research/foundation-trials").glob("*/proposal.json")
+                    )[:4]
+                ]
+            }
+        if name == "request_fresh_curriculum" and set(arguments) == {"domain", "count"}:
+            from rlm.v100.curriculum import request
+
+            return request(self.root, self.branch, **arguments)
+        if name == "public_feed_status" and not arguments:
+            from rlm.v100.provider_registry import catalog
+
+            return catalog(self.root)
+        if name == "register_public_feed" and set(arguments) == {"configuration"}:
+            from rlm.v100.provider_registry import register
+
+            return register(self.root, arguments["configuration"])
+        if name in ("reward_policy_status", "train_reward_policy") and not arguments:
+            from rlm.v100.reward_policy import inspect, train
+
+            return (inspect if name == "reward_policy_status" else train)(self.root, self.branch)
+        if name == "consult_browser_model" and set(arguments) == {"url", "question"}:
+            from rlm.v100.browser_research import consult
+
+            return consult(self.root, self.branch, **arguments)
         if name == "read_master_code" and set(arguments) == {"filename", "offset"}:
             from rlm.v100.code_lab import source_files
 

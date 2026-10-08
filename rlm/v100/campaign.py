@@ -68,7 +68,11 @@ def choose_profile(root: Path) -> Path:
 
 
 def prepare(
-    root: Path, path: Path | None = None, desktop: bool = True, benchmarks: bool = True
+    root: Path,
+    path: Path | None = None,
+    desktop: bool = True,
+    benchmarks: bool = True,
+    paper: bool | None = None,
 ) -> Path:
     from rlm.v100.mission import status
     from rlm.v100.public_benchmarks import current
@@ -109,6 +113,10 @@ def prepare(
         stage("private-desktop", lambda: prepare_desktop(root))
     resources = profile.setdefault("resources", {})
     resources.update(
+        fresh_audit_required=True,
+        paper_research_enabled=resources.get("paper_research_enabled", False)
+        if paper is None
+        else paper,
         resident_drones=True,
         independent_branch_serving=True,
         interactive_lab=True,

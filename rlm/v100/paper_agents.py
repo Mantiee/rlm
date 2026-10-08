@@ -205,6 +205,15 @@ def paper_round(
                 worker = helper_client(selected_profile, book.root, selected_branch)
                 available = getattr(worker, "research_tool_names", None)
                 worker.research_tool_names = {
+                    "propose_foundation_trial",
+                    "foundation_trial_status",
+                    "request_fresh_curriculum",
+                    "public_feed_status",
+                    "register_public_feed",
+                    "reward_policy_status",
+                    "train_reward_policy",
+                    "consult_browser_model",
+                    "sandbox_gui",
                     "get_plan",
                     "set_plan",
                     "schedule_drone",

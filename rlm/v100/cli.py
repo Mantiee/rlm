@@ -112,6 +112,12 @@ def main() -> None:
         "campaign-prepare",
         help="Connect measured profiles, independent branches, resident workers, official tests and private desktop",
     )
+    campaign.add_argument(
+        "--paper",
+        action="store_true",
+        default=None,
+        help="Enable financial research in addition to goal-directed self-upgrades",
+    )
     campaign.add_argument("--no-desktop", action="store_true")
     campaign.add_argument("--no-benchmarks", action="store_true")
     sub.add_parser(
@@ -128,7 +134,12 @@ def main() -> None:
         "--limit",
         type=int,
         default=20,
-        help="0: all supported non-coding cases; default: bounded regression panel",
+        help="0: all questions in the pinned release; default: bounded regression panel",
+    )
+    official.add_argument(
+        "--coding",
+        action="store_true",
+        help="Include official coding tasks; execution graders run inside the private VM",
     )
     official_run = sub.add_parser(
         "benchmark-run",
@@ -381,7 +392,7 @@ def main() -> None:
 
         print(
             "CAMPAIGN PROFILE:",
-            prepare(root, args.profile, not args.no_desktop, not args.no_benchmarks),
+            prepare(root, args.profile, not args.no_desktop, not args.no_benchmarks, args.paper),
             flush=True,
         )
         return
@@ -401,7 +412,7 @@ def main() -> None:
     if args.command == "benchmark-prepare":
         from rlm.v100.public_benchmarks import prepare
 
-        print("PUBLIC SNAPSHOT:", prepare(root, args.limit), flush=True)
+        print("PUBLIC SNAPSHOT:", prepare(root, args.limit, args.coding), flush=True)
         return
     if args.command == "benchmark-run":
         from rlm.v100.public_benchmarks import evaluate

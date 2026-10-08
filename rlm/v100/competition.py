@@ -529,6 +529,14 @@ def run_branches(
         serving["runtime"]["model_version"] = f"{output.name}-{branch}"
         serving_path = output / branch / "serving.json"
         atomic_json(serving_path, serving)
+        audit = None
+        if profile.get("resources", {}).get("fresh_audit_required"):
+            from rlm.v100 import fresh_audit
+
+            audit = fresh_audit.create(
+                root, profile, Path(serving["server"]["model"]), output / branch / "fresh-audit"
+            )
+            fresh_audit.parent_report(root, profile, audit)
         started = time.monotonic()
         with managed_server(serving_path, root, output / branch / "server.log"):
             client = helper_client(serving, root, branch)
@@ -539,6 +547,8 @@ def run_branches(
                 from rlm.v100.public_benchmarks import evaluate as public_evaluate
 
                 public_evaluate(root, serving, output / branch / "public-quality.json")
+            if audit is not None:
+                fresh_audit.candidate_report(helper_client(serving), serving, audit)
             if results:
                 review = review_research(client, branch, results, root)
                 atomic_json(output / branch / "research-review.json", review)

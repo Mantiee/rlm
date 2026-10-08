@@ -45,6 +45,14 @@ def try_child(
     )
     serving = output / "serving.json"
     atomic_json(serving, chosen)
+    audit = None
+    if chosen.get("resources", {}).get("fresh_audit_required"):
+        from rlm.v100 import fresh_audit
+
+        audit = fresh_audit.create(
+            root, profile, Path(chosen["server"]["model"]), output / "fresh-audit"
+        )
+        fresh_audit.parent_report(root, profile, audit)
     with managed_server(serving, root, output / "server.log"):
         report = evaluate_suite(
             helper_client(chosen, root), chosen, suite, output / "development-quality.json"
@@ -65,9 +73,15 @@ def try_child(
                 public_baseline=str(public_path), public_baseline_sha256=file_hash(public_path)
             )
             atomic_json(serving, chosen)
+        if audit is not None:
+            fresh_audit.candidate_report(helper_client(chosen), chosen, audit)
+    fresh_passed = (
+        audit is None or fresh_audit.verified_gate(audit, Path(chosen["server"]["model"]))["passed"]
+    )
     score = sum(c["passed"] for c in report["cases"])
     passed = (
         public_passed
+        and fresh_passed
         and not any(c.get("error") for c in report["cases"])
         and all(compare_reports(parent, report)["passed"] for parent in [*gates, *quality])
         and score > max(sum(c["passed"] for c in p["cases"]) for p in quality)

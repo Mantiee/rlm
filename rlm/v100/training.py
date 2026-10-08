@@ -20,6 +20,7 @@ def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], li
     if not records:
         raise ValueError("Empty dataset")
     paper_labels = None
+    policy_labels = None
     for record in records:
         verification = record.get("verification", {})
         if verification.get("kind") == "deterministic_reference":
@@ -37,6 +38,17 @@ def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], li
                 raise ValueError(
                     "Historical review differs from the independently rerun experiment"
                 )
+        elif verification.get("kind") == "paper_policy_preference":
+            if ledger is None:
+                raise ValueError("Policy preferences require the host ledger")
+            from rlm.v100.reward_training import records as policy_records
+
+            if policy_labels is None:
+                policy_labels = {
+                    row["group"]: row for row in policy_records(ledger.resolve().parents[2])
+                }
+            if record != policy_labels.get(record.get("group")):
+                raise ValueError("Policy preference differs from the audited realized outcome")
         elif verification.get("kind") == "paper_outcome":
             if ledger is None:
                 raise ValueError("Paper labels require a host split ledger and audited paper book")
@@ -144,7 +156,6 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         AutoTokenizer,
         BitsAndBytesConfig,
         DataCollatorForSeq2Seq,
-        Gemma4UnifiedForConditionalGeneration,
         Trainer,
         TrainerCallback,
         TrainingArguments,
@@ -176,8 +187,15 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-    encoded_train = [encode_record(r, tokenizer, settings["max_length"]) for r in train]
-    encoded_evaluation = [encode_record(r, tokenizer, settings["max_length"]) for r in evaluation]
+    from rlm.v100.reward_training import encode as encode_with_reward
+
+    has_preferences = any(
+        row.get("verification", {}).get("kind") == "paper_policy_preference"
+        for row in train + evaluation
+    )
+    encoder = encode_with_reward if has_preferences else encode_record
+    encoded_train = [encoder(r, tokenizer, settings["max_length"]) for r in train]
+    encoded_evaluation = [encoder(r, tokenizer, settings["max_length"]) for r in evaluation]
     print(
         json.dumps(
             {
@@ -222,6 +240,8 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
             name: file_hash(Path(__file__).with_name(name))
             for name in (
                 "training.py",
+                "reward_training.py",
+                "foundation.py",
                 "distillation.py",
                 "protection.py",
                 "breeding.py",
@@ -284,7 +304,9 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         json.dumps({"training_stage": "loading-model", "precision": settings["precision"]}),
         flush=True,
     )
-    model = Gemma4UnifiedForConditionalGeneration.from_pretrained(
+    from rlm.v100.foundation import model_class
+
+    model = model_class(Path(settings["base_model"])).from_pretrained(
         base,
         local_files_only=True,
         dtype=torch.float16,
@@ -325,7 +347,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     if not 0 <= strength <= 10 or not 0 < temperature <= 10:
         raise ValueError("Invalid distillation weight or temperature")
     teacher_adapter = settings.get("teacher_adapter", "") or settings["init_adapter"]
-    if strength and teacher_adapter:
+    if (strength or has_preferences) and teacher_adapter:
         model.load_adapter(teacher_adapter, adapter_name="teacher", is_trainable=False)
         model.set_adapter("default")
         for name, parameter in model.named_parameters():
@@ -415,10 +437,15 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         dataloader_num_workers=0,
         include_num_input_tokens_seen=True,
         logging_nan_inf_filter=False,
+        remove_unused_columns=not has_preferences,
     )
     from rlm.v100.distillation import preserving_trainer
 
     trainer_type = preserving_trainer(Trainer, strength, temperature, bool(teacher_adapter))
+    if has_preferences:
+        from rlm.v100.reward_training import trainer as outcome_trainer
+
+        trainer_type = outcome_trainer(trainer_type, bool(teacher_adapter))
 
     class FiniteLossTrainer(trainer_type):
         def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
@@ -431,20 +458,25 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
                 raise FloatingPointError("Non-finite loss before backward; candidate rejected")
             return result
 
+    data_collator = DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100)
+    if has_preferences:
+        from rlm.v100.reward_training import collator
+
+        data_collator = collator(tokenizer, data_collator)
     trainer = FiniteLossTrainer(
         model=model,
         args=args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=tokenizer,
-        data_collator=DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100),
+        data_collator=data_collator,
         callbacks=[Progress()],
     )
     scale = initialize_amp(trainer.accelerator.scaler)
     print(json.dumps({"training_stage": "amp-configured", "initial_amp_scale": scale}), flush=True)
     # compute_loss uses each microbatch's mean loss, not a num_items_in_batch
     # denominator. Ask Trainer to apply gradient-accumulation scaling itself.
-    if strength:
+    if strength or has_preferences:
         trainer.model_accepts_loss_kwargs = False
     if not resume:
         print(json.dumps({"training_stage": "baseline-validation"}), flush=True)
@@ -469,7 +501,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
 def export_candidate(profile: dict, root: Path) -> None:
     import torch
     from peft import PeftModel
-    from transformers import AutoTokenizer, Gemma4UnifiedForConditionalGeneration
+    from transformers import AutoTokenizer
 
     settings = profile["training"]
     output = Path(settings["output"])
@@ -498,7 +530,9 @@ def export_candidate(profile: dict, root: Path) -> None:
         raise ValueError("Export profile requires a CUDA sm_70 V100")
     if torch.cuda.mem_get_info()[0] < 28 * 2**30:
         raise ValueError("Stop inference server before exporting: need 28 GiB free VRAM")
-    model = Gemma4UnifiedForConditionalGeneration.from_pretrained(
+    from rlm.v100.foundation import model_class
+
+    model = model_class(Path(settings["base_model"])).from_pretrained(
         settings["base_model"],
         dtype=torch.float16,
         device_map={"": 0},

@@ -20,9 +20,9 @@ def question_key(row):
     return "/".join(str(row[k]) for k in ("category", "task", "question_id"))
 
 
-def prepare(root: Path, limit: int = 20) -> Path:
+def prepare(root: Path, limit: int = 20, coding: bool = False) -> Path:
     if type(limit) is not int or limit != 0 and not 5 <= limit <= 500:
-        raise ValueError("Use 5..500 public cases, or 0 for all supported non-coding cases")
+        raise ValueError("Use 5..500 public cases, or 0 for the entire pinned release")
     from rlm.v100.mission import status
 
     if status(root)["running"]:
@@ -50,7 +50,11 @@ def prepare(root: Path, limit: int = 20) -> Path:
         check=True,
     )
     worker = Path(__file__).with_name("benchmark_worker.py")
-    subprocess.run([str(python), str(worker), "prepare", str(folder), str(limit)], check=True)
+    subprocess.run(
+        [str(python), str(worker), "prepare", str(folder), str(limit)]
+        + (["--coding"] if coding else []),
+        check=True,
+    )
     frozen = subprocess.check_output(
         ["uv", "--no-config", "pip", "freeze", "--python", str(python)], text=True
     )
@@ -63,7 +67,9 @@ def prepare(root: Path, limit: int = 20) -> Path:
         references_sha256=file_hash(folder / "references.json"),
         worker_sha256=file_hash(worker),
         created_at=time.time(),
-        scope="Official tasks and grader; selected non-coding panel is NOT the overall LiveBench leaderboard score",
+        scope="Official tasks and grader; full six-category pinned release"
+        if coding and limit == 0
+        else "Official tasks and grader; selected panel is NOT the overall LiveBench leaderboard score",
     )
     atomic_json(folder / "manifest.json", manifest)
     atomic_json(root / "research/public-benchmarks/current.json", {"snapshot": str(folder)})
@@ -76,6 +82,10 @@ def current(root: Path) -> Path | None:
 
 
 def grade(root: Path, snapshot: Path, question: dict, answer: dict, folder: Path) -> dict:
+    if question.get("category") == "coding":
+        from rlm.v100.guest_benchmarks import grade as guest_grade
+
+        return guest_grade(root, snapshot, question, answer, folder)
     from rlm.v100.research_sandbox import runtime
 
     pin = json.loads((snapshot / "manifest.json").read_text())

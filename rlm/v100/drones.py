@@ -150,6 +150,15 @@ def execute(root: Path, job: dict) -> dict:
         "paper_observed_results",
         "schedule_drone",
         "drone_status",
+        "propose_foundation_trial",
+        "foundation_trial_status",
+        "request_fresh_curriculum",
+        "public_feed_status",
+        "register_public_feed",
+        "reward_policy_status",
+        "train_reward_policy",
+        "consult_browser_model",
+        "sandbox_gui",
         "get_plan",
         "set_plan",
     }
@@ -244,7 +253,7 @@ def alongside(root: Path):
             root,
             branch,
             role,
-            "Investigate the income goal using fresh public evidence. Read previous findings, avoid repeated hypotheses, select one concrete next experiment and schedule a useful source or CPU task. Check net costs and falsify weak claims.",
+            "Investigate the operator-owned goal and useful self-upgrades using fresh public evidence. Read previous findings, avoid repeated hypotheses, select one concrete next experiment and schedule a useful source or CPU task. Check net costs and falsify weak claims.",
             900,
         )
     if (root / "research/public-benchmarks/current.json").exists():

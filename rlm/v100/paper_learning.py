@@ -166,6 +166,15 @@ class PaperLearning:
                     ):
                         prepare(self.root, refresh=True)
                 poll_crypto(book, self.stop_event.is_set)
+            from rlm.v100.provider_registry import poll as poll_registered
+            from rlm.v100.reward_policy import train as train_reward
+
+            poll_registered(book, self.stop_event.is_set)
+            for branch in ("A", "B"):
+                if self.stop_event.is_set():
+                    return
+                result = train_reward(self.root, branch)
+                atomic_json(self.root / "research/reward-policies" / branch / "latest.json", result)
             for cik in self.settings["ciks"]:
                 if self.stop_event.is_set():
                     return

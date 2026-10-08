@@ -481,6 +481,10 @@ def judge_duel(output: Path, baseline: dict | list[dict], reports: dict[str, dic
             if public_child["identity"]["model_sha256"] != file_hash(model):
                 raise ValueError("Public benchmark belongs to a different candidate")
             gates.append(compare_public(public_parent, public_child))
+        if serving.get("resources", {}).get("fresh_audit_required"):
+            from rlm.v100.fresh_audit import verified_gate
+
+            gates.append(verified_gate(output / branch / "fresh-audit", model))
         performance[branch] = load_performance(output / branch, model, report)
         results[branch] = {
             "eligible": all(gate["passed"] for gate in gates),
