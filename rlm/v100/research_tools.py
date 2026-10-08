@@ -839,6 +839,33 @@ class ResearchTools:
         raise ValueError("Unknown research capability")
 
 
+def bounded_tool_result(root: Path, result: dict, limit: int = 4096) -> str:
+    """Keep complete evidence on disk, exposing explicitly incomplete previews."""
+    encoded = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    raw = encoded.encode("utf-8")
+    if len(raw) <= limit:
+        return encoded
+    digest = hashlib.sha256(raw).hexdigest()
+    folder = root / "research/tool-results"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{digest}.json"
+    if not path.exists():
+        path.write_bytes(raw)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+        raise ValueError("Archived tool result changed")
+    return json.dumps(
+        {
+            "truncated": True,
+            "full_result_sha256": digest,
+            "full_result_path": str(path),
+            "original_bytes": len(raw),
+            "preview": raw[: max(128, limit - 1024)].decode("utf-8", errors="ignore"),
+            "scope": "Incomplete untrusted excerpt; do not infer absent facts or certify a result from this preview.",
+        },
+        ensure_ascii=False,
+    )
+
+
 def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dict:
     from rlm.v100.research_policy import apply
 
@@ -929,7 +956,13 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
         messages = [
             *messages,
             turn,
-            {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result)},
+            {
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "content": bounded_tool_result(
+                    root, result, max(1024, min(4096, client.context_window // 16))
+                ),
+            },
         ]
     result = (
         tool_turn(

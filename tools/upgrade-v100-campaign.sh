@@ -55,7 +55,7 @@ PY_STOP
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$ROOT/research/requirements.continual.v10036.txt"
+uv --no-config pip freeze --python "$PY" > "$ROOT/research/requirements.continual.v10037.txt"
 LAB="$ROOT/bin/v100-continual"
 if [[ -e "$LAB" ]]; then cp -p "$LAB" "$LAB.backup-$(date -u +%Y%m%dT%H%M%SZ)"; fi
 TMP="$(mktemp "$ROOT/bin/.v100-continual.XXXXXX")"

@@ -3,6 +3,10 @@
 import json
 
 
+class ContextBudgetError(ValueError):
+    """A request cannot fit without changing its inputs or tool catalog."""
+
+
 def tool_schema(name: str, description: str, properties: dict) -> dict:
     return {
         "type": "function",
@@ -57,8 +61,9 @@ def native_turn(
         if key in client.sampling_args
     }
     if prompt_tokens + max_tokens > client.context_window:
-        raise ValueError(
-            "Tool conversation exceeds the working context; shorten sources or start a new turn"
+        raise ContextBudgetError(
+            "Tool conversation exceeds the working context; shorten sources or start a new turn "
+            f"(prompt_budget={prompt_tokens}, output={max_tokens}, context={client.context_window})"
         )
     payload = {
         "model": client.model_name,

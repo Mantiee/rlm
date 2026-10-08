@@ -132,3 +132,18 @@ closing the probe. Linux TIME_WAIT after a completed acceptance request no longe
 looks like a live server occupying the port. An existing loopback or wildcard
 listener still blocks launch, with the port included in the error. No listener is
 killed or reused, and no second model is started against an occupied endpoint.
+
+## v100.37 official grader dispatch and research context
+
+Instruction-following questions before 2025-11-25 now use the same legacy official
+IFEval route as the pinned LiveBench CLI, rather than being sent to IFBench's
+incompatible instruction registry. New IFBench questions retain their official
+route, and grader failures still block certification instead of becoming scores.
+Changed adapter hashes require a new frozen benchmark snapshot.
+
+When a full JSON capability catalog cannot fit the client's measured or conservative
+context budget, a short validated capability selector precedes the selected tool's
+argument schema. It can also decline tools with a real concise answer. Task scopes,
+argument validation, token limits and the original input remain enforced.
+Oversized tool results are retained in SHA-256-addressed files and activity traces;
+model-visible previews explicitly mark truncation and do not certify missing facts.

@@ -1,10 +1,13 @@
 """Runs only in the separate pinned official-benchmark environment."""
 
+import copy
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
+import time
 from pathlib import Path
 
 NLTK_RESOURCES = {
@@ -140,7 +143,41 @@ def grade(request, output):
     from livebench.gen_ground_truth_judgment import play_a_match_gt
 
     data = json.loads(request.read_text())
-    result = play_a_match_gt(MatchSingle(data["question"], data["model"], data["answer"]))
+    question, model, answer = data["question"], data["model"], data["answer"]
+    # Same split as the pinned official CLI; old IFEval never enters IFBench.
+    if (
+        question.get("category") == "instruction_following"
+        and question.get("livebench_release_date", "") < "2025-11-25"
+        and answer.get("eval_status") not in {"api_error", "token_exhaustion"}
+    ):
+        from livebench.process_results.instruction_following.utils import (
+            instruction_following_process_results,
+        )
+
+        answer = copy.deepcopy(answer)
+        answer.setdefault("question_id", question["question_id"])
+        turns = answer["choices"][0]["turns"]
+        turns[0] = re.sub(r"<think>.*?</think>", "", turns[0], flags=re.DOTALL).strip()
+        # The official legacy writer assumes the CLI already created this directory.
+        (Path("data/live_bench/instruction_following") / question["task"] / "model_judgment").mkdir(
+            parents=True, exist_ok=True
+        )
+        scores = instruction_following_process_results(
+            [question], {model: {question["question_id"]: answer}}, question["task"], model, False
+        )
+        if len(scores) != 1 or scores[0]["question_id"] != question["question_id"]:
+            raise ValueError("Official legacy scorer returned another question")
+        result = {
+            **scores[0],
+            "task": question["task"],
+            "model": model,
+            "category": "instruction_following",
+            "turn": 1,
+            "tstamp": time.time(),
+            "grader_route": "official-legacy-instruction-following",
+        }
+    else:
+        result = play_a_match_gt(MatchSingle(question, model, answer))
     output.write_text(json.dumps(result, default=str, allow_nan=False))
 
 
