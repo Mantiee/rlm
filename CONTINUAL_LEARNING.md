@@ -851,9 +851,10 @@ requires the resulting `training_health.json` gate plus finite validation losses
 The child pilot log is mirrored into the existing preparation console and kept
 in its original file. Original models, prior profiles and adapters remain intact.
 
-MTP preparation permits only a missing `<|video|>` special-token annotation
-already present at the same ID in both raw vocabularies and within both embedding
-dimensions. Shared token annotations and the rest of the tokenizer pipeline must
+MTP preparation permits only a missing `<|video|>` special-token annotation at
+the same shared raw-vocabulary ID or an unused embedding slot, within both embedding
+dimensions. Occupied ordinary-token IDs cannot be repurposed. Shared annotations
+and the rest of the tokenizer pipeline must
 match. Conversion stages the corrected metadata separately and records hashes of
 both original tokenizers and the staged tokenizer. Pinned downloads and weights
 are unchanged. Successful conversion still requires measured speed and independent

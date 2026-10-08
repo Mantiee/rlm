@@ -377,8 +377,9 @@ def assistant_tokenizer(target: dict, draft: dict, vocab_size: int) -> dict:
         if isinstance(vocab, dict)
         else next((i for i, token in enumerate(vocab) if token[0] == "<|video|>"), None)
     )
-    if shared_id != identity:
-        raise ValueError("Missing video annotation must refer to an existing shared vocabulary ID")
+    occupied = set(vocab.values()) if isinstance(vocab, dict) else set(range(len(vocab)))
+    if shared_id != identity and (shared_id is not None or identity in occupied):
+        raise ValueError("Missing video annotation conflicts with a shared vocabulary ID")
     return {**draft, "added_tokens": target["added_tokens"]}
 
 

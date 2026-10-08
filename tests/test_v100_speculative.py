@@ -270,7 +270,13 @@ def test_missing_video_annotation_staged_without_changing_pinned_files(tmp_path)
     assert weights.read_bytes() == b"original weights"
 
 
-@pytest.mark.parametrize("change", ["ordinary", "flags", "pipeline", "embedding", "missing-id"])
+def test_video_annotation_may_fill_an_unused_embedding_slot():
+    target, draft = video_tokenizer_fixture()
+    target["model"]["vocab"].pop("<|video|>")
+    assert speculative.assistant_tokenizer(target, draft, 10) == target
+
+
+@pytest.mark.parametrize("change", ["ordinary", "flags", "pipeline", "embedding", "id-collision"])
 def test_video_exception_does_not_allow_other_changes(change):
     target, draft = video_tokenizer_fixture()
     vocab_size = 10
@@ -284,6 +290,7 @@ def test_video_exception_does_not_allow_other_changes(change):
         vocab_size = 2
     else:
         target["model"]["vocab"].pop("<|video|>")
+        target["model"]["vocab"]["ordinary_word"] = 2
     with pytest.raises(ValueError):
         speculative.assistant_tokenizer(target, draft, vocab_size)
 
