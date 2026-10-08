@@ -34,7 +34,7 @@ def audit(root: Path) -> dict:
         "research_policy": settings(root),
         "user_controls": {
             "chat": "persistent queue; accepted V100 while available, explicitly labeled RTX delegate during exclusive training",
-            "long_term_goal": "operator /goal or /cel command only; model actions cannot change it",
+            "long_term_goal": "clear current operator natural-language request or /goal or /cel; no autonomous model changes",
             "short_mid_plans": "versioned plans, model or operator can revise",
             "directives": "next R&D request",
             "alerts": "local paper proposals, including rejection flag",

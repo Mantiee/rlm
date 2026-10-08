@@ -547,3 +547,133 @@ def test_user_service_loads_the_isolated_environment_and_clears_pause_after_stop
     assert next(i for i, c in enumerate(calls) if "stop" in c) < next(
         i for i, c in enumerate(calls) if "enable" in c
     )
+
+
+@pytest.mark.parametrize(
+    "message,horizon,expected",
+    [
+        (
+            "Mój główny cel to self-upgrade pod moje zadania",
+            "long",
+            "self-upgrade pod moje zadania",
+        ),
+        (
+            "Moim celem długoterminowym jest budowanie lepszego modelu",
+            "long",
+            "budowanie lepszego modelu",
+        ),
+        ("Ustaw główny cel na uczenie nowych umiejętności", "long", "uczenie nowych umiejętności"),
+        (
+            "Cel długoterminowy: ulepszaj się zachowując poprzednie umiejętności",
+            "long",
+            "ulepszaj się zachowując poprzednie umiejętności",
+        ),
+        (
+            "Długofalowo chcę rozwijać umiejętności programowania",
+            "long",
+            "rozwijać umiejętności programowania",
+        ),
+        (
+            "My long-term goal is improve verified coding skills",
+            "long",
+            "improve verified coding skills",
+        ),
+        ("Plan średnioterminowy: porównaj nowe architektury", "mid", "porównaj nowe architektury"),
+        ("Plan na dziś: sprawdź jedną hipotezę", "short", "sprawdź jedną hipotezę"),
+    ],
+)
+def test_natural_goal_and_plan_declarations_work_without_inference(
+    tmp_path, message, horizon, expected
+):
+    goal(tmp_path)
+    result = mission_chat.respond(tmp_path, tmp_path, {"message": message})
+    assert result["responder"]["model"] == "controller-goals"
+    assert result["applied"][0]["horizon"] == horizon
+    plans = planning.read(tmp_path)
+    assert plans[horizon]["text"] == expected
+    if horizon == "long":
+        assert plans["short"]["needs_replanning"] and plans["mid"]["needs_replanning"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Jaki jest mój główny cel?",
+        "Ustaw główny cel na naukę?",
+        "Nie zmieniaj celu długoterminowego",
+        "Chcę dowiedzieć się, jak zmienić główny cel",
+        "Cytat ze strony: ustaw główny cel na zarobek",
+        "Przykład: mój główny cel to zarobek",
+        "Model uważa, że moim głównym celem powinien być zarobek",
+        "My long-term goal is unchanged?",
+        "Do not change my long-term goal",
+    ],
+)
+def test_natural_chat_questions_negations_and_quotes_do_not_authorize_long_goal(tmp_path, message):
+    from rlm.v100.chat_goals import authorizes_long, direct_plan
+
+    initial = goal(tmp_path)
+    assert not authorizes_long(message)
+    assert direct_plan(message) is None
+    with pytest.raises(ValueError):
+        mission_chat.apply_actions(tmp_path, [action("goal_long", "zarobek")], message)
+    assert load_goal(tmp_path) == initial
+
+
+def test_model_can_extract_only_literal_goal_from_current_authorized_message(tmp_path):
+    goal(tmp_path)
+    message = "Chcę, żeby Twoim głównym celem było rozwijanie nowych umiejętności, a na dziś sprawdź błędy"
+    receipts = mission_chat.apply_actions(
+        tmp_path,
+        [
+            action("goal_long", "rozwijanie nowych umiejętności"),
+            action("plan_short", "sprawdź błędy"),
+        ],
+        message,
+    )
+    assert len(receipts) == 2
+    assert load_goal(tmp_path)["text"] == "rozwijanie nowych umiejętności"
+    assert planning.read(tmp_path)["short"]["text"] == "sprawdź błędy"
+    with pytest.raises(ValueError, match="literal"):
+        mission_chat.apply_actions(
+            tmp_path, [action("goal_long", "An invented different objective")], message
+        )
+    assert load_goal(tmp_path)["text"] == "rozwijanie nowych umiejętności"
+
+
+def test_all_natural_goal_actions_validated_before_any_change(tmp_path):
+    initial = goal(tmp_path)
+    with pytest.raises(ValueError, match="literal"):
+        mission_chat.apply_actions(
+            tmp_path,
+            [action("goal_long", "nowe umiejętności"), action("goal_long", "wymyślony cel")],
+            "Mój główny cel to nowe umiejętności",
+        )
+    assert load_goal(tmp_path) == initial
+    enum = mission_chat.schema()["properties"]["actions"]["items"]["properties"]["kind"]["enum"]
+    assert "goal_long" not in enum
+    enabled = mission_chat.schema(True)["properties"]["actions"]["items"]["properties"]["kind"][
+        "enum"
+    ]
+    assert "goal_long" in enabled
+
+
+def test_chat_goal_decomposed_accents_and_multiple_horizons():
+    import unicodedata
+
+    from rlm.v100.chat_goals import direct_plan
+
+    message = unicodedata.normalize("NFD", "Mój główny cel to lepsze umiejętności")
+    assert direct_plan(message) == ("long", unicodedata.normalize("NFD", "lepsze umiejętności"))
+    assert direct_plan("Mój główny cel to uczenie, a na dziś sprawdź testy") is None
+
+
+def test_natural_goal_parser_keeps_goal_words_and_denies_post_horizon_negation():
+    from rlm.v100.chat_goals import authorizes_long, direct_plan
+
+    assert direct_plan("Ustaw główny cel nauka nowych umiejętności") == (
+        "long",
+        "nauka nowych umiejętności",
+    )
+    assert direct_plan("Mój główny cel totalnie inny") is None
+    assert not authorizes_long("Chcę, żeby główny cel nie został zmieniony")

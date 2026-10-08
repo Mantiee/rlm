@@ -1,11 +1,11 @@
-# V100 campaign v29
+# V100 campaign v30
 
 Use `tools/upgrade-v100-campaign.sh RELEASE_COMMIT` on Debian after any existing training/calibration/MTP sweep completes. It updates only the existing isolated continual venv, repairs the launcher atomically, retains checkpoints, prepares optional components and starts the owned supervisor. Preparation prints each stage and records failures as `deferred`; a deferred feature is not operational.
 
 ## Operating from one console
 
 - `~/ai-v100/bin/v100-continual chat`: persistent chat while research continues. During exclusive V100 experiments the pinned RTX researcher may answer as a visibly identified delegate. Model requests remain subject to server queues and configured resource budgets.
-- `/cel Your long-term goal`: explicit user authorization to change the long-term objective. Model tools may change short/mid plans, but cannot change that objective themselves.
+- Normal chat, e.g. `Mój główny cel to ...`, `Plan średnioterminowy: ...`, `Plan na dziś: ...`: changes the stated goal/plan. `/cel` remains an optional shortcut. Short/mid plans may be revised by the model; long-term changes require the current operator request.
 - `mission-report`: accepted weight updates, A/B lineages, paper results, plans, drone queue and benchmark status.
 - `mission-watch`: model/tool events. Ctrl+C in chat/watch does not stop the mission.
 - `mission-stop`: intentional pause; supervisor respects it and checkpoints remain.
@@ -37,7 +37,7 @@ Colab remains an operator-started bounded notebook pilot with pinned input/resul
 
 ## Goal-directed self-upgrade and fresh checks
 
-Self-upgrade under the operator's goal is the default mission; financial research is optional (`campaign-prepare --paper`). Existing explicitly stored long-term goals are retained, never silently overwritten. Use chat `/cel ...` to set a different long-term goal. Short/mid-term plans and tools remain available without financial instruments or a paper ledger.
+Self-upgrade under the operator's goal is the default mission; financial research is optional (`campaign-prepare --paper`). Existing explicitly stored long-term goals are retained, never silently overwritten. Set the goal through normal chat, e.g. `Mój główny cel to ...`; `/cel` remains an optional shortcut. Only the current operator message authorizes the change. Short/mid-term plans and tools remain available without financial instruments or a paper ledger.
 
 `request_fresh_curriculum` generates up to 32 new calculator-verified examples when a demonstrated weakness makes them useful. No benchmark answers are admitted. Campaign profiles require a fresh audit before accepting an A/B adapter, a bred child or an alternative foundation expert: freeze exported model identities first, draw fresh random arithmetic/equation/decimal tasks, reserve their source IDs against training, compare predecessor/candidate under the same generation settings, and consume the audit once. Interrupted attempts cannot reuse exposed cases. Detailed cases remain in operator files, not model feedback. This is a finite general-skill gate, not a hidden test for every possible user goal; goal-specific independent future outcomes and operator tests are still necessary.
 
