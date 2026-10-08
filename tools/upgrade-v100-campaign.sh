@@ -19,21 +19,43 @@ for line in subprocess.check_output(['ps','-eo','pid=,args='], text=True).splitl
     if 'rlm.v100.cli' in line and any(' '+mode+' ' in line+' ' for mode in ('mission-prepare','train','optimize-mtp','calibrate-training','test-mtp')):
         raise RuntimeError('An exclusive experiment still runs. Finish it or Ctrl+C in its existing console first. No files changed: '+line)
 PY
-"$PY" -m rlm.v100.cli --root "$ROOT" mission-stop
-"$PY" <<'PY'
-import os,time
+# This bootstrap also works with older packages that count zombies as running.
+"$PY" <<'PY_STOP'
+import os, time
 from pathlib import Path
-from rlm.v100.mission import status
-root=Path(os.environ['AI_V100_ROOT'])
-deadline=time.monotonic()+180
-while status(root)['running']:
-    if time.monotonic() >= deadline: raise RuntimeError('Mission still stopping. No packages changed.')
+from rlm.v100.common import atomic_json
+from rlm.v100.mission import status, stop
+root = Path(os.environ['AI_V100_ROOT'])
+atomic_json(root / 'research/supervisor/pause.json', {'reason': 'operator requested upgrade'})
+def live(record):
+    if not record.get('running'):
+        return False
+    try:
+        fields = Path(f"/proc/{record['pid']}/stat").read_text().rsplit(')', 1)[1].split()
+    except FileNotFoundError:
+        return False
+    if fields[19] != record['process_start']:
+        return False
+    return fields[0] not in {'Z', 'X', 'x'}
+record = status(root)
+if live(record):
+    try:
+        print(stop(root), flush=True)
+    except (ValueError, ProcessLookupError, FileNotFoundError):
+        if live(status(root)):
+            raise
+else:
+    print('Owned mission has exited; no process was signalled. Checkpoints retained.', flush=True)
+deadline = time.monotonic() + 180
+while live(status(root)):
+    if time.monotonic() >= deadline:
+        raise RuntimeError('Mission still stopping. No packages changed.')
     time.sleep(2)
-PY
+PY_STOP
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$ROOT/research/requirements.continual.v10034.txt"
+uv --no-config pip freeze --python "$PY" > "$ROOT/research/requirements.continual.v10035.txt"
 LAB="$ROOT/bin/v100-continual"
 if [[ -e "$LAB" ]]; then cp -p "$LAB" "$LAB.backup-$(date -u +%Y%m%dT%H%M%SZ)"; fi
 TMP="$(mktemp "$ROOT/bin/.v100-continual.XXXXXX")"

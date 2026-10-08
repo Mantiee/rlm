@@ -11,7 +11,10 @@ from rlm.v100.protection import execution_hash, file_hash
 
 def process_identity(pid: int) -> str:
     # Linux start time prevents a reused PID being accepted as the protected server.
-    return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    if fields[0] in {"Z", "X", "x"}:
+        raise ProcessLookupError(f"Process {pid} has exited")
+    return fields[19]
 
 
 def receipt_path(profile: dict, root: Path) -> Path:

@@ -130,14 +130,22 @@ def stop(root: Path) -> dict:
     if not record["running"]:
         return record
     pid = record["pid"]
-    arguments = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
-    if (
-        b"mission-loop" not in arguments
-        or str(record["run"]).encode() not in arguments
-        or os.getpgid(pid) != pid
-    ):
-        raise ValueError("Mission process identity differs; no process was stopped")
-    os.killpg(pid, signal.SIGTERM)  # This session contains only this mission and its children.
+    try:
+        arguments = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        if (
+            b"mission-loop" not in arguments
+            or str(record["run"]).encode() not in arguments
+            or os.getpgid(pid) != pid
+        ):
+            # A process may exit after status() but before reading its command line.
+            if not status(root)["running"]:
+                return status(root)
+            raise ValueError("Mission process identity differs; no process was stopped")
+        if process_identity(pid) != record["process_start"]:
+            raise ValueError("Mission process identity differs; no process was stopped")
+        os.killpg(pid, signal.SIGTERM)  # Only the verified mission session.
+    except (FileNotFoundError, ProcessLookupError):
+        return status(root)
     return {"stop_requested": True, "pid": pid, "run": record["run"]}
 
 

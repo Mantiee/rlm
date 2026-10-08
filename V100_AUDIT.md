@@ -114,3 +114,13 @@ MTP conversion, full 131072-token tests, Windows PowerShell execution, guardian/
 interaction and the Colab notebook runtime need device verification. The notebook is
 syntax checked. This workspace cannot reach either LAN computer and has no GPU runtime.
 No new accepted weight update or income result should be inferred from installation.
+
+## v100.35 process lifecycle recovery
+
+Exited Linux workers (including zombies with retained start ticks) no longer count
+as live missions or protected servers. This lets the supervisor restart failed
+children and lets the updater proceed without signalling an exited process.
+The updater includes this check before installing, so recovery also works with
+older installed packages. Live command/session ownership mismatches still abort
+without killing the process or replacing packages. Checkpoints and failure reports
+are retained. A successful update is not evidence of a successful weight promotion.

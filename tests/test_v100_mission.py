@@ -384,7 +384,8 @@ def test_background_start_snapshots_profile_and_does_not_reset_paper(
 
 @pytest.mark.parametrize("owned", [False, True])
 def test_stop_only_signals_verified_mission_session(tmp_path, monkeypatch, owned):
-    record = {"running": True, "pid": 12345, "run": str(tmp_path / "run")}
+    record = {"running": True, "pid": 12345, "process_start": "42", "run": str(tmp_path / "run")}
+    monkeypatch.setattr(mission, "process_identity", lambda pid: "42")
     monkeypatch.setattr(mission, "status", lambda root: record)
     arguments = [b"python", b"mission-loop", record["run"].encode()]
     if not owned:
