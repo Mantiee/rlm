@@ -20,14 +20,11 @@ def prepare(root: Path) -> dict:
         raise ValueError("Stop the mission and use the isolated continual venv")
     bwrap = shutil.which("bwrap")
     if not bwrap:
+        from rlm.v100.sandbox_package import download_bubblewrap
+
         folder = root / "tools/bubblewrap" / uuid.uuid4().hex[:12]
         folder.mkdir(parents=True)
-        subprocess.run(["apt", "download", "bubblewrap"], cwd=folder, check=True, timeout=120)
-        packages = list(folder.glob("bubblewrap_*.deb"))
-        if len(packages) != 1:
-            raise ValueError("Expected one APT-verified sandbox package")
-        subprocess.run(["dpkg-deb", "-x", str(packages[0]), str(folder / "extracted")], check=True)
-        bwrap = str(folder / "extracted/usr/bin/bwrap")
+        bwrap = str(download_bubblewrap(folder))
     subprocess.run(
         [
             bwrap,

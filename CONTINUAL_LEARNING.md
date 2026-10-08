@@ -836,3 +836,30 @@ stdout/stderr logs. `-DebugLogs` enables debug logging only for the isolated
 helper. Request-body logging remains disabled. Follow
 `$env:USERPROFILE\ai-v100-helper\logs\server.stderr.log` for server activity;
 learning progress and A/B findings remain in the Debian controller's logs.
+
+## V100 controller v100.25: numerical pilot health and assistant tokenizer staging
+
+Training uses an initial FP16 dynamic loss scale of 128 rather than 65536;
+growth/backoff remain enabled, and checkpoint resume restores its saved scaler.
+This is a hardware pilot setting, not proof that every Gemma backward is stable.
+Metrics remain strict JSON: non-finite values become null with an explicit
+`nonfinite_fields` list. Non-finite losses fail before backward. AMP overflows
+are counted as skipped optimizer steps, never as weight updates. More than eight
+consecutive overflows abort; candidate export requires successful finite-gradient
+updates, a final successful step and at most 25% skipped steps. Calibration also
+requires the resulting `training_health.json` gate plus finite validation losses.
+The child pilot log is mirrored into the existing preparation console and kept
+in its original file. Original models, prior profiles and adapters remain intact.
+
+MTP preparation permits only a missing `<|video|>` special-token annotation
+already present at the same ID in both raw vocabularies and within both embedding
+dimensions. Shared token annotations and the rest of the tokenizer pipeline must
+match. Conversion stages the corrected metadata separately and records hashes of
+both original tokenizers and the staged tokenizer. Pinned downloads and weights
+are unchanged. Successful conversion still requires measured speed and independent
+task-quality gates before speculative decoding is selected.
+
+Sandbox bootstrap refreshes signed Debian package lists under its own tools
+directory, downloads and extracts bubblewrap without installation. APT config,
+lists, cache, logs and status are private; host APT configuration hooks are not
+loaded. Archive signatures and the user-namespace probe remain required.

@@ -4,12 +4,43 @@ import copy
 import json
 import math
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
 
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.protection import file_hash
+
+
+def run_pilot(argv: list[str], path: Path, timeout: int = 3600) -> int | None:
+    """Mirror the child log into the existing preparation console."""
+    stopped = threading.Event()
+
+    def follow():
+        with path.open("rb") as reader:
+            while True:
+                chunk = reader.read(65536)
+                if chunk:
+                    print(chunk.decode(errors="replace"), end="", flush=True)
+                elif stopped.is_set():
+                    return
+                else:
+                    stopped.wait(0.25)
+
+    with path.open("w") as log:
+        thread = threading.Thread(target=follow, daemon=True)
+        thread.start()
+        try:
+            return subprocess.run(
+                argv, stdout=log, stderr=subprocess.STDOUT, timeout=timeout
+            ).returncode
+        except subprocess.TimeoutExpired:
+            return None
+        finally:
+            log.flush()
+            stopped.set()
+            thread.join(timeout=5)
 
 
 def calibrate(root: Path, path: Path, pool: Path) -> Path:
@@ -63,16 +94,9 @@ def calibrate(root: Path, path: Path, pool: Path) -> Path:
             flush=True,
         )
         started, code = time.monotonic(), None
-        with (folder / (precision + ".log")).open("w") as log:
-            try:
-                code = subprocess.run(
-                    command(root, config, "train", str(dataset)),
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    timeout=3600,
-                ).returncode
-            except subprocess.TimeoutExpired:
-                pass
+        code = run_pilot(
+            command(root, config, "train", str(dataset)), folder / (precision + ".log")
+        )
         rows = []
         metrics = folder / precision / "metrics.jsonl"
         if metrics.exists():
@@ -88,16 +112,22 @@ def calibrate(root: Path, path: Path, pool: Path) -> Path:
                 json.loads(evaluation.read_text()).get("eval_loss") if evaluation.exists() else None
             )
         peak = max((row.get("peak_vram_gib", 0) for row in rows), default=0)
+        health_path = folder / precision / "training_health.json"
+        health = json.loads(health_path.read_text()) if health_path.exists() else {}
         eligible = (
             code == 0
             and 0 < peak <= 27.5
             and all(type(loss) in (int, float) and math.isfinite(loss) for loss in losses)
+            and health.get("schema") == "v100-training-health-v1"
+            and health.get("eligible") is True
+            and health.get("optimizer_updates", 0) > 0
         )
         results[precision] = {
             "eligible": eligible,
             "seconds": time.monotonic() - started,
             "exit_code": code,
             "peak_allocated_vram_gib": peak,
+            "training_health": health,
             "losses": [
                 loss if type(loss) in (int, float) and math.isfinite(loss) else None
                 for loss in losses

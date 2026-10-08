@@ -413,6 +413,11 @@ def test_training_calibration_rejects_nonfinite_pilot(tmp_path, monkeypatch):
         )
         for name in ("baseline_eval.json", "candidate_eval.json"):
             (output / name).write_text(json.dumps({"eval_loss": loss}))
+        (output / "training_health.json").write_text(
+            json.dumps(
+                {"schema": "v100-training-health-v1", "eligible": True, "optimizer_updates": 25}
+            )
+        )
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(training_calibration.subprocess, "run", pilot)

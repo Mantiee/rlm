@@ -237,6 +237,57 @@ def test_preparation_rejects_token_mismatch_before_conversion(tmp_path, monkeypa
         prepare_mtp(profile_path, tmp_path)
 
 
+def video_tokenizer_fixture():
+    video = {
+        "id": 2,
+        "content": "<|video|>",
+        "single_word": False,
+        "lstrip": False,
+        "rstrip": False,
+        "normalized": False,
+        "special": True,
+    }
+    draft = {"model": {"vocab": {"x": 1, "<|video|>": 2}}, "added_tokens": []}
+    return {**draft, "added_tokens": [video]}, draft
+
+
+def test_missing_video_annotation_staged_without_changing_pinned_files(tmp_path):
+    target, draft = video_tokenizer_fixture()
+    normalized = speculative.assistant_tokenizer(target, draft, 10)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "tokenizer.json").write_text(json.dumps(draft))
+    weights = source / "model.safetensors"
+    weights.write_bytes(b"original weights")
+    original = (source / "tokenizer.json").read_bytes()
+    with speculative.assistant_conversion_input(source, tmp_path, normalized) as staged:
+        assert staged != source
+        assert json.loads((staged / "tokenizer.json").read_text()) == target
+        assert (staged / "model.safetensors").read_bytes() == weights.read_bytes()
+        staged_name = staged
+    assert not staged_name.exists()
+    assert (source / "tokenizer.json").read_bytes() == original
+    assert weights.read_bytes() == b"original weights"
+
+
+@pytest.mark.parametrize("change", ["ordinary", "flags", "pipeline", "embedding", "missing-id"])
+def test_video_exception_does_not_allow_other_changes(change):
+    target, draft = video_tokenizer_fixture()
+    vocab_size = 10
+    if change == "ordinary":
+        target["added_tokens"][0]["content"] = "ordinary_word"
+    elif change == "flags":
+        target["added_tokens"][0]["normalized"] = True
+    elif change == "pipeline":
+        draft["normalizer"] = {"type": "Lowercase"}
+    elif change == "embedding":
+        vocab_size = 2
+    else:
+        target["model"]["vocab"].pop("<|video|>")
+    with pytest.raises(ValueError):
+        speculative.assistant_tokenizer(target, draft, vocab_size)
+
+
 def test_runner_refuses_busy_gpu_without_starting_processes(tmp_path, monkeypatch):
     profile_path = prepare_fixture(tmp_path)
     source = profile_path.read_text()

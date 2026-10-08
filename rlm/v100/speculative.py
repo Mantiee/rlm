@@ -4,12 +4,15 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import requests
@@ -340,6 +343,63 @@ def test_mtp(
     return destination
 
 
+def assistant_tokenizer(target: dict, draft: dict, vocab_size: int) -> dict:
+    """Permit only the observed missing video special-token annotation."""
+    if {k: v for k, v in target.items() if k != "added_tokens"} != {
+        k: v for k, v in draft.items() if k != "added_tokens"
+    }:
+        raise ValueError("Assistant/target token vocabulary or tokenizer pipeline mismatch")
+    a = {item["id"]: item for item in target["added_tokens"]}
+    b = {item["id"]: item for item in draft["added_tokens"]}
+    if len(a) != len(target["added_tokens"]) or len(b) != len(draft["added_tokens"]):
+        raise ValueError("Duplicate added-token IDs")
+    if a == b:
+        return draft
+    missing = set(a) - set(b)
+    if set(b) - set(a) or any(a[i] != b[i] for i in set(a) & set(b)) or len(missing) != 1:
+        raise ValueError("Assistant/target token vocabulary mismatch")
+    identity = next(iter(missing))
+    video = a[identity]
+    expected = {
+        "id": identity,
+        "content": "<|video|>",
+        "single_word": False,
+        "lstrip": False,
+        "rstrip": False,
+        "normalized": False,
+        "special": True,
+    }
+    if video != expected or type(identity) is not int or not 0 <= identity < vocab_size:
+        raise ValueError("Assistant/target token vocabulary mismatch")
+    vocab = target["model"]["vocab"]
+    shared_id = (
+        vocab.get("<|video|>")
+        if isinstance(vocab, dict)
+        else next((i for i, token in enumerate(vocab) if token[0] == "<|video|>"), None)
+    )
+    if shared_id != identity:
+        raise ValueError("Missing video annotation must refer to an existing shared vocabulary ID")
+    return {**draft, "added_tokens": target["added_tokens"]}
+
+
+@contextmanager
+def assistant_conversion_input(source: Path, destination: Path, tokenizer: dict):
+    """Stage a tokenizer correction without writing to the pinned download."""
+    if json.loads((source / "tokenizer.json").read_text()) == tokenizer:
+        yield source
+        return
+    with tempfile.TemporaryDirectory(prefix="tokenizer-stage-", dir=destination) as name:
+        staged = Path(name)
+        for path in source.iterdir():
+            if path.is_file():
+                if path.suffix == ".safetensors":
+                    os.link(path, staged / path.name)
+                else:
+                    shutil.copyfile(path, staged / path.name)
+        atomic_json(staged / "tokenizer.json", tokenizer)
+        yield staged
+
+
 def prepare_mtp(profile_path: Path, root: Path) -> None:
     profile = load_profile(profile_path, root)
     server = Path(profile["server"]["binary"])
@@ -441,12 +501,11 @@ def prepare_mtp(profile_path: Path, root: Path) -> None:
         raise ValueError("Assistant/target vocab dimensions mismatch")
     # Token IDs must mean the same thing, not merely have equal vocabulary sizes.
     target_tokenizer = Path(profile["training"]["base_model"]) / "tokenizer.json"
-    for name in ("model", "added_tokens"):
-        if (
-            json.loads(target_tokenizer.read_text())[name]
-            != json.loads((assistant / "tokenizer.json").read_text())[name]
-        ):
-            raise ValueError("Assistant/target token vocabulary mismatch")
+    normalized = assistant_tokenizer(
+        json.loads(target_tokenizer.read_text()),
+        json.loads((assistant / "tokenizer.json").read_text()),
+        config["text_config"]["vocab_size"],
+    )
     destination = root / "models/gguf/gemma4-12b-assistant" / ASSISTANT_REVISION
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / "gemma4-12b-assistant-Q8_0.gguf"
@@ -461,6 +520,11 @@ def prepare_mtp(profile_path: Path, root: Path) -> None:
         "server_sha256": file_digest(server),
         "quantizer_sha256": file_digest(quantizer),
         "quantization": "Q8_0",
+        "target_tokenizer_sha256": file_digest(target_tokenizer),
+        "assistant_tokenizer_sha256": file_digest(assistant / "tokenizer.json"),
+        "conversion_tokenizer_sha256": hashlib.sha256(
+            json.dumps(normalized, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest(),
     }
     if output.exists():
         saved = json.loads(manifest_path.read_text())
@@ -474,19 +538,20 @@ def prepare_mtp(profile_path: Path, root: Path) -> None:
         for path in (full, quantized):
             path.unlink(missing_ok=True)
         print("Converting assistant to F16, then Q8_0 (CPU only)...", flush=True)
-        subprocess.run(
-            [
-                str(converter_python),
-                str(converter),
-                str(assistant),
-                "--outtype",
-                "f16",
-                "--outfile",
-                str(full),
-            ],
-            check=True,
-            env=environment,
-        )
+        with assistant_conversion_input(assistant, destination, normalized) as conversion_input:
+            subprocess.run(
+                [
+                    str(converter_python),
+                    str(converter),
+                    str(conversion_input),
+                    "--outtype",
+                    "f16",
+                    "--outfile",
+                    str(full),
+                ],
+                check=True,
+                env=environment,
+            )
         validate_gguf(full)
         subprocess.run(
             [str(quantizer), str(full), str(quantized), "Q8_0", "8"],

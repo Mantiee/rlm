@@ -12,6 +12,7 @@ from rlm.v100.breeding import base_signature, parent_exports, record_adapter, ve
 from rlm.v100.checkpointing import best_model_arguments, record_best
 from rlm.v100.common import atomic_json
 from rlm.v100.protection import assert_candidate_output, file_hash, fixed_split
+from rlm.v100.training_health import TrainingHealth, finite_metrics, initialize_amp
 
 
 def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], list[dict]]:
@@ -318,17 +319,34 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
             if ".teacher." in name:
                 parameter.requires_grad_(False)
 
+    health = TrainingHealth()
+
     class Progress(TrainerCallback):
+        def on_step_end(self, args, state, control, **kwargs):
+            health.step(state.global_step, trainer.accelerator.optimizer_step_was_skipped)
+            atomic_json(output / "training_health.json", health.report())
+
         def on_log(self, args, state, control, logs=None, **kwargs):
-            row = {
-                "step": state.global_step,
-                **(logs or {}),
-                "peak_vram_gib": torch.cuda.max_memory_allocated() / 2**30,
-            }
+            row = finite_metrics(
+                {
+                    "step": state.global_step,
+                    **(logs or {}),
+                    "peak_vram_gib": torch.cuda.max_memory_allocated() / 2**30,
+                    "amp_scale": trainer.accelerator.scaler.get_scale(),
+                }
+            )
+            if "grad_norm" in row:
+                row.update(
+                    optimizer_step_skipped=health.last_skipped,
+                    optimizer_updates=health.optimizer_updates,
+                    amp_skipped_steps=health.skipped_steps,
+                )
             with (output / "metrics.jsonl").open("a") as handle:
-                handle.write(json.dumps(row) + "\n")
-            print(json.dumps(row), flush=True)
+                handle.write(json.dumps(row, allow_nan=False) + "\n")
+            print(json.dumps(row, allow_nan=False), flush=True)
             journal.write("metrics", "training-progress", row, output=str(output))
+            health.check_metrics(row)
+            atomic_json(output / "training_health.json", health.report())
 
         def on_save(self, args, state, control, **kwargs):
             manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
@@ -383,11 +401,24 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         seed=seed,
         dataloader_num_workers=0,
         include_num_input_tokens_seen=True,
+        logging_nan_inf_filter=False,
     )
     from rlm.v100.distillation import preserving_trainer
 
     trainer_type = preserving_trainer(Trainer, strength, temperature, bool(teacher_adapter))
-    trainer = trainer_type(
+
+    class FiniteLossTrainer(trainer_type):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+            result = super().compute_loss(
+                model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch
+            )
+            loss = result[0] if return_outputs else result
+            if not torch.isfinite(loss.detach()).all().item():
+                journal.write("training", "nonfinite-loss", {"step": self.state.global_step})
+                raise FloatingPointError("Non-finite loss before backward; candidate rejected")
+            return result
+
+    trainer = FiniteLossTrainer(
         model=model,
         args=args,
         train_dataset=train_dataset,
@@ -396,6 +427,8 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         data_collator=DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100),
         callbacks=[Progress()],
     )
+    scale = initialize_amp(trainer.accelerator.scaler)
+    print(json.dumps({"training_stage": "amp-configured", "initial_amp_scale": scale}), flush=True)
     # compute_loss uses each microbatch's mean loss, not a num_items_in_batch
     # denominator. Ask Trainer to apply gradient-accumulation scaling itself.
     if strength:
@@ -405,6 +438,10 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         atomic_json(output / "baseline_eval.json", trainer.evaluate())
     print(json.dumps({"training_stage": "optimizer-steps"}), flush=True)
     trainer.train(resume_from_checkpoint=str(checkpoint) if checkpoint else None)
+    report = health.report()
+    atomic_json(output / "training_health.json", report)
+    if not report["eligible"]:
+        raise FloatingPointError("Numerical training gate failed; candidate not exported")
     record_best(output, trainer.state, file_hash(manifest_path))
     candidate = output / "candidate"
     trainer.save_model(str(candidate))
