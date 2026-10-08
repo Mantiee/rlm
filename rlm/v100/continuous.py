@@ -282,7 +282,16 @@ def learn_loop(
                     from rlm.v100.foundation import pending as pending_foundations
 
                     foundation_queue = pending_foundations(root)
-                    if not changed and foundation_queue:
+                    from rlm.v100.scratch_master import pending as pending_scratch
+
+                    scratch_queue = pending_scratch(root)
+                    if changed:
+                        from rlm.v100.scratch_master import continuations, is_scratch
+
+                        if is_scratch(current) and not scratch_queue:
+                            continuations(root, current)
+                            scratch_queue = pending_scratch(root)
+                    if not changed and (foundation_queue or scratch_queue):
                         expanded.write_bytes(current_pool.read_bytes())
                         changed = True
                     if not changed:
@@ -329,6 +338,38 @@ def learn_loop(
                 continue
             from rlm.v100.foundation import pending as pending_foundations
             from rlm.v100.foundation import trial as foundation_trial
+            from rlm.v100.scratch_master import is_scratch
+            from rlm.v100.scratch_master import pending as pending_scratch
+            from rlm.v100.scratch_master import trial as scratch_trial
+
+            scratch_queue = pending_scratch(root)
+            if scratch_queue:
+                from rlm.v100.architecture_promotion import activate
+
+                architecture_result = scratch_trial(
+                    root, current, expanded, suite, gates, scratch_queue[0]
+                )
+                try:
+                    current, activation = activate(root, current, architecture_result, gates)
+                    if activation["activated"]:
+                        _, gates = read(current)
+                        current_pool = expanded
+                        atomic_json(live, current)
+                        atomic_json(output.parent / "serving-active.json", current)
+                except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                    activation = {"activated": False, "reason": str(error)[:400]}
+                history.append(
+                    {
+                        "cycle": cycle,
+                        "status": "selected for next serving phase: scratch architecture"
+                        if activation["activated"]
+                        else "scratch architecture rejected; previous version retained",
+                        "architecture_trial": architecture_result,
+                        "activation": activation,
+                    }
+                )
+                save_progress(root, output, state)
+                continue
 
             foundation_queue = pending_foundations(root)
             if foundation_queue:
@@ -363,6 +404,15 @@ def learn_loop(
                     # Serve and gather fresh data under the new base before another
                     # expensive A/B training round. Never reuse old-base adapters.
                     continue
+            if is_scratch(current):
+                history.append(
+                    {
+                        "cycle": cycle,
+                        "status": "scratch master: no pending full-weight child; predecessor retained",
+                    }
+                )
+                save_progress(root, output, state)
+                continue
             trial = output / f"update-{cycle:04d}"
             if paper is not None:
                 paper.phase("training-started", cycle, current)

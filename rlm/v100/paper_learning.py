@@ -170,6 +170,9 @@ class PaperLearning:
             from rlm.v100.reward_policy import train as train_reward
 
             poll_registered(book, self.stop_event.is_set)
+            from rlm.v100.market_adapters import poll as poll_market_adapters
+
+            poll_market_adapters(book, self.stop_event.is_set)
             for branch in ("A", "B"):
                 if self.stop_event.is_set():
                     return

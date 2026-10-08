@@ -32,6 +32,26 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "configure_free_market_adapter",
+        "Configure current public Bybit research or free IEX/sports data by exact documented mapping. No paid histories, trading endpoints or model-supplied secrets. Free keys must already exist in operator environment. Sports execution requires separately registered fees/instrument and an explicit bookmaker settlement rule; provider odds have no certified liquidity.",
+        {"configuration": {"type": "object"}},
+    ),
+    tool_schema(
+        "propose_scratch_master",
+        "Queue a previously created custom architecture for full-weight training and master selection in the next exclusive window. Supply all resource budget fields. Context/output must cover the current master. Source runs only in bubblewrap; immutable parent, complete fixed/official and fresh gates precede activation. Tiny pilot quality does not prove master quality.",
+        {"candidate_id": {"type": "string"}, "budget": {"type": "object"}},
+    ),
+    tool_schema(
+        "scratch_master_status",
+        "Inspect queued full-weight master candidates, independent selection evidence and a complete budget template to adapt to the current master.",
+        {},
+    ),
+    tool_schema(
+        "support_scratch_master",
+        "Agree to a joint custom master trial using the exact source and full resource budget. Both A and B must independently agree to this budget before a shared candidate can train.",
+        {"candidate_id": {"type": "string"}, "budget": {"type": "object"}},
+    ),
+    tool_schema(
         "request_fresh_curriculum",
         "Request 1-32 NEW independent calculator-verified training examples in a useful proof domain. Only when relevant to the operator goal or a demonstrated weakness. Never draws from benchmark/audit cases. Admission is not an optimizer update.",
         {
@@ -698,6 +718,39 @@ class ResearchTools:
             if set(arguments) != {"candidate_id", "code", "hypothesis", "joint"}:
                 raise ValueError("Invalid submodel proposal")
             return create_candidate(self.root, self.branch, **arguments)
+        if name == "configure_free_market_adapter" and set(arguments) == {"configuration"}:
+            from rlm.v100.market_adapters import register
+
+            return register(self.root, arguments["configuration"])
+        if name == "propose_scratch_master":
+            from rlm.v100.scratch_master import propose
+
+            if set(arguments) != {"candidate_id", "budget"}:
+                raise ValueError("Invalid scratch master proposal")
+            return propose(self.root, self.branch, **arguments)
+        if name == "scratch_master_status" and not arguments:
+            from rlm.v100.architectures import DEFAULT_BUDGET
+
+            return {
+                "budget_template": {
+                    **DEFAULT_BUDGET,
+                    "context_window": self.settings.get("runtime", {}).get("context_window", 8192),
+                    "max_new_tokens": self.settings.get("runtime", {}).get(
+                        "max_output_tokens", 2048
+                    ),
+                },
+                "limits": "1B parameters, 24 GiB RAM, 30 GiB configured VRAM, 7200 seconds; context up to 262144 bytes and output up to 16384 bytes. Exclusive GPU experiments; measured quality precedes promotion.",
+                "trials": [
+                    json.loads(p.read_text())
+                    for p in sorted((self.root / "research/scratch-master-trials").glob("*.json"))[
+                        -16:
+                    ]
+                ],
+            }
+        if name == "support_scratch_master" and set(arguments) == {"candidate_id", "budget"}:
+            from rlm.v100.architectures import support_candidate
+
+            return support_candidate(self.root, self.branch, **arguments)
         if name == "support_submodel":
             from rlm.v100.architectures import support_candidate
 

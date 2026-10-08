@@ -16,5 +16,14 @@ while ($true) {
     } catch { Write-Host 'Helper unavailable or paused by game guard.' }
     $log = Join-Path $dir 'logs\server.stderr.log'
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 8 }
+    $cpuLog = Join-Path $dir 'logs\cpu-worker.stdout.log'
+    if (Test-Path -LiteralPath $cpuLog) {
+        Write-Host 'OWNED CPU WORKER:'
+        Get-Content -LiteralPath $cpuLog -Tail 3
+    }
+    $cpuError = Join-Path $dir 'logs\cpu-worker.stderr.log'
+    if ((Test-Path -LiteralPath $cpuError) -and (Get-Item -LiteralPath $cpuError).Length -gt 0) {
+        Get-Content -LiteralPath $cpuError -Tail 2
+    }
     Start-Sleep -Seconds ([math]::Max(2,$Seconds))
 }

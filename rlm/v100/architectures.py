@@ -93,8 +93,8 @@ def validate_budget(budget: dict) -> None:
         ("steps", 1, 10000),
         ("timeout", 1, 7200),
         ("max_parameters", 1, 1000000000),
-        ("context_window", 32, 8192),
-        ("max_new_tokens", 1, 512),
+        ("context_window", 32, 262144),
+        ("max_new_tokens", 1, 16384),
         ("seed", 0, 2**31 - 1),
         ("artifact_mib", 16, 65536),
     ):
@@ -107,6 +107,8 @@ def validate_budget(budget: dict) -> None:
         raise ValueError("Invalid architecture learning rate")
     if (budget["device"] == "cpu") != (budget["vram_gib"] == 0):
         raise ValueError("CUDA budget must be positive; CPU pilots cannot reserve VRAM")
+    if budget["max_new_tokens"] >= budget["context_window"]:
+        raise ValueError("Architecture output must fit its byte context")
 
 
 def candidate_path(root: Path, candidate_id: str) -> Path:
@@ -238,7 +240,14 @@ def resource_lease(root: Path, device: str):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def phase(output: Path, run: Path, inputs: Path, budget: dict, mode: str) -> float:
+def phase(
+    output: Path,
+    run: Path,
+    inputs: Path,
+    budget: dict,
+    mode: str,
+    extra_mounts: list[tuple[Path, bool]] | None = None,
+) -> float:
     import psutil
 
     task = [
@@ -253,7 +262,7 @@ def phase(output: Path, run: Path, inputs: Path, budget: dict, mode: str) -> flo
     args = sandbox_command(
         output,
         task,
-        [(inputs, False), (run / "weights", mode == "train")],
+        [(inputs, False), (run / "weights", mode == "train"), *(extra_mounts or [])],
         gpu=budget["device"] == "cuda",
     )
     limiter = shutil.which("prlimit")
@@ -261,8 +270,9 @@ def phase(output: Path, run: Path, inputs: Path, budget: dict, mode: str) -> flo
         raise FileNotFoundError("Architecture experiments require prlimit and bubblewrap")
     limits = [
         limiter,
-        "--fsize=" + str(budget["artifact_mib"] * 2**20),
+        "--fsize=" + str((budget["artifact_mib"] if mode == "train" else 2) * 2**20),
         "--nofile=256",
+        "--nproc=512",
         "--cpu=" + str(budget["timeout"]),
     ]
     if budget["device"] == "cpu":
@@ -349,7 +359,12 @@ def score_predictions(rows: list[dict], predictions: list[dict]) -> list[dict]:
 
 
 def run_candidate(
-    root: Path, candidate_id: str, pool: Path, suite: Path, budget: dict | None = None
+    root: Path,
+    candidate_id: str,
+    pool: Path,
+    suite: Path,
+    budget: dict | None = None,
+    init_weights: Path | None = None,
 ) -> dict:
     from rlm.v100.training import load_records
 
@@ -374,7 +389,7 @@ def run_candidate(
     rows = [json.loads(line) for line in suite.read_text().splitlines() if line.strip()]
     if (
         not rows
-        or len(rows) > 64
+        or len(rows) > 256
         or any(
             row.get("match") not in ("exact", "contains")
             or not isinstance(row.get("expected"), str)
@@ -384,10 +399,10 @@ def run_candidate(
             for row in rows
         )
     ):
-        raise ValueError("Architecture trials require 1-64 fixed independently evaluated cases")
+        raise ValueError("Architecture trials require 1-256 fixed independently evaluated cases")
     if pool.stat().st_size > 8 * 2**20:
         raise ValueError("Architecture corpus exceeds 8 MiB pilot budget")
-    train, _ = load_records(pool, root / "research/state/architecture-splits.sqlite3")
+    train, validation = load_records(pool, root / "research/state/architecture-splits.sqlite3")
     run = output / "trial"
     with resource_lease(root, budget["device"]):
         run.mkdir(exist_ok=False)
@@ -396,9 +411,23 @@ def run_candidate(
         # Neither fixed answers nor host controller files are mounted in the worker.
         with tempfile.TemporaryDirectory(prefix="v100-architecture-") as temp:
             inputs = Path(temp)
-            atomic_json(inputs / "config.json", budget)
+            configuration = dict(budget)
+            atomic_json(inputs / "validation.json", validation[:32])
+            configuration["validation_file"] = str(inputs / "validation.json")
+            mounts = []
+            if init_weights is not None:
+                if init_weights.is_symlink() or not init_weights.is_file():
+                    raise ValueError("Continuation weights must be an ordinary frozen file")
+                configuration["init_weights"] = str(init_weights.resolve())
+                configuration["init_weights_sha256"] = file_hash(init_weights)
+                mounts = [(init_weights.resolve(), False)]
+            atomic_json(inputs / "config.json", configuration)
             atomic_json(inputs / "data.json", train)
-            train_time = phase(output, run, inputs, budget, "train")
+            train_time = (
+                phase(output, run, inputs, budget, "train", mounts)
+                if mounts
+                else phase(output, run, inputs, budget, "train")
+            )
             weights = run / "weights/weights.safetensors"
             if (
                 weights.is_symlink()

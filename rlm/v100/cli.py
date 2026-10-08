@@ -18,6 +18,10 @@ from rlm.v100.protection import ExpertRegistry, compare_reports, reserve_audit_s
 
 
 def server_command(profile: dict) -> list[str]:
+    if profile["runtime"].get("backend") == "isolated-architecture":
+        raise ValueError(
+            "Isolated architecture is served by the controller transport; use chat or the mission loop"
+        )
     if profile.get("resources", {}).get("device") == "remote":
         raise ValueError("Remote researcher is externally served; no local server can be launched")
     s, r = profile["server"], profile["runtime"]
@@ -78,6 +82,15 @@ def server_command(profile: dict) -> list[str]:
 def client_for(
     profile: dict, root: Path, max_tokens: int | None = None, enable_thinking: bool | None = None
 ) -> LlamaCppClient:
+    from rlm.v100.scratch_master import is_scratch
+
+    if is_scratch(profile):
+        from rlm.v100.competition import helper_client
+
+        client = helper_client(profile, root)
+        client.sampling_args = sampling_settings(profile, max_tokens)
+        client.enable_thinking = thinking_enabled(profile, enable_thinking)
+        return client
     r = profile["runtime"]
     client = LlamaCppClient(
         model_name=r["model_name"],
@@ -120,6 +133,11 @@ def main() -> None:
     )
     campaign.add_argument("--no-desktop", action="store_true")
     campaign.add_argument("--no-benchmarks", action="store_true")
+    acceptance = sub.add_parser(
+        "hardware-acceptance",
+        help="Bounded V100 backward, native serving, sandbox and remote helper identity checks while stopped",
+    )
+    acceptance.add_argument("--desktop", action="store_true")
     sub.add_parser(
         "supervisor-start", help="Start the owned persistent restart supervisor using --profile"
     )
@@ -527,10 +545,17 @@ def main() -> None:
                 report(root)
                 print((root / "research/mission/latest-report.txt").read_text())
         return
-    if args.command.startswith("paper-"):
+    if args.command.startswith(("paper-", "market-adapter-")):
         from rlm.v100.paper_cli import handle
 
         handle(args, root)
+        return
+    if args.command == "hardware-acceptance":
+        from rlm.v100.campaign import choose_profile
+        from rlm.v100.hardware_acceptance import run
+
+        selected = args.profile or choose_profile(root)
+        print("HARDWARE REPORT:", run(root, selected, args.desktop), flush=True)
         return
     profile = load_profile(args.profile or root / "research/v100.toml", root)
     registry = ExpertRegistry(root / "research/experts")

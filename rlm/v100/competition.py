@@ -52,6 +52,20 @@ def require_idle_gpu() -> None:
 def managed_server(profile_path: Path, root: Path, log_path: Path):
     profile = load_profile(profile_path, root)
     from rlm.v100.remote_helper import remote_profile
+    from rlm.v100.scratch_master import is_scratch, verify
+
+    if is_scratch(profile):
+        verify(profile)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a") as log:
+            log.write(
+                json.dumps(
+                    {"backend": "isolated-architecture", "model": profile["server"]["model"]}
+                )
+                + "\n"
+            )
+        yield profile
+        return
 
     if remote_profile(profile):
         client = helper_client(profile, root)
@@ -228,7 +242,10 @@ def helper_client(
     from rlm.v100.remote_helper import OllamaResearchClient, remote_profile
 
     remote = remote_profile(profile)
-    client_type = OllamaResearchClient if remote else LlamaCppClient
+    from rlm.v100.scratch_master import ScratchClient, is_scratch
+
+    scratch = is_scratch(profile)
+    client_type = ScratchClient if scratch else OllamaResearchClient if remote else LlamaCppClient
     extras = (
         {
             "model_digest": profile["resources"]["model_digest"],
@@ -243,6 +260,8 @@ def helper_client(
         if remote
         else {}
     )
+    if scratch:
+        extras["scratch_profile"] = profile
     client = client_type(
         **extras,
         model_name=settings["model_name"],

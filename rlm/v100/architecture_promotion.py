@@ -1,4 +1,4 @@
-"""Activate a different pretrained architecture only from frozen host evidence."""
+"""Activate a different native or isolated architecture from frozen host evidence."""
 
 import copy
 import json
@@ -22,7 +22,13 @@ def probe(root: Path, profile: dict, folder: Path) -> None:
     path = folder / "activation-probe.json"
     atomic_json(path, profile)
     with managed_server(path, root, folder / "activation-probe.log"):
-        assert_served_expert(helper_client(profile, root), profile, root)
+        client = helper_client(profile, root)
+        assert_served_expert(client, profile, root)
+        client.sampling_args["max_tokens"] = min(64, profile["runtime"]["max_output_tokens"])
+        client.enable_thinking = False
+        answer = client.completion("Return only the integer result of 2+2.")
+        if not answer.strip() or client.get_response_info()["finish_reason"] == "length":
+            raise ValueError("Architecture did not finish its activation inference probe")
 
 
 def activate(root: Path, parent: dict, result: dict, gates: list[dict]) -> tuple[dict, dict]:

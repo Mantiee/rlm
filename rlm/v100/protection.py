@@ -213,6 +213,16 @@ class ExpertRegistry:
                         raise ValueError("Native library changed while taking its snapshot")
                     target.chmod(0o444)
             preserved["server"]["library_path"] = str(path.parent)
+            if profile["runtime"].get("backend") == "isolated-architecture":
+                for key in ("scratch_source", "scratch_budget"):
+                    source = Path(profile["resources"][key])
+                    name = key + "-" + source.name
+                    shutil.copyfile(source, staging / name)
+                    files[name] = file_hash(staging / name)
+                    if files[name] != file_hash(source):
+                        raise ValueError("Scratch source or budget changed during registration")
+                    (staging / name).chmod(0o444)
+                    preserved["resources"][key] = str(path.parent / name)
             if candidate_report is not None:
                 if (
                     files[Path(preserved["server"]["model"]).name]
@@ -224,6 +234,11 @@ class ExpertRegistry:
                     if staged_profile["server"][key]:
                         staged_profile["server"][key] = str(
                             staging / Path(staged_profile["server"][key]).name
+                        )
+                if profile["runtime"].get("backend") == "isolated-architecture":
+                    for key in ("scratch_source", "scratch_budget"):
+                        staged_profile["resources"][key] = str(
+                            staging / Path(preserved["resources"][key]).name
                         )
                 if execution_hash(staged_profile) != candidate_report["execution_sha256"]:
                     raise ValueError("Execution artifacts changed before snapshot commit")
@@ -285,4 +300,10 @@ def execution_hash(profile: dict) -> str:
             if path.is_file()
         },
     }
+    if profile["runtime"].get("backend") == "isolated-architecture":
+        payload["scratch"] = {
+            "source_sha256": file_hash(Path(profile["resources"]["scratch_source"])),
+            "budget_sha256": file_hash(Path(profile["resources"]["scratch_budget"])),
+            "hashes": profile["resources"]["scratch_hashes"],
+        }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

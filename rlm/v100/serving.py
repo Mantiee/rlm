@@ -43,6 +43,21 @@ def write_receipt(profile: dict, root: Path) -> None:
 
 
 def assert_served_expert(client, profile: dict, root: Path, expert: dict | None = None) -> None:
+    from rlm.v100.scratch_master import ScratchClient, is_scratch, verify
+
+    if is_scratch(profile):
+        verify(profile)
+        if not isinstance(client, ScratchClient) or execution_hash(
+            client.scratch_profile
+        ) != execution_hash(profile):
+            raise ValueError("Scratch client serves another frozen execution")
+        if (
+            expert
+            and expert["profile"]["resources"]["scratch_hashes"]
+            != profile["resources"]["scratch_hashes"]
+        ):
+            raise ValueError("Scratch expert identity differs")
+        return
     receipt = json.loads(receipt_path(profile, root).read_text())
     if process_identity(receipt["pid"]) != receipt["process_start"]:
         raise ValueError("Protected server receipt belongs to a different process")

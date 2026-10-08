@@ -9,6 +9,15 @@ from rlm.v100.paper import PaperBook
 
 
 def add_commands(sub) -> None:
+    adapter = sub.add_parser(
+        "market-adapter-register",
+        help="Register a free-only IEX/sports/public-derivative data adapter; does not certify fees",
+    )
+    adapter.add_argument("file", type=Path)
+    sub.add_parser(
+        "market-adapter-status",
+        help="Inspect configured free adapters and remaining local request budgets",
+    )
     initialize = sub.add_parser("paper-init", help="Create equal A/B paper portfolios; no deposits")
     initialize.add_argument("--capital", default="10000")
     initialize.add_argument("--currency", default="PLN")
@@ -58,6 +67,19 @@ def feed_arguments(parser) -> None:
 
 
 def handle(args, root: Path) -> None:
+    if args.command == "market-adapter-register":
+        from rlm.v100.market_adapters import register
+
+        print(json.dumps(register(root, json.loads(args.file.read_text())), indent=2))
+        return
+    if args.command == "market-adapter-status":
+        folder = root / "research/market-adapters"
+        print(
+            json.dumps(
+                {p.name: json.loads(p.read_text()) for p in sorted(folder.glob("*.json"))}, indent=2
+            )
+        )
+        return
     if args.command == "paper-learning-status":
         from rlm.v100.paper_learning import readiness
 

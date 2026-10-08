@@ -51,7 +51,7 @@ def audit(root: Path) -> dict:
         "desktop_prepared": (root / "research/desktop/manifest.json").exists(),
         "public_benchmarks_prepared": (root / "research/public-benchmarks/current.json").exists(),
         "resident_workers": evidence["drones"],
-        "implemented": "LoRA SFT and outcome-derived DPO preferences, optimizer checkpoints, replay/KL, fixed/public plus one-use fresh gates, new verified curriculum tool, bounded reward shadow head, automatic library-supported master architecture activation/rollback, owned distributed CPU training workers, source drones and sandbox/guest browser code candidates",
+        "implemented": "LoRA SFT and outcome-derived DPO preferences, optimizer checkpoints, replay/KL, fixed/public plus one-use fresh gates, new verified curriculum tool, bounded reward shadow head, automatic library-supported or isolated custom full-weight master architecture activation/rollback, owned distributed CPU training workers, source drones and sandbox/guest browser code candidates",
         "fresh_audit_required": profile.get("resources", {}).get("fresh_audit_required", False),
         "paper_research_enabled": profile.get("resources", {}).get("paper_research_enabled", False),
         "foundation_trials": [
@@ -59,8 +59,15 @@ def audit(root: Path) -> dict:
             for p in sorted((root / "research/foundation-trials").glob("*/proposal.json"))[:4]
         ],
         "normalized_provider_mappings": len(list((root / "research/providers").glob("*.json"))),
+        "free_market_adapters": [
+            json.loads(p.read_text())
+            for p in sorted((root / "research/market-adapters").glob("*.json"))
+            if p.name != "quota.json"
+        ],
         "master_architecture": {
             "automatic_activation": True,
+            "backend": profile["runtime"].get("backend", "llama.cpp"),
+            "custom_scratch_scope": "Arbitrary build(config) network, full-weight warm-start children, isolated byte-token inference and the same fixed/fresh/public gates. Not an automatic universal GGUF converter; inference/training may fail their resource/time limits.",
             "active_expert": profile.get("resources", {}).get("active_foundation_expert"),
             "history": profile.get("resources", {}).get("architecture_history", []),
             "gate": "Task improvement, no retained regressions, fresh audit, public gate when configured and native boot probe; predecessor kept",

@@ -21,7 +21,9 @@ def update(root: Path, horizon: str, text: str, actor: str) -> dict:
     if horizon not in ("long", "mid", "short") or actor not in ("user", "A", "B"):
         raise ValueError("Invalid plan horizon or author")
     if horizon == "long" and actor != "user":
-        raise ValueError("Only an explicit user chat request or CLI command changes the long-term goal")
+        raise ValueError(
+            "Only an explicit user chat request or CLI command changes the long-term goal"
+        )
     if not isinstance(text, str) or not 1 <= len(text.strip()) <= 2000:
         raise ValueError("Plan text must contain 1-2000 characters")
     directory = root / "research/plans"

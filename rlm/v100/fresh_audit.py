@@ -46,6 +46,7 @@ def create(root: Path, parent: dict, candidate: Path, folder: Path, count: int =
         Path(parent["training"].get("split_ledger", root / "research/state/splits.sqlite3")),
         sources,
     )
+    reserve_audit_sources(root / "research/state/architecture-splits.sqlite3", sources)
     suite = folder / "suite.jsonl"
     suite.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows))
     atomic_json(

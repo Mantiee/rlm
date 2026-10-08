@@ -103,7 +103,34 @@ def prepare(
         atomic_json(folder / "stages.json", stages)
         print(json.dumps({"campaign": name, **stages[name]}), flush=True)
 
-    stage("helper-identity", lambda: canonicalize_remote(root))
+    def helper():
+        evidence = canonicalize_remote(root)
+        from rlm.v100.competition import helper_client
+
+        helper_path = root / "research/researcher-rtx3090.json"
+        selected = load_profile(helper_path, root)
+        selected["runtime"]["context_window"] = 32768
+        selected["server"]["context_per_slot"] = 32768
+        selected["resources"].update(helper_batch_tokens=16, helper_duty_percent=15)
+        client = helper_client(selected, root)
+        client.identity()
+        client.loaded()
+        atomic_json(
+            helper_path.with_name(
+                "researcher-rtx3090.before-campaign-" + str(time.time_ns()) + ".json"
+            ),
+            json.loads(helper_path.read_text()),
+        )
+        atomic_json(helper_path, selected)
+        return {
+            **evidence,
+            "context": 32768,
+            "batch": 16,
+            "active_request_target_percent": 15,
+            "scope": "Helper request pacing; no hard GPU peak/power cap",
+        }
+
+    stage("helper-identity", helper)
     stage("own-source-and-cpu-sandbox", lambda: prepare_code(root))
     if benchmarks:
         stage("official-public-benchmarks", lambda: current(root) or prepare_benchmarks(root, 20))

@@ -1,6 +1,6 @@
-# V100 campaign v31
+# V100 campaign v32
 
-Use `tools/upgrade-v100-campaign.sh RELEASE_COMMIT` on Debian after any existing training/calibration/MTP sweep completes. It updates only the existing isolated continual venv, repairs the launcher atomically, retains checkpoints, prepares optional components and starts the owned supervisor. Preparation prints each stage and records failures as `deferred`; a deferred feature is not operational.
+Use `tools/upgrade-v100-campaign.sh RELEASE_COMMIT` on Debian after any existing training/calibration/MTP sweep completes. It updates only the existing isolated continual venv, repairs the launcher atomically, retains checkpoints, prepares optional components, runs mandatory short CUDA/master acceptance probes, and starts the owned supervisor only after those probes pass. Failed acceptance retains a report and leaves the mission stopped. Preparation prints each stage and records failures as `deferred`; a deferred feature is not operational.
 
 ## Operating from one console
 
@@ -64,3 +64,30 @@ The operator configures an authenticated dedicated shared folder with `compute-c
 The feature-branch CI performs CPU tensor/training tests and parses Windows PowerShell scripts on standard public-repository runners. CUDA performance, guest boot, the LAN mount and RTX stability still require the operator's hardware; CI does not certify them.
 
 Verified CPU/Windows checks: [run 37791661812](https://github.com/Mantiee/rlm/actions/runs/37791661812), 504 tests passed with none skipped, and all PowerShell scripts parsed successfully. This includes real tiny GRU/transformer training, the owned worker-to-host tensor round trip, adapter gradients, breeding and checkpoint resume. Native V100/RTX execution and private-VM boot were not run in CI.
+
+
+## v32 custom full-weight masters and on-device acceptance
+
+`create_submodel` freezes arbitrary `build(config)` PyTorch network code implementing `[batch, length, 257]` UTF-8 byte logits. `propose_scratch_master` queues a bounded full-weight experiment (joint trials use `support_scratch_master` for both branches): at most 1B parameters, 24 GiB host RAM, 30 GiB configured GPU budget and 7200 seconds. Namespace isolation, process/file limits and sampled RAM/VRAM/artifact guards apply; native Gemma is stopped during exclusive CUDA trials. Candidate Python is never imported into the host controller. Admission preserves the predecessor's context/output conditions and requires complete ancestor, configured public and post-freeze fresh checks plus a real isolated inference probe. Activation snapshots source, launcher, budget and safe-tensor weights into an immutable expert. Equal scores retain the predecessor; a failed serving version is quarantined and rolled back.
+
+A selected scratch master can queue A/B full-weight warm-start children only when newly admitted verified examples arrive. Each is a new bounded experiment; validation loss chooses its best weights and the host gates decide promotion. Tiny full-weight training tests demonstrate optimizer changes, not that a new network will outperform pretrained Gemma. Byte counts are not BPE-token throughput. This backend reloads inside the sandbox per turn and recomputes its prefix, so it is an architecture research path, not an assumed faster default or native KV/MTP backend. Existing native LoRA experiments retain their separate optimizer-resumable checkpoints. Built-in remote CPU pilots do not bypass master promotion gates.
+
+`hardware-acceptance` produces a durable report, verifies Volta CUDA backward and a short master response, then checks the sandbox and RTX identity opportunistically. `--desktop` additionally checks an already provisioned guest. Short probes do not certify a full 131k-token workload, prove Flash Attention kernel selection, diagnose RTX black screens or measure financial performance. Optional infrastructure failures remain visible and deferred; mandatory GPU/master failures prevent automatic startup.
+
+## Read-only free market adapters
+
+`market-adapter-register` accepts an immutable JSON object with `id`, `provider`, `settings` and `free_only: true`; the corresponding `configure_free_market_adapter` tool lets the model propose mappings. Provider endpoints are fixed read-only data origins, snapshots are archived with hashes, quota usage is reserved before requests, and no paid/history/order endpoint is called. Observer ticks rotate at most four adapters and pace repeated source requests. Credentials belong in the operator's controller environment, not model-visible JSON. Missing keys and provider outages defer that feed rather than stopping the mission.
+
+* `alpaca-iex`: operator-provided free `V100_ALPACA_KEY` and `V100_ALPACA_SECRET`, IEX latest quotes only. Settings specify ticker, registered symbol/feed and independently documented round-lot size. Source timestamps and raw prices are retained; IEX is one venue, not consolidated NBBO. PLN conversion uses an archived NBP reference and explicitly modeled FX costs, not a claim of executable FX. Corporate actions require independent records.
+* `sports-odds`: an existing free `V100_ODDS_KEY`, one region, h2h event, bookmaker and outcome. Current odds can be archived as research without claiming free historical odds. Executable paper mappings must exactly match the operator-verified instrument's event, bookmaker, outcome and final-score settlement rule. The provider supplies no stake liquidity: `paper_stake_cap` is a simulation ceiling. Once the event begins, final scores can settle the paper position even when odds disappear. Final-score grading supports documented draw/void-tie rules; bookmaker-specific exceptions and later score corrections are not automatically certified. A local 100-credit monthly budget prevents paid fallback.
+* `bybit-linear`: public contract ticker research without a key. Predicted funding and instantaneous marks cannot certify settled funding or the worst intrabar margin loss, so this adapter emits research evidence only. Generic independently documented interval/funding feeds can drive the existing isolated-linear paper engine; this ticker alone cannot.
+
+No new symbols, volume discounts, regional eligibility, operator credentials or bookmaker rules are inferred as certified. Stocks/sports still need registered instruments and actual documented fee profiles before paper fills. Fees, FX, drawdowns and losses remain in accounting. No real orders or guaranteed income are enabled.
+
+## Two-console launch
+
+`tools/start-windows-lab.ps1 -Revision RELEASE_COMMIT` starts the isolated RTX helper at 32768 context, batch 16 and 15% active-request time target, then shows helper/native logs and whole-board GPU/CPU/RAM readings in the same console. League pauses the helper. This is request pacing, not a hard per-process GPU/power cap or a crash fix; it never changes the global board power limit.
+
+The wrapper also starts a hidden CPU worker launcher waiting up to two hours for the authenticated mailbox. Its default UNC is `\\192.168.0.68\dane\tests\v100-owned-compute`; pass `-Mailbox` if the actual Samba share differs. Debian's updater configures `/srv/samba/dane/tests/v100-owned-compute` when the known parent folder exists. No Samba share or stored credentials are created. Until the UNC is reachable and the worker reports ready, external CPU compute is deferred, not operational. Windows CPU jobs keep the isolated 2-thread/4-GiB/150-second limits and pause for games or pressure.
+
+Run the pinned Debian updater in one SSH console, then use that same console for `chat`. The supervisor runs separately, so closing chat does not stop research. Boot autostart requires the user systemd service plus operator-enabled lingering. Power outages, unavailable workers and unprovisioned infrastructure cannot be described as uninterrupted operation.

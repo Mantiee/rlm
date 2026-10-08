@@ -5,6 +5,7 @@ The candidate implements build(config) -> nn.Module with byte-token logits
 Candidate code is arbitrary and must only be imported inside bubblewrap.
 """
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -54,13 +55,24 @@ def main() -> None:
     if not 1 <= parameters <= config["max_parameters"]:
         raise ValueError("Architecture exceeds its parameter budget")
     model.to(device)
+    if config.get("init_weights"):
+        initial = Path(config["init_weights"])
+        if hashlib.sha256(initial.read_bytes()).hexdigest() != config["init_weights_sha256"]:
+            raise ValueError("Scratch continuation weights changed")
+        model.load_state_dict(load_file(str(initial)), strict=True)
     # All parameters of this new network may learn; the Gemma parent is absent.
     model.requires_grad_(True)
     if mode == "train":
         records = json.loads(Path(data_path).read_text())
         examples = [encoded(row, config["context_window"]) for row in records]
         optimizer = torch.optim.AdamW(model.parameters(), lr=config["learning_rate"])
-        scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda")
+        scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda", init_scale=128)
+        validation = []
+        if config.get("validation_file"):
+            validation = [
+                encoded(row, config["context_window"])
+                for row in json.loads(Path(config["validation_file"]).read_text())
+            ]
         model.train()
         best = float("inf")
         for step in range(config["steps"]):
@@ -79,15 +91,41 @@ def main() -> None:
                 raise ValueError("Nonfinite scratch-model loss")
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
             scaler.step(optimizer)
             scaler.update()
             value = float(loss.detach())
+            score = value
+            if validation:
+                model.eval()
+                values = []
+                with torch.no_grad():
+                    for tokens, labels in validation:
+                        x = torch.tensor([tokens], device=device)
+                        y = torch.tensor([labels], device=device)
+                        with torch.autocast("cuda", dtype=torch.float16, enabled=device == "cuda"):
+                            logits = model(x)
+                        measured = torch.nn.functional.cross_entropy(
+                            logits.float().reshape(-1, 257), y.reshape(-1)
+                        )
+                        if not torch.isfinite(measured):
+                            raise ValueError("Nonfinite scratch validation loss")
+                        values.append(float(measured))
+                score = sum(values) / len(values)
+                model.train()
             print(
-                json.dumps({"step": step + 1, "loss": value, "parameters": parameters}), flush=True
+                json.dumps(
+                    {
+                        "step": step + 1,
+                        "loss": value,
+                        "validation_loss": score if validation else None,
+                        "parameters": parameters,
+                    }
+                ),
+                flush=True,
             )
-            if value < best:
-                best = value
+            if score < best:
+                best = score
                 save_file(
                     {
                         k: v.detach().cpu().contiguous().clone()
@@ -96,7 +134,7 @@ def main() -> None:
                     str(output / "weights.safetensors"),
                 )
         return
-    if mode != "predict":
+    if mode not in ("predict", "infer"):
         raise ValueError("Unknown architecture phase")
     model.load_state_dict(load_file(str(output / "weights.safetensors")))
     model.eval()
@@ -106,22 +144,38 @@ def main() -> None:
             if len(tokens) > config["context_window"]:
                 raise ValueError("Evaluation prompt exceeds byte context")
             generated = []
+            finish = "length"
+            sampling = case.get("sampling", {}) if mode == "infer" else {}
+            torch.manual_seed(sampling.get("seed", config["seed"]))
             for _ in range(config["max_new_tokens"]):
                 if len(tokens) >= config["context_window"]:
                     break
                 with torch.autocast("cuda", dtype=torch.float16, enabled=device == "cuda"):
                     logits = model(torch.tensor([tokens], device=device))
-                next_token = int(logits[0, -1].argmax())
+                scores = logits[0, -1].float()
+                if not torch.isfinite(scores).all():
+                    raise ValueError("Nonfinite scratch-model logits")
+                temperature = sampling.get("temperature", 0)
+                if temperature > 0:
+                    scores = scores / temperature
+                    top_k = min(sampling.get("top_k", 257), 257)
+                    scores[scores < torch.topk(scores, top_k).values[-1]] = -float("inf")
+                    ordered, ids = scores.sort(descending=True)
+                    probability = ordered.softmax(-1)
+                    remove = probability.cumsum(-1) - probability > sampling.get("top_p", 1)
+                    ordered[remove] = -float("inf")
+                    next_token = int(ids[torch.multinomial(ordered.softmax(-1), 1)])
+                else:
+                    next_token = int(scores.argmax())
                 if next_token in (10, 256):
+                    finish = "stop"
                     break
                 tokens.append(next_token)
                 generated.append(next_token)
-            print(
-                json.dumps(
-                    {"id": case["id"], "answer": bytes(generated).decode("utf-8", errors="replace")}
-                ),
-                flush=True,
-            )
+            row = {"id": case["id"], "answer": bytes(generated).decode("utf-8", errors="replace")}
+            if mode == "infer":
+                row.update(finish_reason=finish, completion_tokens=len(generated))
+            print(json.dumps(row), flush=True)
 
 
 if __name__ == "__main__":

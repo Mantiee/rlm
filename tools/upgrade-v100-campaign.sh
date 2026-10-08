@@ -33,7 +33,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$ROOT/research/requirements.continual.v10031.txt"
+uv --no-config pip freeze --python "$PY" > "$ROOT/research/requirements.continual.v10032.txt"
 LAB="$ROOT/bin/v100-continual"
 if [[ -e "$LAB" ]]; then cp -p "$LAB" "$LAB.backup-$(date -u +%Y%m%dT%H%M%SZ)"; fi
 TMP="$(mktemp "$ROOT/bin/.v100-continual.XXXXXX")"
@@ -48,7 +48,13 @@ bash -n "$TMP"
 chmod 755 "$TMP"
 mv "$TMP" "$LAB"
 "$LAB" --help >/dev/null
+if [[ -d /srv/samba/dane/tests ]]; then
+  "$LAB" compute-configure --mailbox /srv/samba/dane/tests/v100-owned-compute
+fi
 "$LAB" campaign-prepare "$@"
+PROFILE="$ROOT/research/campaign/current.json"
+ACCEPT_PROFILE="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["profile"])' "$PROFILE")"
+"$LAB" --profile "$ACCEPT_PROFILE" hardware-acceptance
 "$LAB" supervisor-start
 "$LAB" mission-status
 printf '\nGotowe. Jedna konsola: ~/ai-v100/bin/v100-continual chat\nRaport: ~/ai-v100/bin/v100-continual mission-report\nLogi: ~/ai-v100/bin/v100-continual mission-watch\nCtrl+C w czacie/logach nie zatrzymuje misji.\n'
