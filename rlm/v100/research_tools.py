@@ -841,16 +841,22 @@ class ResearchTools:
 
 def bounded_tool_result(root: Path, result: dict, limit: int = 4096) -> str:
     """Keep complete evidence on disk, exposing explicitly incomplete previews."""
-    encoded = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    encoded = json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False)
     raw = encoded.encode("utf-8")
     if len(raw) <= limit:
         return encoded
+    from rlm.v100.common import atomic_json
+
+    ordered = json.loads(encoded)
+    raw = (json.dumps(ordered, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode(
+        "utf-8"
+    )
     digest = hashlib.sha256(raw).hexdigest()
     folder = root / "research/tool-results"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{digest}.json"
     if not path.exists():
-        path.write_bytes(raw)
+        atomic_json(path, ordered)
     if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
         raise ValueError("Archived tool result changed")
     return json.dumps(

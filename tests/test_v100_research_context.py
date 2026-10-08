@@ -71,3 +71,18 @@ def test_oversized_catalog_uses_small_selector_and_keeps_argument_validation(sel
         assert generated[0]["max_tokens"] == 128
         assert "large" not in generated[1]["messages"][-1]["content"]
     assert client.sampling_args == original
+
+
+def test_parallel_workers_archive_identical_evidence_without_partial_reads(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    result = {"rows": [{"id": i, "text": "evidence" * 300} for i in range(20)]}
+    with ThreadPoolExecutor(max_workers=6) as workers:
+        previews = list(
+            workers.map(
+                lambda _: json.loads(research_tools.bounded_tool_result(tmp_path, result, 2048)),
+                range(24),
+            )
+        )
+    assert len({row["full_result_sha256"] for row in previews}) == 1
+    assert len(list((tmp_path / "research/tool-results").glob("*.json"))) == 1
