@@ -25,7 +25,7 @@ jobs:
       - name: Install isolated test dependencies and CPU Torch
         run: |
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0
-          python -m pip install . pytest==8.4.2 numpy==2.2.6 psutil==7.0.0 safetensors==0.5.3 tomli-w==1.2.0 transformers==5.17.0 peft==0.21.2 accelerate==1.15.0
+          python -m pip install . pytest==8.4.2 numpy==2.2.6 psutil==7.0.0 safetensors==0.8.0 tomli-w==1.2.0 transformers==5.17.0 peft==0.21.2 accelerate==1.15.0
       - name: Exercise controller, DPO gradients, tensor breeding and tiny model training
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
