@@ -124,6 +124,10 @@ def start(
 
 
 def stop(root: Path) -> dict:
+    if (root / "research/supervisor").exists():
+        atomic_json(
+            root / "research/supervisor/pause.json", {"reason": "operator requested mission-stop"}
+        )
     record = status(root)
     if not record["running"]:
         return record
@@ -325,6 +329,25 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     baseline = evaluate_suite(
                         client, serving, suite, directory / f"baseline-{context}.json"
                     )
+                if serving.get("resources", {}).get("public_benchmarks"):
+                    from rlm.v100.public_benchmarks import evaluate as public_evaluate
+
+                    public_path = directory / "public-baseline.json"
+                    note(directory, "official-public-baseline", context_window=context)
+                    try:
+                        public_evaluate(root, serving, public_path)
+                        serving["resources"]["public_baseline"] = str(public_path)
+                        serving["resources"]["public_baseline_sha256"] = file_hash(public_path)
+                    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                        serving["resources"].pop("public_baseline", None)
+                        atomic_json(
+                            directory / "public-baseline-deferred.json",
+                            {
+                                "error": str(error)[:500],
+                                "training": "paused until official baseline completes; research continues",
+                            },
+                        )
+                    atomic_json(path, serving)
             break
         except (RuntimeError, TimeoutError) as error:
             selected = None
@@ -371,9 +394,16 @@ def worker(root: Path, profile: dict, directory: Path) -> None:
 
     signal.signal(signal.SIGTERM, interrupted)
     try:
+        from contextlib import ExitStack
+
+        from rlm.v100 import desktop, drones
         from rlm.v100.mission_chat import alongside
 
-        with alongside(root, directory):
+        with ExitStack() as services:
+            services.enter_context(alongside(root, directory))
+            if profile.get("resources", {}).get("resident_drones"):
+                services.enter_context(drones.alongside(root))
+                services.enter_context(desktop.alongside(root))
             run(root, profile, directory)
     except KeyboardInterrupt:
         note(directory, "stopped", checkpoints="retained")

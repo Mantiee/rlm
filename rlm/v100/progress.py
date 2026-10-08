@@ -122,11 +122,33 @@ def report(root: Path) -> dict:
         "recent_exploratory_backtests": backtests,
         "evidence_required": "A timestamped independent test and net result after costs before claiming an income edge",
     }
+    from rlm.v100.planning import read as read_plans
+
+    value["plans"] = read_plans(root)
+    for name, path in (
+        ("drones", root / "research/drones-status.json"),
+        ("desktop", root / "research/desktop/status.json"),
+        ("supervisor", root / "research/supervisor/status.json"),
+        ("official_benchmark", root / "research/public-benchmarks/progress.json"),
+    ):
+        value[name] = json.loads(path.read_text()) if path.exists() else {"state": "not started"}
+    live_path = learning.get("live_profile")
+    active_profile = (
+        json.loads(Path(live_path).read_text()) if live_path and Path(live_path).exists() else {}
+    )
+    value["accepted_branch_versions"] = active_profile.get("resources", {}).get(
+        "branch_lineages", {}
+    )
     lines = [
         f"Phase: {value['phase']} | Running: {value['running']}",
         f"Learning cycles: {len(cycles)} | Accepted weight updates in this run: {value['accepted_weight_updates_this_run']}",
         f"Audited paper outcomes available for training: {len(outcomes)} (including losses; availability is not proof that an adapter used them)",
         f"Fixed baseline: {value['fixed_suite_baseline']['passed']}/{value['fixed_suite_baseline']['total']}",
+        "Accepted independent branches: "
+        + (", ".join(value["accepted_branch_versions"]) or "none yet; seeded from the same base"),
+        "Official benchmark: " + json.dumps(value["official_benchmark"]),
+        "Resident workers: " + json.dumps(value["drones"]),
+        "Private desktop: " + json.dumps(value["desktop"]),
     ]
     if cycles:
         lines.append("Last learning cycle: " + json.dumps(cycles[-1]))

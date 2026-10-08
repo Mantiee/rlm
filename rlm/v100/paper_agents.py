@@ -16,6 +16,7 @@ from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import helper_client, managed_server
 from rlm.v100.paper import PaperBook, sha
 from rlm.v100.paper_reports import scheduled_reports, write_report
+from rlm.v100.planning import read as read_plans
 from rlm.v100.researchers import compact_result, research_task, review_research
 
 PAPER_PROMPT = (
@@ -115,6 +116,7 @@ def paper_round(
     observe=None,
     income_research: bool = False,
     objective: str | None = None,
+    branches: tuple[str, ...] = ("A", "B"),
 ) -> list[dict]:
     if type(research_rounds) is not int or not 1 <= research_rounds <= 6:
         raise ValueError("Financial research rounds must be between 1 and 6")
@@ -122,7 +124,9 @@ def paper_round(
 
     results = []
     user_settings = preferences(book.root)
-    for branch in ("A", "B"):
+    if not branches or not set(branches) <= {"A", "B"}:
+        raise ValueError("Paper research needs A/B branches")
+    for branch in branches:
         if observe:
             observe(book)
         client_profile = copy.deepcopy(parent_profile)
@@ -201,6 +205,12 @@ def paper_round(
                 worker = helper_client(selected_profile, book.root, selected_branch)
                 available = getattr(worker, "research_tool_names", None)
                 worker.research_tool_names = {
+                    "get_plan",
+                    "set_plan",
+                    "schedule_drone",
+                    "drone_status",
+                    "cancel_drone",
+                    "run_research_python",
                     "propose_colab_trial",
                     "discover_spot_markets",
                     "register_paper_spot",
@@ -324,6 +334,7 @@ def paper_round(
                                 "persistent_research_memory": remembered,
                                 "income_objective": objective,
                                 "user_preferences": user_settings,
+                                "plans": read_plans(book.root),
                                 "income_scope": "Only PAPER portfolio actions execute here; other income ideas are research, not real sales or verified revenue",
                             },
                             ensure_ascii=False,

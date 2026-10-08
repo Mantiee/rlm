@@ -14,6 +14,18 @@ from rlm.v100.protection import file_hash
 # These files contain the externally supplied system prompts. Candidate code may
 # change its algorithms; the host prompt/evaluator/controller stay outside it.
 PROMPT_FILES = {
+    "rlm/v100/backtest_learning.py",
+    "rlm/v100/backtesting.py",
+    "rlm/v100/planning.py",
+    "rlm/v100/drones.py",
+    "rlm/v100/desktop.py",
+    "rlm/v100/public_proxy.py",
+    "rlm/v100/research_sandbox.py",
+    "rlm/v100/public_benchmarks.py",
+    "rlm/v100/benchmark_worker.py",
+    "rlm/v100/campaign.py",
+    "rlm/v100/supervisor.py",
+    "rlm/v100/colab_jobs.py",
     "rlm/v100/agent.py",
     "rlm/v100/experiments.py",
     "rlm/v100/researchers.py",

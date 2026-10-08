@@ -31,6 +31,11 @@ def record(profile: dict, directory: Path, verdict: dict) -> dict:
         parent = json.loads((directory / branch / "serving.json").read_text())
         adapter = directory / branch / "training/candidate"
         parent["training"].update(init_adapter=str(adapter), teacher_adapter=str(adapter))
+        public = directory / branch / "public-quality.json"
+        if parent.get("resources", {}).get("public_benchmarks"):
+            parent["resources"].update(
+                public_baseline=str(public), public_baseline_sha256=file_hash(public)
+            )
         parent.setdefault("resources", {}).pop("branch_lineages", None)
         path = directory / branch / "lineage.json"
         atomic_json(path, parent)

@@ -219,15 +219,18 @@ class PaperLearning:
             self.scope.close()
             raise
 
-    def research(self, profile: dict, helper: dict) -> None:
+    def research(self, profile: dict, helper: dict, branches: tuple[str, ...] = ("A", "B")) -> None:
         self.check()
+        from rlm.v100.goals import load_goal
+
+        objective = (load_goal(self.root) or {}).get("text", self.settings["objective"])
         book = PaperBook(self.root)
         try:
             book.note(
                 "controller",
                 {
                     "status": "income-objective",
-                    "objective": self.settings["objective"],
+                    "objective": objective,
                     "model_version": profile["runtime"]["model_version"],
                     "profile_sha256": sha(profile),
                 },
@@ -238,7 +241,8 @@ class PaperLearning:
                 helper,
                 self.settings["research_rounds"],
                 income_research=self.settings["other_income_rnd"],
-                objective=self.settings["objective"],
+                objective=objective,
+                **({"branches": branches} if branches != ("A", "B") else {}),
             )
             from rlm.v100.progress import report
 

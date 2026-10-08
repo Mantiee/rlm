@@ -26,6 +26,17 @@ def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], li
             from rlm.v100.insights import verify_record
 
             verify_record(record)
+        elif verification.get("kind") == "historical_postmortem":
+            from rlm.v100.backtest_learning import verified
+
+            if ledger is None:
+                raise ValueError("Historical reviews require the host split ledger")
+            report = Path(verification["report"]).resolve()
+            root = ledger.resolve().parents[2]
+            if not report.is_relative_to(root / "research/backtests") or record != verified(report):
+                raise ValueError(
+                    "Historical review differs from the independently rerun experiment"
+                )
         elif verification.get("kind") == "paper_outcome":
             if ledger is None:
                 raise ValueError("Paper labels require a host split ledger and audited paper book")
@@ -217,6 +228,8 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
                 "checkpointing.py",
                 "insights.py",
                 "paper_outcomes.py",
+                "backtest_learning.py",
+                "backtesting.py",
             )
         },
         "train_records": len(train),

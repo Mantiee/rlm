@@ -49,9 +49,26 @@ def try_child(
         report = evaluate_suite(
             helper_client(chosen, root), chosen, suite, output / "development-quality.json"
         )
+        public_passed = True
+        if chosen.get("resources", {}).get("public_benchmarks"):
+            from rlm.v100.protection import file_hash
+            from rlm.v100.public_benchmarks import compare, evaluate
+
+            public_path = output / "public-quality.json"
+            candidate = evaluate(root, chosen, public_path)
+            for parent in parents.values():
+                reference = Path(parent["resources"]["public_baseline"])
+                if file_hash(reference) != parent["resources"]["public_baseline_sha256"]:
+                    raise ValueError("Official ancestor report changed")
+                public_passed &= compare(json.loads(reference.read_text()), candidate)["passed"]
+            chosen["resources"].update(
+                public_baseline=str(public_path), public_baseline_sha256=file_hash(public_path)
+            )
+            atomic_json(serving, chosen)
     score = sum(c["passed"] for c in report["cases"])
     passed = (
-        not any(c.get("error") for c in report["cases"])
+        public_passed
+        and not any(c.get("error") for c in report["cases"])
         and all(compare_reports(parent, report)["passed"] for parent in [*gates, *quality])
         and score > max(sum(c["passed"] for c in p["cases"]) for p in quality)
     )

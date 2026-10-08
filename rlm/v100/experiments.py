@@ -470,6 +470,17 @@ def judge_duel(output: Path, baseline: dict | list[dict], reports: dict[str, dic
         if report["execution_sha256"] != execution_hash(serving):
             raise ValueError("Duel report has different execution conditions")
         gates = [compare_reports(parent, report) for parent in baselines]
+        if serving.get("resources", {}).get("public_benchmarks"):
+            from rlm.v100.public_benchmarks import compare as compare_public
+
+            reference = Path(serving["resources"]["public_baseline"])
+            if file_hash(reference) != serving["resources"]["public_baseline_sha256"]:
+                raise ValueError("Pinned official baseline changed")
+            public_parent = json.loads(reference.read_text())
+            public_child = json.loads((output / branch / "public-quality.json").read_text())
+            if public_child["identity"]["model_sha256"] != file_hash(model):
+                raise ValueError("Public benchmark belongs to a different candidate")
+            gates.append(compare_public(public_parent, public_child))
         performance[branch] = load_performance(output / branch, model, report)
         results[branch] = {
             "eligible": all(gate["passed"] for gate in gates),

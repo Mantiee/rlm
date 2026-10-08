@@ -160,6 +160,9 @@ def extend_pool(pool: Path, root: Path, destination: Path) -> bool:
     from rlm.v100.paper_outcomes import records as outcome_records
 
     extra.extend(outcome_records(root))
+    from rlm.v100.backtest_learning import records as historical_records
+
+    extra.extend(historical_records(root))
     combined = {record_id(record): record for record in original}
     before = len(combined)
     combined.update({record_id(record): record for record in extra})

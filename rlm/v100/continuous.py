@@ -107,17 +107,83 @@ def learn_loop(
         if paper is not None:
             scopes.enter_context(paper)
         while cycles == 0 or cycle < cycles:
-            if load_goal(root, suite) != goal:
-                raise ValueError("User objective changed; start a separate learning experiment")
+            latest_goal = load_goal(root, suite)
+            if latest_goal != goal:
+                state.setdefault("goal_changes", []).append(
+                    {"previous": goal, "next": latest_goal, "cycle": cycle + 1}
+                )
+                goal = latest_goal
+                state["goal"] = goal
+                # User chat can steer the next experiment. Completed trials retain
+                # their old objective; the independent regression suite stays fixed.
             cycle += 1
             prepare_inputs(root, current_pool, suite)
             atomic_json(live, current)
             save_progress(root, output, state)
             if paper is not None:
                 paper.phase("serving-rnd", cycle, current)
+            active_branches = ("A", "B")
+            if current.get("resources", {}).get("independent_branch_serving"):
+                parents, _ = read(current)
+                separate_branches = {
+                    branch: parent
+                    for branch, parent in parents.items()
+                    if parent["server"]["model"] != current["server"]["model"]
+                }
+                active_branches = tuple(
+                    branch for branch in ("A", "B") if branch not in separate_branches
+                )
+                for branch, parent in separate_branches.items():
+                    branch_path = output / f"accepted-{branch}.json"
+                    atomic_json(branch_path, parent)
+                    atomic_json(output.parent / "serving-active.json", parent)
+                    with managed_server(branch_path, root, output / f"accepted-{branch}.log"):
+                        with waiting_researcher(
+                            researcher_path, root, output / "researcher.log", fallback=parent
+                        ) as helper:
+                            try:
+                                if paper is not None:
+                                    paper.research(parent, helper, branches=(branch,))
+                                else:
+                                    research_task(
+                                        helper_client(parent, root, branch),
+                                        branch,
+                                        {
+                                            "role": "researcher",
+                                            "brief": "Plan a new independently testable improvement against the user goal.",
+                                        },
+                                        [],
+                                        root,
+                                    )
+                            except (ValueError, RuntimeError, OSError) as error:
+                                atomic_json(
+                                    output / f"lineage-error-{cycle:04d}-{branch}.json",
+                                    {"error": str(error)[:400]},
+                                )
+            atomic_json(output.parent / "serving-active.json", current)
             # Serve the current version during R&D/waiting. Only our own inference
             # process is stopped for the training phase; never another user's server.
             with managed_server(live, root, output / "live-server.log"):
+                if (
+                    current.get("resources", {}).get("public_benchmarks")
+                    and not current["resources"].get("public_baseline")
+                    and time.time() >= state.get("public_retry_after", 0)
+                ):
+                    from rlm.v100.public_benchmarks import evaluate as public_evaluate
+
+                    public_path = output / "public-baseline.json"
+                    try:
+                        public_evaluate(root, current, public_path)
+                        current["resources"].update(
+                            public_baseline=str(public_path),
+                            public_baseline_sha256=file_hash(public_path),
+                        )
+                        atomic_json(live, current)
+                    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                        state["public_retry_after"] = time.time() + 3600
+                        atomic_json(
+                            output / "public-baseline-deferred.json", {"error": str(error)[:500]}
+                        )
                 with waiting_researcher(
                     researcher_path, root, output / "researcher.log", fallback=current
                 ) as helper:
@@ -155,11 +221,14 @@ def learn_loop(
                     )
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         futures = (
-                            {branch: executor.submit(helper_work, branch) for branch in ("A", "B")}
+                            {
+                                branch: executor.submit(helper_work, branch)
+                                for branch in active_branches
+                            }
                             if separate
                             else {}
                         )
-                        for branch in ("A", "B"):
+                        for branch in active_branches:
                             try:
                                 result = (
                                     futures[branch].result() if separate else helper_work(branch)
@@ -174,7 +243,16 @@ def learn_loop(
                                 )
                     if paper is not None:
                         try:
-                            paper.research(current, helper)
+                            if active_branches:
+                                paper.research(
+                                    current,
+                                    helper,
+                                    **(
+                                        {"branches": active_branches}
+                                        if active_branches != ("A", "B")
+                                        else {}
+                                    ),
+                                )
                         except (ValueError, RuntimeError, OSError) as error:
                             atomic_json(
                                 output / f"income-error-{cycle:04d}.json",
@@ -215,7 +293,13 @@ def learn_loop(
                         continue
             # Avoid training indefinitely on a stale dataset. Its immutable prior
             # snapshots and complete optimizer checkpoints are never overwritten.
-            if len(expanded.read_text().splitlines()) > 10000:
+            if current.get("resources", {}).get("public_benchmarks") and not current[
+                "resources"
+            ].get("public_baseline"):
+                reason = (
+                    "official baseline incomplete; research continues and grading retries later"
+                )
+            elif len(expanded.read_text().splitlines()) > 10000:
                 reason = "verified replay exceeds 10000 records"
             elif shutil.disk_usage(output).free < 160 * 2**30:
                 reason = "less than 160 GiB free disk for independent A/B exports"
@@ -283,6 +367,11 @@ def learn_loop(
                 current = json.loads((directory / branch / "serving.json").read_text())
                 current.setdefault("resources", {})["branch_lineages"] = old_lineages
                 current["resources"]["branch_lineages"] = record(current, directory, verdict)
+                if current["resources"].get("public_benchmarks"):
+                    public = directory / branch / "public-quality.json"
+                    current["resources"].update(
+                        public_baseline=str(public), public_baseline_sha256=file_hash(public)
+                    )
                 current["training"].update(
                     init_adapter=str(adapter_path), teacher_adapter=str(adapter_path)
                 )

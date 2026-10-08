@@ -152,7 +152,9 @@ def waiting_researcher(
         with ExitStack() as scope:
             try:
                 actual = scope.enter_context(managed_server(profile_path, root, log_path))
-            except (requests.ConnectionError, requests.Timeout) as error:
+            except (requests.ConnectionError, requests.Timeout, ValueError) as error:
+                if isinstance(error, ValueError) and fallback is None:
+                    raise
                 attempt += 1
                 event = {
                     "phase": "waiting-for-remote-helper",
@@ -463,7 +465,24 @@ def run_duel(
     # together. No arbitrary host server is stopped and no hidden audit is shared.
     with resource_lease(root, "cuda"):
         if researcher_path:
-            with managed_server(researcher_path, root, output / "researcher.log") as researcher:
+            with ExitStack() as resources:
+                try:
+                    researcher = resources.enter_context(
+                        managed_server(researcher_path, root, output / "researcher.log")
+                    )
+                except (requests.RequestException, OSError, ValueError) as error:
+                    from rlm.v100.remote_helper import remote_profile
+
+                    if not remote_profile(load_profile(researcher_path, root)):
+                        raise
+                    atomic_json(
+                        output / "helper-deferred.json",
+                        {
+                            "detail": str(error)[:400],
+                            "scope": "Local A/B learning continues; no unverified remote output used",
+                        },
+                    )
+                    researcher = None
                 reports = run_branches(
                     output, root, suite, bundle, researcher, train_timeout, code_candidates
                 )
@@ -516,6 +535,10 @@ def run_branches(
             assert_served_expert(client, serving, root)
             report_path = output / branch / "development-quality.json"
             reports[branch] = evaluate_suite(client, serving, suite, report_path)
+            if serving.get("resources", {}).get("public_benchmarks"):
+                from rlm.v100.public_benchmarks import evaluate as public_evaluate
+
+                public_evaluate(root, serving, output / branch / "public-quality.json")
             if results:
                 review = review_research(client, branch, results, root)
                 atomic_json(output / branch / "research-review.json", review)

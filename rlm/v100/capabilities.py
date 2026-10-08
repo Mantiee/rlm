@@ -33,7 +33,9 @@ def audit(root: Path) -> dict:
         "audited_paper_outcomes": evidence["available_audited_paper_outcomes"],
         "research_policy": settings(root),
         "user_controls": {
-            "chat": "persistent queue; during exclusive training messages wait",
+            "chat": "persistent queue; accepted V100 while available, explicitly labeled RTX delegate during exclusive training",
+            "long_term_goal": "operator /goal or /cel command only; model actions cannot change it",
+            "short_mid_plans": "versioned plans, model or operator can revise",
             "directives": "next R&D request",
             "alerts": "local paper proposals, including rejection flag",
         },
@@ -46,6 +48,9 @@ def audit(root: Path) -> dict:
         "persistent_branch_lineages": list(profile.get("resources", {}).get("branch_lineages", {})),
         "hybrid_memory_prepared": (root / "research/mission-semantic.json").exists(),
         "own_code_prepared": (root / "research/self-code-source.json").exists(),
+        "desktop_prepared": (root / "research/desktop/manifest.json").exists(),
+        "public_benchmarks_prepared": (root / "research/public-benchmarks/current.json").exists(),
+        "resident_workers": evidence["drones"],
         "implemented": "LoRA SFT, optimizer checkpoints, replay/KL, independent finite gates, bounded CPU architecture pilots, accepted-parent crossbreeding, source drones and sandbox code candidates",
         "not_established": [
             "repeatable income edge",
@@ -61,7 +66,7 @@ def audit(root: Path) -> dict:
             "automatic account creation/browser model consultation",
             "distributed free Colab workers",
         ],
-        "outcome_learning_scope": "Audited retrospective trade accounting including losses; not a proof that the decision policy learned to make money",
+        "outcome_learning_scope": "Audited retrospective trade accounting and independently recomputed historical reviews, including losses; not profit-policy RL or proof of a profitable decision policy",
         "helper_limit_scope": "30% request active-time target in R&D, not a hard per-process GPU utilization/power cap; game guard pauses only the isolated helper",
         "runtime_scope": "Requested configuration; actual execution requires native logs and on-device measurements",
     }

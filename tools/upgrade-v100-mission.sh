@@ -36,14 +36,16 @@ uv --no-config pip freeze --python "$PY" > "$ROOT/research/requirements.continua
 "$PY" <<'PY'
 import json, os
 from pathlib import Path
-from rlm.v100.common import load_profile
+from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.mission import start
 root = Path(os.environ['AI_V100_ROOT'])
 receipt = json.loads((root/'research/prepared-mission.json').read_text())
 profile = load_profile(Path(receipt['profile']), root)
 profile.setdefault('resources', {})['mission_max_context'] = 131072
 profile['server']['flash_attention'] = 'on'
-print(json.dumps(start(root, profile), indent=2), flush=True)
+path = root/'research/preparation/start-profile.json'
+atomic_json(path, profile)
+print(json.dumps(start(root, path, max_context=131072, flash_attention='on'), indent=2), flush=True)
 PY
 "$LAB" mission-status
 printf '\nFollow progress: ~/ai-v100/bin/v100-continual mission-watch\nChat: ~/ai-v100/bin/v100-continual chat\nReport: ~/ai-v100/bin/v100-continual mission-report\n'

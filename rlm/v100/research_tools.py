@@ -32,6 +32,66 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "read_master_code",
+        "Read the full pinned master source, including readonly controller files. Empty filename lists files. Copies inside the guest can change; the running controller remains protected.",
+        {"filename": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}},
+    ),
+    tool_schema(
+        "sandbox_state",
+        "Read the private desktop resource and readiness status; no host shell access.",
+        {},
+    ),
+    tool_schema(
+        "sandbox_run",
+        "Execute a Linux shell script only inside the private Debian VM, with guest-root permissions and public HTTP(S). /workspace persists; /opt/master-source is readonly. No host files, credentials, LAN or GPU access. Prefer schedule_drone kind desktop for background work.",
+        {
+            "script": {"type": "string", "maxLength": 16000},
+            "seconds": {"type": "integer", "minimum": 1, "maximum": 120},
+        },
+    ),
+    tool_schema(
+        "sandbox_gui",
+        "Observe the private Linux GUI through the RTX vision helper, or click/type/key inside it. Coordinates use 1280x800. No control of host desktop. Supply empty text and x=y=0 for observe.",
+        {
+            "action": {"type": "string", "enum": ["observe", "click", "type", "key"]},
+            "text": {"type": "string", "maxLength": 2000},
+            "x": {"type": "integer"},
+            "y": {"type": "integer"},
+        },
+    ),
+    tool_schema("get_plan", "Read the user's long-term goal and current short/mid plans.", {}),
+    tool_schema(
+        "set_plan",
+        "Plan or replan the next tasks against the user's goal. Record concrete success criteria. User-owned long-term goal is changed through chat only.",
+        {
+            "horizon": {"type": "string", "enum": ["short", "mid"]},
+            "text": {"type": "string", "maxLength": 2000},
+        },
+    ),
+    tool_schema(
+        "schedule_drone",
+        "Queue a persistent source watcher, isolated Python experiment, RTX researcher or critic. Jobs continue during V100 evaluation/training. Source payload is a public URL; Python gets fetch(url) for public internet and /work for files. Other payloads are short task briefs. interval=0 runs once; 300..86400 repeats. At most two CPU/source jobs and one RTX job execute simultaneously.",
+        {
+            "kind": {
+                "type": "string",
+                "enum": ["source", "python", "researcher", "critic", "desktop"],
+            },
+            "payload": {"type": "string", "maxLength": 12000},
+            "interval": {"type": "integer", "minimum": 0, "maximum": 86400},
+        },
+    ),
+    tool_schema("drone_status", "Read bounded worker status, failures and recent results.", {}),
+    tool_schema(
+        "cancel_drone",
+        "Stop scheduling an unnecessary worker; an in-flight bounded job may finish.",
+        {"identity": {"type": "string"}},
+    ),
+    tool_schema(
+        "run_research_python",
+        "Run a CPU Python experiment in a private namespace: two CPUs, 3GiB address space, 60s. fetch(url) reads public internet through an audited GET broker; write artifacts in /work. No host home, credentials, GPU, system prompts or direct LAN network. Results remain unverified experiments.",
+        {"code": {"type": "string", "maxLength": 12000}},
+    ),
+    tool_schema(
         "discover_spot_markets",
         "Discover public USD spot pair codes and venue minimums from primary Kraken data; choose what to research rather than a fixed crypto list.",
         {"limit": {"type": "integer", "minimum": 1, "maximum": 100}},
@@ -309,6 +369,67 @@ class ResearchTools:
         self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name == "read_master_code" and set(arguments) == {"filename", "offset"}:
+            from rlm.v100.code_lab import source_files
+
+            source = Path(
+                json.loads((self.root / "research/self-code-source.json").read_text())["source"]
+            )
+            files = source_files(source)
+            filename, offset = arguments["filename"], arguments["offset"]
+            if type(offset) is not int or offset < 0:
+                raise ValueError("Invalid source offset")
+            if not filename:
+                return {"files": files, "scope": "Full pinned own code, read only"}
+            if filename not in files:
+                raise ValueError("Only tracked own-source files can be read")
+            path = (source / filename).resolve()
+            if not path.is_relative_to(source.resolve()) or path.stat().st_size > 2 * 2**20:
+                raise ValueError("Source file is outside the read budget")
+            content = path.read_text()
+            return {
+                "filename": filename,
+                "offset": offset,
+                "text": content[offset : offset + 6000],
+                "remaining": max(0, len(content) - offset - 6000),
+            }
+        if name == "sandbox_state" and not arguments:
+            path = self.root / "research/desktop/status.json"
+            return (
+                json.loads(path.read_text())
+                if path.exists()
+                else {"running": False, "state": "not started or not prepared"}
+            )
+        if name == "sandbox_run" and set(arguments) == {"script", "seconds"}:
+            from rlm.v100.desktop import run
+
+            return run(self.root, **arguments)
+        if name == "sandbox_gui" and set(arguments) == {"action", "text", "x", "y"}:
+            from rlm.v100.desktop import gui
+
+            return gui(self.root, **arguments)
+        if name in ("get_plan", "set_plan"):
+            from rlm.v100.planning import read, update
+
+            if name == "get_plan" and not arguments:
+                return read(self.root)
+            if name == "set_plan" and set(arguments) == {"horizon", "text"}:
+                return update(self.root, arguments["horizon"], arguments["text"], self.branch)
+            raise ValueError("Invalid plan request")
+        if name in ("schedule_drone", "drone_status", "cancel_drone"):
+            from rlm.v100.drones import cancel, inspect, schedule
+
+            if name == "drone_status" and not arguments:
+                return {"jobs": inspect(self.root)}
+            if name == "cancel_drone" and set(arguments) == {"identity"}:
+                return cancel(self.root, arguments["identity"])
+            if name == "schedule_drone" and set(arguments) == {"kind", "payload", "interval"}:
+                return schedule(self.root, self.branch, **arguments)
+            raise ValueError("Invalid drone request")
+        if name == "run_research_python" and set(arguments) == {"code"}:
+            from rlm.v100.research_sandbox import run
+
+            return run(self.root, self.branch, arguments["code"])
         if name in ("discover_spot_markets", "register_paper_spot"):
             from rlm.v100.spot_bootstrap import discover, prepare
 

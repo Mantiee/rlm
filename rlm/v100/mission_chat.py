@@ -1,7 +1,7 @@
 """Persistent user chat/control queue serviced alongside the owned mission.
 
 No second model is loaded. During exclusive training, requests remain queued.
-User directives steer R&D; they never rewrite the fixed goal or quality gates.
+User directives steer R&D. Only explicit /goal commands change the long-term goal.
 """
 
 import copy
@@ -86,10 +86,15 @@ def apply_actions(root: Path, actions: list[dict]) -> list[dict]:
         }:
             raise ValueError("Invalid chat action keys")
         kind = action["kind"]
-        if kind not in ("directive", "alerts", "budget") or type(action["enabled"]) is not bool:
+        if (
+            kind not in ("directive", "alerts", "budget", "plan_mid", "plan_short", "sandbox")
+            or type(action["enabled"]) is not bool
+        ):
             raise ValueError("Unknown chat control action")
         if not isinstance(action["text"], str) or len(action["text"]) > 2000:
             raise ValueError("Directive exceeds its budget")
+        if kind in ("plan_mid", "plan_short", "sandbox") and not action["text"].strip():
+            raise ValueError("Goal and plan must not be empty")
         if kind == "budget":
             target = action["target"]
             maximum = 8192 if target == "master" else 4096
@@ -113,6 +118,14 @@ def apply_actions(root: Path, actions: list[dict]) -> list[dict]:
                     **{k: action[k] for k in ("target", "thinking", "max_tokens", "batch_tokens")},
                 )
             )
+        elif action["kind"] in ("plan_mid", "plan_short"):
+            from rlm.v100.planning import update
+
+            receipts.append(update(root, action["kind"].split("_")[1], action["text"], "user"))
+        elif action["kind"] == "sandbox":
+            from rlm.v100.drones import schedule
+
+            receipts.append(schedule(root, "A", "desktop", action["text"], 0))
         elif action["kind"] == "directive":
             chosen["directive"] = action["text"]
             receipts.append({"directive": action["text"], "effective": "next R&D request"})
@@ -148,7 +161,10 @@ def emit_alert(root: Path, branch: str, proposal: dict, rejected: bool) -> None:
 
 def schema() -> dict:
     fields = {
-        "kind": {"type": "string", "enum": ["directive", "alerts", "budget"]},
+        "kind": {
+            "type": "string",
+            "enum": ["directive", "alerts", "budget", "plan_mid", "plan_short", "sandbox"],
+        },
         "text": {"type": "string", "maxLength": 2000},
         "target": {"type": "string", "enum": ["master", "helper"]},
         "thinking": {"type": "boolean"},
@@ -180,10 +196,23 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
     from rlm.v100.mission import status
+    from rlm.v100.planning import read as read_plans
+    from rlm.v100.planning import update as update_plan
     from rlm.v100.research_policy import settings
 
+    # Authorization comes from the authenticated local user's exact command,
+    # never from a model-generated action or text retrieved from the internet.
+    message = request["message"].strip()
+    if message.startswith(("/goal ", "/cel ")):
+        receipt = update_plan(root, "long", message.split(" ", 1)[1], "user")
+        return {
+            "answer": "Zmieniono cel długoterminowy. Następna runda przeplanuje zadania.",
+            "actions": [],
+            "applied": [receipt],
+        }
+
     mission = status(root)
-    paths = [directory / "learning/live.json"]
+    paths = [directory / "serving-active.json", directory / "learning/live.json"]
     current = mission.get("state", {}).get("live_profile")
     if current:
         paths.append(Path(current))
@@ -197,9 +226,27 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
     client.activity_actor = "chat"
     # The endpoint is reused for candidate evaluation. Chat waits rather than
     # talking to an unaccepted candidate or opening another GPU server.
-    actual = client.request("/props")
-    if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
-        raise requests.ConnectionError("Waiting for the accepted serving model")
+    delegated = False
+    try:
+        actual = client.request("/props")
+        if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
+            raise requests.ConnectionError("Waiting for the accepted serving model")
+    except (requests.RequestException, OSError):
+        if not profile.get("resources", {}).get("interactive_lab"):
+            raise
+        from rlm.v100.remote_helper import remote_profile, selected_helper
+
+        helper = load_profile(selected_helper(root), root)
+        if not remote_profile(helper):
+            raise requests.ConnectionError(
+                "Master busy; no independent remote chat helper"
+            ) from None
+        client = helper_client(helper, root)
+        client.identity()
+        client.sampling_args["max_tokens"] = 2048
+        client.enable_thinking = False
+        client.activity_actor = "chat-delegate"
+        delegated = True
     with connect(root) as db:
         history = db.execute(
             "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 3"
@@ -209,7 +256,9 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
             "role": "system",
             "content": (
                 "Answer the authenticated local user's chat in Polish. Return answer and explicit requested actions. "
-                "An ordinary question needs no actions. Steer R&D using directive; do not change the fixed goal, "
+                "An ordinary question needs no actions. The long-term goal changes ONLY through the user's /goal or /cel command; "
+                "you cannot change it yourself. Explain that command when asked to change the long-term goal. Use "
+                "plan_mid for the medium-term plan and plan_short for the next tasks. Steer R&D using directive. Do not change the "
                 "system prompt, quality gates or money ledger. Enable local paper alerts using alerts; the rule steers "
                 "future R&D but is not a guaranteed executable condition. Budget selects master/helper thinking and "
                 "tokens (master256..8192/helper256..4096). Helper batch16; master128/256/512 is a benchmark proposal, "
@@ -217,6 +266,10 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
                 "Describe missing capabilities honestly. Actions apply only after host validation; do not claim "
                 "weights changed, profit learned or settings executed before the host receipt. "
                 "Unused action fields: text empty, target master, thinking false, max_tokens256, batch_tokens128, enabled false."
+                " Use sandbox action to queue a shell script (text) inside the private Debian VM, never the host. "
+                "The guest has /workspace for persistent files and /opt/master-source as readonly own source; "
+                "it may copy source, install tools and download files within its resource budget. "
+                "The work continues independently; report the queued job ID instead of claiming it already ran."
             ),
         }
     ]
@@ -234,19 +287,36 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
                     "mission": mission,
                     "settings": settings(root),
                     "preferences": preferences(root),
+                    "plans": read_plans(root),
                 },
                 ensure_ascii=False,
             ),
         }
     )
-    result = json.loads(
-        native_turn(client, messages, response_format={"type": "json_object", "schema": schema()})[
-            "content"
-        ]
-    )
+    if profile.get("resources", {}).get("interactive_lab"):
+        from rlm.v100.research_tools import research_turn
+
+        client.research_owner = "A"
+        client.research_tool_names = {
+            "get_plan",
+            "drone_status",
+            "sandbox_state",
+            "read_master_code",
+            "sandbox_gui",
+            "search_memory",
+            "read_source",
+        }
+        result = json.loads(research_turn(client, messages, schema(), root)["content"])
+    else:
+        result = json.loads(
+            native_turn(
+                client, messages, response_format={"type": "json_object", "schema": schema()}
+            )["content"]
+        )
     if set(result) != {"answer", "actions"} or not isinstance(result["answer"], str):
         raise ValueError("Invalid chat response")
     result["applied"] = apply_actions(root, result["actions"])
+    result["responder"] = {"model": client.model_name, "delegated_while_master_busy": delegated}
     result["scope"] = (
         "Weights change only through independently tested training; chat shares the inference queue"
     )

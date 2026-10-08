@@ -29,6 +29,7 @@ HELPER_WORKLOAD_LOCK = threading.Lock()
 HELPER_PACING: dict[str, dict] = {}
 FULL_METADATA = "ollama-full-v1"
 STABLE_METADATA = "ollama-stable-v2"
+ORDERED_METADATA = "ollama-canonical-v3"
 
 
 def helper_boot_id() -> str:
@@ -86,7 +87,7 @@ def validate_remote(profile: dict) -> None:
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("model_digest", ""))
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("metadata_sha256", ""))
         or resources.get("metadata_hash_scheme", FULL_METADATA)
-        not in (FULL_METADATA, STABLE_METADATA)
+        not in (FULL_METADATA, STABLE_METADATA, ORDERED_METADATA)
         or runtime["context_window"] not in (8192, 16384, 32768, 65536, 131072)
         or not 256 <= runtime["max_output_tokens"] <= 8192
         or server["slots"] != 1
@@ -99,16 +100,39 @@ def validate_remote(profile: dict) -> None:
 
 
 def metadata_sha(info: dict, scheme: str = FULL_METADATA) -> str:
-    if scheme not in (FULL_METADATA, STABLE_METADATA):
+    if scheme not in (FULL_METADATA, STABLE_METADATA, ORDERED_METADATA):
         raise ValueError("Unknown remote metadata hash scheme")
     # modified_at is a local manifest timestamp, not a model behavior field.
     # Keep every other field, including the generated modelfile, renderer,
     # parameters, tokenizer and template. Legacy hashes retain their old meaning.
     chosen = (
         {key: value for key, value in info.items() if key != "modified_at"}
-        if scheme == STABLE_METADATA
+        if scheme in (STABLE_METADATA, ORDERED_METADATA)
         else info
     )
+    if scheme == ORDERED_METADATA:
+        chosen = copy.deepcopy(chosen)
+        parameters = chosen.get("parameters", "")
+        if isinstance(parameters, str):
+            chosen["parameters"] = "\n".join(
+                sorted(
+                    parameters.splitlines(),
+                    key=lambda line: line.split(maxsplit=1)[0] if line.strip() else "",
+                )
+            )
+        lines = chosen.get("modelfile", "").splitlines()
+        indices, quoted = [], False
+        for index, line in enumerate(lines):
+            if not quoted and line.startswith("PARAMETER "):
+                indices.append(index)
+            if line.count('"""') % 2:
+                quoted = not quoted
+        values = sorted(
+            (lines[index] for index in indices), key=lambda line: line.split(maxsplit=2)[1]
+        )
+        for index, value in zip(indices, values, strict=True):
+            lines[index] = value
+        chosen["modelfile"] = "\n".join(lines)
     return hashlib.sha256(json.dumps(chosen, sort_keys=True).encode()).hexdigest()
 
 
@@ -127,7 +151,7 @@ class OllamaResearchClient(LlamaCppClient):
     ):
         origin = private_origin(base_url)
         validate_workload(helper_batch_tokens, helper_duty_percent)
-        if metadata_hash_scheme not in (FULL_METADATA, STABLE_METADATA):
+        if metadata_hash_scheme not in (FULL_METADATA, STABLE_METADATA, ORDERED_METADATA):
             raise ValueError("Unknown remote metadata hash scheme")
         if kwargs.get("model_name", MODEL) != MODEL or not re.fullmatch(
             r"[0-9a-f]{64}", model_digest
@@ -156,11 +180,12 @@ class OllamaResearchClient(LlamaCppClient):
         with HELPER_WORKLOAD_LOCK, ExitStack() as scope:
             path = None
             boot = helper_boot_id()
-            if self.activity_root:
+            pacing_root = self.activity_root or getattr(self, "pacing_root", None)
+            if pacing_root:
                 import fcntl
 
                 name = hashlib.sha256(self.base_url.encode()).hexdigest()[:16]
-                path = self.activity_root / "research/state" / f"helper-{name}.workload.json"
+                path = Path(pacing_root) / "research/state" / f"helper-{name}.workload.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 lease = scope.enter_context(path.with_suffix(".lock").open("a"))
                 fcntl.flock(lease, fcntl.LOCK_EX)
@@ -511,3 +536,45 @@ def selected_helper(root: Path) -> Path:
     if not path.exists():
         raise ValueError("Missing prepared researcher")
     return path
+
+
+def canonicalize_remote(root: Path) -> dict:
+    """Rebind only proven parameter-order/date changes; never silently trust new templates."""
+    from rlm.v100.common import load_profile
+    from rlm.v100.competition import helper_client
+    from rlm.v100.mission import status
+
+    if status(root)["running"]:
+        raise ValueError("Stop the mission before metadata migration")
+    path = root / "research/researcher-rtx3090.json"
+    original = json.loads(path.read_text())
+    profile = load_profile(path, root)
+    client = helper_client(profile, root)
+    if client.metadata_hash_scheme == ORDERED_METADATA:
+        client.identity()
+        return {"status": "canonical identity verified"}
+    snapshot = Path(profile["resources"]["metadata_snapshot"])
+    if not snapshot.is_absolute():
+        snapshot = root / snapshot
+    previous = json.loads(snapshot.read_text())
+    if metadata_sha(previous, client.metadata_hash_scheme) != client.metadata_sha256:
+        raise ValueError("Previous metadata snapshot does not match the recorded pin")
+    client.metadata_sha256 = ""
+    info = client.identity()
+    client.loaded()
+    if metadata_sha(info, ORDERED_METADATA) != metadata_sha(previous, ORDERED_METADATA):
+        raise ValueError("Metadata changed beyond parameter order/date; inspect the exact diff")
+    audit = root / "research/helper-metadata" / f"canonical-{time.time_ns()}"
+    atomic_json(audit / "profile-before.json", original)
+    atomic_json(audit / "show.json", info)
+    original["resources"].update(
+        metadata_hash_scheme=ORDERED_METADATA,
+        metadata_sha256=metadata_sha(info, ORDERED_METADATA),
+        metadata_snapshot=str((audit / "show.json").relative_to(root)),
+    )
+    validate_remote(original)
+    atomic_json(path, original)
+    return {
+        "status": "parameter ordering normalized; semantic fields and manifest pinned",
+        "audit": str(audit),
+    }

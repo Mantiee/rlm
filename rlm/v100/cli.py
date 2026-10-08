@@ -108,6 +108,38 @@ def main() -> None:
     from rlm.v100.paper_cli import add_commands
 
     add_commands(sub)
+    campaign = sub.add_parser(
+        "campaign-prepare",
+        help="Connect measured profiles, independent branches, resident workers, official tests and private desktop",
+    )
+    campaign.add_argument("--no-desktop", action="store_true")
+    campaign.add_argument("--no-benchmarks", action="store_true")
+    sub.add_parser(
+        "supervisor-start", help="Start the owned persistent restart supervisor using --profile"
+    )
+    sub.add_parser(
+        "prepare-desktop", help="Prepare an isolated Debian GUI VM with private packages and disk"
+    )
+    official = sub.add_parser(
+        "benchmark-prepare",
+        help="Pin official public LiveBench tasks and graders in a separate venv",
+    )
+    official.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="0: all supported non-coding cases; default: bounded regression panel",
+    )
+    official_run = sub.add_parser(
+        "benchmark-run",
+        help="Evaluate a served accepted model or RTX helper with official public graders",
+    )
+    official_run.add_argument("--output", type=Path, required=True)
+    colab_import = sub.add_parser(
+        "colab-import",
+        help="Import bounded external metrics without executing code or loading pickle weights",
+    )
+    colab_import.add_argument("archive", type=Path)
     sub.add_parser("doctor")
     chat = sub.add_parser(
         "chat", help="Talk to the running mission and issue validated R&D controls"
@@ -344,6 +376,48 @@ def main() -> None:
     checks.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
+    if args.command == "campaign-prepare":
+        from rlm.v100.campaign import prepare
+
+        print(
+            "CAMPAIGN PROFILE:",
+            prepare(root, args.profile, not args.no_desktop, not args.no_benchmarks),
+            flush=True,
+        )
+        return
+    if args.command == "supervisor-start":
+        from rlm.v100.supervisor import install
+
+        path = args.profile or Path(
+            json.loads((root / "research/campaign/current.json").read_text())["profile"]
+        )
+        print(json.dumps(install(root, path), indent=2), flush=True)
+        return
+    if args.command == "prepare-desktop":
+        from rlm.v100.desktop import prepare
+
+        print(json.dumps(prepare(root), indent=2), flush=True)
+        return
+    if args.command == "benchmark-prepare":
+        from rlm.v100.public_benchmarks import prepare
+
+        print("PUBLIC SNAPSHOT:", prepare(root, args.limit), flush=True)
+        return
+    if args.command == "benchmark-run":
+        from rlm.v100.public_benchmarks import evaluate
+
+        if args.profile is None:
+            raise ValueError("Pass the exact served model --profile")
+        print(
+            json.dumps(evaluate(root, load_profile(args.profile, root), args.output), indent=2),
+            flush=True,
+        )
+        return
+    if args.command == "colab-import":
+        from rlm.v100.colab_jobs import import_result
+
+        print(json.dumps(import_result(root, args.archive), indent=2))
+        return
     if args.command == "mission-prepare":
         from rlm.v100.preparation import prepare
 
