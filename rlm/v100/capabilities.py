@@ -40,6 +40,7 @@ def audit(root: Path) -> dict:
             "alerts": "local paper proposals, including rejection flag",
         },
         "helper_endpoint": helper.get("runtime", {}).get("base_url"),
+        "helper_active_time_target_percent": helper.get("resources", {}).get("helper_duty_percent"),
         "requested_context": profile.get("runtime", {}).get("context_window"),
         "flash_attention_requested": profile.get("server", {}).get("flash_attention"),
         "kv_cache_requested": profile.get("server", {}).get("cache_type"),
@@ -66,11 +67,11 @@ def audit(root: Path) -> dict:
         ],
         "master_architecture": {
             "automatic_activation": True,
-            "backend": profile["runtime"].get("backend", "llama.cpp"),
+            "backend": profile.get("runtime", {}).get("backend", "llama.cpp"),
             "custom_scratch_scope": "Arbitrary build(config) network, full-weight warm-start children, isolated byte-token inference and the same fixed/fresh/public gates. Not an automatic universal GGUF converter; inference/training may fail their resource/time limits.",
             "active_expert": profile.get("resources", {}).get("active_foundation_expert"),
             "history": profile.get("resources", {}).get("architecture_history", []),
-            "gate": "Task improvement, no retained regressions, fresh audit, public gate when configured and native boot probe; predecessor kept",
+            "gate": "Task improvement, no retained regressions, fresh audit, public gate when configured and actual inference probe; predecessor kept",
         },
         "owned_external_compute": evidence["external_compute"],
         "colab": {
@@ -91,7 +92,7 @@ def audit(root: Path) -> dict:
             "automatic account creation or bypassing browser authentication/quotas",
         ],
         "outcome_learning_scope": "Causal earlier-input preferences from fully resolved audited paper trades enable LoRA DPO, including losses; observational hindsight labels and CPU shadow reward optimization are not unbiased policy RL or proof of profit",
-        "helper_limit_scope": "30% request active-time target in R&D, not a hard per-process GPU utilization/power cap; game guard pauses only the isolated helper",
+        "helper_limit_scope": "Configured request active-time target in R&D, not a hard per-process GPU utilization/power cap; game guard pauses only the isolated helper",
         "runtime_scope": "Requested configuration; actual execution requires native logs and on-device measurements",
     }
     atomic_json(root / "research/mission/capabilities.json", result)
