@@ -134,13 +134,14 @@ def test_each_notebook_package_has_fresh_data_and_pinned_safe_kernel(tmp_path):
     )
 
 
-def test_small_model_real_training_safetensors_and_local_forward(tmp_path):
+@pytest.mark.parametrize("architecture", ["gru", "transformer"])
+def test_small_model_real_training_safetensors_and_local_forward(tmp_path, architecture):
     torch = pytest.importorskip("torch")
     pytest.importorskip("safetensors")
     train, validation = distributed_compute.fresh_examples("arithmetic", 32)
     job = {
         "schema": "v100-compute-job-v1",
-        "architecture": "gru",
+        "architecture": architecture,
         "width": 32,
         "layers": 1,
         "steps": 10,
@@ -157,6 +158,28 @@ def test_small_model_real_training_safetensors_and_local_forward(tmp_path):
     local = compute_kernel.run(job, tmp_path / "host", tmp_path / "trained/weights.safetensors")
     assert local["heldout_loss"] == pytest.approx(result["heldout_loss"], rel=1e-5)
     assert not local["weights_promoted"]
+
+
+def test_owned_worker_executes_pinned_child_and_host_validates_weights(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
+    import psutil
+
+    mailbox, identity = configured(tmp_path, monkeypatch)
+    monkeypatch.setattr(compute_worker, "available", lambda: (True, "Test CPU host ready"))
+    available_memory = psutil.virtual_memory()
+    monkeypatch.setattr(
+        psutil,
+        "virtual_memory",
+        lambda: available_memory._replace(available=12 * 2**30),
+    )
+    path, lease = compute_worker.claim(mailbox, "actual-cpu")
+    compute_worker.execute(mailbox, path, lease, Path(compute_kernel.__file__))
+    distributed_compute.tick(tmp_path)
+    state = distributed_compute.validate_locally(tmp_path, identity)
+    assert state["state"] == "locally-validated"
+    assert not state["weights_promoted"]
+    assert Path(state["local_report"]).is_file()
 
 
 def test_oversized_compute_dataset_and_symlink_json_rejected(tmp_path, monkeypatch):
