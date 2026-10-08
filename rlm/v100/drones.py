@@ -15,17 +15,22 @@ from rlm.v100.activity import ActivityLog
 from rlm.v100.common import atomic_json, load_profile
 
 
+@contextmanager
 def connect(root: Path):
     path = root / "research/state/drones.sqlite3"
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=30)
     db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
-    db.execute(
-        "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, branch TEXT, kind TEXT, payload TEXT, interval INTEGER, due REAL, state TEXT, updated REAL, result TEXT)"
-    )
-    db.commit()
-    return db
+    try:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, branch TEXT, kind TEXT, payload TEXT, interval INTEGER, due REAL, state TEXT, updated REAL, result TEXT)"
+        )
+        db.commit()
+        with db:
+            yield db
+    finally:
+        db.close()
 
 
 def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) -> dict:
@@ -50,6 +55,7 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
     if kind == "python":
         compile(payload, "drone.py", "exec")
     with connect(root) as db:
+        db.execute("BEGIN IMMEDIATE")
         old = db.execute(
             "SELECT id FROM jobs WHERE branch=? AND kind=? AND payload=? AND state!='cancelled'",
             (branch, kind, payload),
@@ -234,7 +240,7 @@ def alongside(root: Path):
     with connect(root) as db:
         db.execute("UPDATE jobs SET state='queued',due=? WHERE state='running'", (time.time(),))
     for branch, role in (("A", "researcher"), ("B", "critic")):
-        schedule(
+        seed(
             root,
             branch,
             role,
@@ -242,7 +248,7 @@ def alongside(root: Path):
             900,
         )
     if (root / "research/public-benchmarks/current.json").exists():
-        schedule(root, "B", "benchmark", "Pinned public panel for RTX helper", 86400)
+        seed(root, "B", "benchmark", "Pinned public panel for RTX helper", 86400)
     log = root / "research/logs/resident-drones.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("ab") as handle:
@@ -251,9 +257,47 @@ def alongside(root: Path):
             stdout=handle,
             stderr=subprocess.STDOUT,
         )
+        stopping = threading.Event()
+
+        def monitor():
+            nonlocal process
+            while not stopping.wait(2):
+                if process.poll() is None:
+                    continue
+                atomic_json(
+                    root / "research/drones-status.json",
+                    {
+                        "updated": time.time(),
+                        "running": False,
+                        "state": "worker exited; retry in 30s",
+                        "exit_code": process.returncode,
+                    },
+                )
+                if stopping.wait(30):
+                    return
+                try:
+                    with connect(root) as db:
+                        db.execute(
+                            "UPDATE jobs SET state='queued',due=? WHERE state='running'",
+                            (time.time(),),
+                        )
+                    process = subprocess.Popen(
+                        [sys.executable, "-u", "-m", "rlm.v100.drones", str(root)],
+                        stdout=handle,
+                        stderr=subprocess.STDOUT,
+                    )
+                except OSError as error:
+                    ActivityLog(root, "controller", "drone").write(
+                        "errors", "drone-restart-failed", {"detail": str(error)[:300]}
+                    )
+
+        watcher = threading.Thread(target=monitor, daemon=True)
+        watcher.start()
         try:
             yield
         finally:
+            stopping.set()
+            watcher.join(timeout=5)
             process.terminate()
             try:
                 process.wait(timeout=10)
@@ -263,6 +307,19 @@ def alongside(root: Path):
             atomic_json(
                 root / "research/drones-status.json", {"updated": time.time(), "running": False}
             )
+
+
+def seed(root: Path, branch: str, kind: str, payload: str, interval: int) -> None:
+    try:
+        schedule(root, branch, kind, payload, interval)
+    except ValueError as error:
+        if "Sixteen active jobs" not in str(error):
+            raise
+        ActivityLog(root, branch, "drone").write(
+            "steps",
+            "default-drone-deferred",
+            {"kind": kind, "reason": "Persistent queue full; existing jobs continue"},
+        )
 
 
 if __name__ == "__main__":

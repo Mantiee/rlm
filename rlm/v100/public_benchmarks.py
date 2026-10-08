@@ -243,6 +243,12 @@ def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = No
     client = helper_client(
         profile
     )  # No research memory/activity: benchmark answers never become training examples.
+    if remote_profile(profile):
+        client.identity()
+    else:
+        from rlm.v100.serving import assert_served_expert
+
+        assert_served_expert(client, profile, root)
     client.pacing_root = str(root)
     rows = json.loads((snapshot / "questions.json").read_text())
     done = {row["key"] for row in report["cases"]}
@@ -311,6 +317,46 @@ def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = No
     report["complete"] = len(report["cases"]) == len(rows)
     atomic_json(output, report)
     return report
+
+
+def reusable(root: Path, profile: dict) -> Path | None:
+    """Reuse only the pinned complete baseline for this exact model and generation."""
+    resources = profile.get("resources", {})
+    pin = resources.get("public_baseline_sha256")
+    value = resources.get("public_baseline")
+    snapshot = current(root)
+    if not value or not pin or snapshot is None:
+        return None
+    path = Path(value).resolve()
+    if not path.is_relative_to((root / "research").resolve()):
+        raise ValueError("Public baseline must be inside the owned research directory")
+    if not path.exists():
+        return None
+    if file_hash(path) != pin:
+        raise ValueError("Pinned public baseline changed")
+    result = json.loads(path.read_text())
+    from rlm.v100.remote_helper import remote_profile
+
+    model_sha = (
+        resources["model_digest"]
+        if remote_profile(profile)
+        else file_hash(Path(profile["server"]["model"]))
+    )
+    expected = {
+        "snapshot_sha256": file_hash(snapshot / "manifest.json"),
+        "model_sha256": model_sha,
+        "generation": generation_conditions(profile),
+    }
+    rows = json.loads((snapshot / "questions.json").read_text())
+    keys = [row["key"] for row in result.get("cases", [])]
+    if (
+        result.get("complete")
+        and result.get("identity") == expected
+        and len(keys) == len(set(keys)) == len(rows)
+        and set(keys) == {question_key(row) for row in rows}
+    ):
+        return path
+    return None
 
 
 def compare(parent: dict, child: dict) -> dict:

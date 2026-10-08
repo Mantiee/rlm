@@ -1,4 +1,4 @@
-# V100 campaign v27
+# V100 campaign v28
 
 Use `tools/upgrade-v100-campaign.sh RELEASE_COMMIT` on Debian after any existing training/calibration/MTP sweep completes. It updates only the existing isolated continual venv, repairs the launcher atomically, retains checkpoints, prepares optional components and starts the owned supervisor. Preparation prints each stage and records failures as `deferred`; a deferred feature is not operational.
 
@@ -21,7 +21,7 @@ Chat/master can schedule source jobs, research/critic jobs, bounded CPU experime
 
 Optional rootless QEMU guest: 2 CPU cores, 3 GiB RAM, 24 GiB persistent virtual disk, no host home/model/credential mounts or GPU passthrough. A read-only source ISO exposes its own code; guest root can install tools and create files inside its disk. Public HTTP(S) egress is brokered and private/loopback destinations are rejected. GUI tools use the guest display; image analysis uses the pinned Qwen vision helper. RAM/disk pressure stops only this guest and retries later. CPU-only emulation can be slow when KVM is unavailable.
 
-Initial preparation downloads a Debian cloud image and private signed Debian packages; first boot additionally installs the desktop. QEMU process existence is reported as `booting or ready`, not proof that cloud-init/SSH/GUI installation completed. GPU inference, actual VM boot and Windows PowerShell monitoring require validation on the operator's hardware. No sandbox can promise protection against every kernel/hypervisor vulnerability.
+Initial preparation downloads a Debian cloud image and private signed Debian packages; first boot additionally installs the desktop. Readiness is checked through key-pinned SSH, the cloud-init completion marker, mounted source and the guest GUI service/display. A running QEMU process alone is not reported as ready. GPU inference, actual VM boot and Windows PowerShell monitoring require validation on the operator's hardware. No sandbox can promise protection against every kernel/hypervisor vulnerability.
 
 ## Benchmarks and learning limits
 
@@ -34,3 +34,9 @@ Colab remains an operator-started bounded notebook pilot with pinned input/resul
 ## Windows visibility
 
 `tools/watch-rtx3090-helper.ps1` shows whole-board GPU readings, CPU/RAM, loaded helper and recent server logs. Its readings are not per-process power measurements. Ctrl+C stops only the viewer.
+
+## v28 reliability fixes
+
+Resident worker crashes requeue interrupted bounded jobs and restart after cooldown; a full persistent queue does not block mission startup. SQLite handles close after transactions. The supervisor user service sources the isolated environment and refreshes its owned predecessor on upgrade. `/status` in chat returns locally without inference. Replies identify V100 or the RTX delegate. Pinned complete public baselines are reused only for identical weights, datasets and generation; measured MTP can be adopted without replacing accepted training ancestry.
+
+Full requirement and evidence audit: [REQUIREMENTS.md](REQUIREMENTS.md).

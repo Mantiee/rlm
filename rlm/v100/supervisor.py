@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -88,17 +89,38 @@ def install(root: Path, profile: Path) -> dict:
     root, profile = root.resolve(), profile.resolve()
     folder = root / "research/supervisor"
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "pause.json").unlink(missing_ok=True)
     unit = folder / "v100-mission.service"
     if any(
         character in str(root) + str(profile) + sys.executable
         for character in ("\n", '"', "%", "\\")
     ):
         raise ValueError("Unsupported service path characters")
+    launcher = folder / "run-supervisor.sh"
+    launcher.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\nsource "
+        + shlex.quote(str(root / "env.sh"))
+        + "\n"
+        + 'export PATH="$HOME/.local/bin:$PATH"\n'
+        + "export HF_HUB_DOWNLOAD_TIMEOUT=600 HF_HUB_ETAG_TIMEOUT=60 HF_HUB_DISABLE_XET=1\n"
+        + "exec "
+        + " ".join(
+            shlex.quote(value)
+            for value in (
+                sys.executable,
+                "-u",
+                "-m",
+                "rlm.v100.supervisor",
+                str(root),
+                str(profile),
+            )
+        )
+        + "\n"
+    )
+    launcher.chmod(0o700)
     unit.write_text(
         "[Unit]\nDescription=Owned V100 research and learning supervisor\nAfter=network.target\n"
         "[Service]\nType=simple\n"
-        f'ExecStart="{sys.executable}" -u -m rlm.v100.supervisor "{root}" "{profile}"\n'
+        f'ExecStart=/bin/bash "{launcher}"\n'
         f'WorkingDirectory="{root}"\n'
         "Environment=PYTHONNOUSERSITE=1\nRestart=on-failure\nRestartSec=30\nTimeoutStopSec=60\n"
         "[Install]\nWantedBy=default.target\n"
@@ -133,9 +155,18 @@ def install(root: Path, profile: Path) -> dict:
         old = json.loads(active.read_text())
         try:
             if process_identity(old["pid"]) == old["start"]:
-                return {"mode": "detached supervisor already running", **old}
+                arguments = Path(f"/proc/{old['pid']}/cmdline").read_bytes().split(b"\0")
+                if b"rlm.v100.supervisor" not in arguments or str(root).encode() not in arguments:
+                    raise ValueError("Detached supervisor identity differs; no process stopped")
+                os.kill(old["pid"], signal.SIGTERM)
+                deadline = time.monotonic() + 20
+                while process_identity(old["pid"]) == old["start"]:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Previous owned supervisor still stopping; retry later")
+                    time.sleep(0.1)
         except OSError:
             pass
+    (folder / "pause.json").unlink(missing_ok=True)
     with (folder / "supervisor.log").open("ab") as log:
         process = subprocess.Popen(
             [sys.executable, "-u", "-m", "rlm.v100.supervisor", str(root), str(profile)],

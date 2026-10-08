@@ -211,6 +211,33 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
             "applied": [receipt],
         }
 
+    if message == "/status":
+        from rlm.v100.progress import report
+
+        value = report(root)
+        return {
+            "answer": json.dumps(
+                {
+                    key: value[key]
+                    for key in (
+                        "running",
+                        "phase",
+                        "completed_learning_cycles",
+                        "accepted_weight_updates_this_run",
+                        "last_learning_cycle",
+                        "drones",
+                        "desktop",
+                        "official_benchmark",
+                    )
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "actions": [],
+            "applied": [],
+            "responder": {"model": "controller-status", "delegated_while_master_busy": False},
+        }
+
     mission = status(root)
     paths = [directory / "serving-active.json", directory / "learning/live.json"]
     current = mission.get("state", {}).get("live_profile")
@@ -391,11 +418,21 @@ def chat(root: Path, message: str | None = None) -> None:
             break
         if text.strip() == "/exit":
             break
+        if text.strip() == "/status" or text.strip().startswith(("/goal ", "/cel ")):
+            response = respond(root, root, {"message": text})
+            print("Controller>", response["answer"], flush=True)
+            if message is not None:
+                break
+            continue
         identity = submit(root, text)
         print("Zapisano polecenie:", identity, flush=True)
         result = wait_reply(root, identity)
         if result["state"] == "completed":
-            print("Model>", result["response"]["answer"])
+            who = result["response"].get("responder", {})
+            label = who.get("model", "controller")
+            if who.get("delegated_while_master_busy"):
+                label += " — zastępca, V100 zajęty"
+            print(f"{label}>", result["response"]["answer"])
             print("Wykonane zmiany:", json.dumps(result["response"]["applied"], ensure_ascii=False))
         else:
             print(json.dumps({k: result[k] for k in ("id", "state", "error")}, ensure_ascii=False))

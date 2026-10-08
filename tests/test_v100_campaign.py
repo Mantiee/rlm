@@ -314,3 +314,236 @@ def test_campaign_keeps_last_serving_checkpoint_over_newer_benchmark(tmp_path, m
     baseline.write_text("{}")
     monkeypatch.setattr(mission, "status", lambda root: {"learning": {"live_profile": str(live)}})
     assert campaign.choose_profile(tmp_path) == live
+
+
+def test_drone_database_closes_after_transaction(tmp_path):
+    import sqlite3
+
+    with drones.connect(tmp_path) as db:
+        db.execute("INSERT INTO jobs VALUES('x','A','python','print(1)',0,0,'queued',0,NULL)")
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        db.execute("SELECT 1")
+    with drones.connect(tmp_path) as fresh:
+        assert fresh.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
+
+
+def test_full_drone_queue_does_not_prevent_resident_worker_start(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    for index in range(16):
+        drones.schedule(tmp_path, "A", "python", f"print({index})", 300)
+    calls = []
+    child = SimpleNamespace(terminate=lambda: calls.append("terminated"), wait=lambda timeout: 0)
+    monkeypatch.setattr(drones.subprocess, "Popen", lambda *args, **kwargs: child)
+    with drones.alongside(tmp_path):
+        assert len(drones.inspect(tmp_path)) == 16
+    assert calls == ["terminated"]
+    assert not json.loads((tmp_path / "research/drones-status.json").read_text())["running"]
+
+
+@pytest.mark.parametrize(
+    "code,output,ready", [(255, "", False), (1, "", False), (0, "1280 800\nGUEST_READY\n", True)]
+)
+def test_desktop_health_requires_guest_readiness(monkeypatch, tmp_path, code, output, ready):
+    calls = []
+
+    def probe(root, script, **kwargs):
+        calls.append(script)
+        return {"exit_code": code, "stdout": output, "stderr": ""}
+
+    monkeypatch.setattr(desktop, "run", probe)
+    assert desktop.health(tmp_path)["ready"] is ready
+    assert "DISPLAY=:0" in calls[0] and "boot-finished" in calls[0]
+
+
+def test_status_chat_does_not_need_inference_or_queue(tmp_path, monkeypatch, capsys):
+    from rlm.v100 import progress
+
+    value = {
+        key: None
+        for key in (
+            "running",
+            "phase",
+            "completed_learning_cycles",
+            "accepted_weight_updates_this_run",
+            "last_learning_cycle",
+            "drones",
+            "desktop",
+            "official_benchmark",
+        )
+    }
+    value.update(running=True, phase="training")
+    monkeypatch.setattr(progress, "report", lambda root: value)
+    monkeypatch.setattr(
+        mission_chat, "submit", lambda *args: pytest.fail("status must not wait for model")
+    )
+    mission_chat.chat(tmp_path, "/status")
+    assert "training" in capsys.readouterr().out
+
+
+def test_public_baseline_reuse_binds_snapshot_weights_generation_and_hash(tmp_path, monkeypatch):
+    from rlm.v100.protection import file_hash
+
+    snapshot = tmp_path / "research/snapshot"
+    snapshot.mkdir(parents=True)
+    atomic_json(snapshot / "manifest.json", {"fixed": True})
+    atomic_json(
+        snapshot / "questions.json", [{"category": "math", "task": "addition", "question_id": 1}]
+    )
+    model = tmp_path / "weights.gguf"
+    model.write_bytes(b"accepted weights")
+    profile = {
+        "server": {"model": str(model)},
+        "runtime": {"context_window": 8192, "max_output_tokens": 1024},
+        "resources": {},
+    }
+    baseline = tmp_path / "research/baseline.json"
+    atomic_json(
+        baseline,
+        {
+            "complete": True,
+            "identity": {
+                "snapshot_sha256": file_hash(snapshot / "manifest.json"),
+                "model_sha256": file_hash(model),
+                "generation": public_benchmarks.generation_conditions(profile),
+            },
+            "cases": [{"key": "math/addition/1", "score": 1}],
+        },
+    )
+    profile["resources"].update(
+        public_baseline=str(baseline), public_baseline_sha256=file_hash(baseline)
+    )
+    monkeypatch.setattr(public_benchmarks, "current", lambda root: snapshot)
+    assert public_benchmarks.reusable(tmp_path, profile) == baseline
+    changed = copy.deepcopy(profile)
+    changed["runtime"]["max_output_tokens"] = 2048
+    assert public_benchmarks.reusable(tmp_path, changed) is None
+    model.write_bytes(b"new weights")
+    assert public_benchmarks.reusable(tmp_path, profile) is None
+    baseline.write_text("{}")
+    with pytest.raises(ValueError, match="changed"):
+        public_benchmarks.reusable(tmp_path, profile)
+
+
+def test_speed_profile_can_improve_execution_without_changing_training_ancestry(
+    tmp_path, monkeypatch
+):
+    from rlm.v100 import campaign, mtp_gate
+
+    folder = tmp_path / "research/logs/mtp-ab-one"
+    folder.mkdir(parents=True)
+    path = folder / "validated-profile.json"
+    path.write_text("{}")
+    target = tmp_path / "accepted.gguf"
+    target.write_bytes(b"accepted model")
+    accepted = {
+        "server": {"model": str(target)},
+        "runtime": {"max_output_tokens": 2048},
+        "training": {"init_adapter": "accepted-lora"},
+        "resources": {"branch_lineages": {"A": {"version": 3}}},
+    }
+    candidate = {
+        "server": {"model": str(target), "draft_model": "tested-draft"},
+        "runtime": {"max_output_tokens": 8192},
+        "training": {"init_adapter": "must-not-override"},
+        "resources": {"mtp_validation": {"verified": True}},
+    }
+    monkeypatch.setattr(campaign, "load_profile", lambda *args: copy.deepcopy(candidate))
+    monkeypatch.setattr(
+        mtp_gate,
+        "valid",
+        lambda profile: profile.get("resources", {})
+        .get("mtp_validation", {})
+        .get("verified", False),
+    )
+    result, source = campaign.measured_speed(tmp_path, accepted)
+    assert source == path and result["runtime"]["max_output_tokens"] == 8192
+    assert (
+        result["training"] == accepted["training"]
+        and result["resources"]["branch_lineages"] == accepted["resources"]["branch_lineages"]
+    )
+    different = tmp_path / "different.gguf"
+    different.write_bytes(b"unaccepted different model")
+    candidate["server"]["model"] = str(different)
+    result, source = campaign.measured_speed(tmp_path, accepted)
+    assert source is None and result == accepted
+
+
+def test_resident_worker_crash_requeues_jobs_and_restarts_owned_child(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    job = drones.schedule(tmp_path, "A", "python", "print(1)", 0)
+    first = SimpleNamespace(poll=lambda: 1, returncode=1)
+    second = SimpleNamespace(poll=lambda: None, terminate=lambda: None, wait=lambda timeout: 0)
+    children = iter([first, second])
+
+    def launch(*args, **kwargs):
+        child = next(children)
+        if child is first:
+            with drones.connect(tmp_path) as db:
+                db.execute("UPDATE jobs SET state='running' WHERE id=?", (job["id"],))
+        return child
+
+    class Event:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, seconds):
+            self.calls += 1
+            return self.calls >= 3
+
+        def set(self):
+            pass
+
+    class Thread:
+        def __init__(self, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+        def join(self, timeout):
+            pass
+
+    monkeypatch.setattr(drones.subprocess, "Popen", launch)
+    monkeypatch.setattr(drones.threading, "Event", Event)
+    monkeypatch.setattr(drones.threading, "Thread", Thread)
+    with drones.alongside(tmp_path):
+        assert (
+            next(row for row in drones.inspect(tmp_path) if row["id"] == job["id"])["state"]
+            == "queued"
+        )
+    assert not json.loads((tmp_path / "research/drones-status.json").read_text())["running"]
+
+
+def test_user_service_loads_the_isolated_environment_and_clears_pause_after_stop(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from rlm.v100 import supervisor
+
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}")
+    folder = tmp_path / "research/supervisor"
+    calls = []
+    monkeypatch.setattr(supervisor.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if "stop" in args:
+            atomic_json(folder / "pause.json", {"reason": "old supervisor stopped"})
+        if "enable" in args:
+            assert not (folder / "pause.json").exists()
+        return SimpleNamespace(returncode=0, stdout="yes\n")
+
+    monkeypatch.setattr(supervisor.subprocess, "run", run)
+    result = supervisor.install(tmp_path, profile)
+    assert result["mode"] == "user service" and not result["boot_autostart_requires_linger"]
+    launcher = (folder / "run-supervisor.sh").read_text()
+    assert "source " in launcher and str(tmp_path / "env.sh") in launcher
+    assert "$HOME/.local/bin:$PATH" in launcher
+    assert "/bin/bash" in (folder / "v100-mission.service").read_text()
+    assert next(i for i, c in enumerate(calls) if "stop" in c) < next(
+        i for i, c in enumerate(calls) if "enable" in c
+    )

@@ -84,7 +84,7 @@ def download_image(folder: Path) -> Path:
     lines = [
         line
         for line in checksums.text.splitlines()
-        if line.split()[-1].lstrip("*") == IMAGE.rsplit("/", 1)[-1]
+        if line.split() and line.split()[-1].lstrip("*") == IMAGE.rsplit("/", 1)[-1]
     ]
     if len(lines) != 1 or not re.fullmatch(r"[0-9a-f]{128}", lines[0].split()[0]):
         raise ValueError("Could not identify the official Debian cloud-image checksum")
@@ -381,11 +381,15 @@ def service(root: Path, stop: threading.Event) -> None:
                     )
                     try:
                         os.sched_setaffinity(process.pid, sorted(os.sched_getaffinity(0))[-2:])
+                        health_at, guest_health = 0.0, {"ready": False, "state": "booting"}
                         while process.poll() is None and not stop.wait(5):
                             pressure = (
                                 psutil.virtual_memory().available < 3 * 2**30
                                 or shutil.disk_usage(root).free < 10 * 2**30
                             )
+                            if not pressure and time.monotonic() >= health_at:
+                                guest_health = health(root)
+                                health_at = time.monotonic() + 30
                             atomic_json(
                                 folder / "status.json",
                                 {
@@ -395,7 +399,10 @@ def service(root: Path, stop: threading.Event) -> None:
                                     "cpus": 2,
                                     "state": "resource pressure"
                                     if pressure
-                                    else "booting or ready",
+                                    else "ready"
+                                    if guest_health["ready"]
+                                    else "booting or guest setup incomplete",
+                                    "guest_health": guest_health,
                                     "updated": time.time(),
                                 },
                             )
@@ -520,6 +527,37 @@ def run(root: Path, script: str, seconds: int = 60, output_limit: int = 12000) -
         "stderr": err,
         "scope": "Unverified experiment inside isolated guest; host controller unchanged",
     }
+
+
+def health(root: Path) -> dict:
+    """Key-pinned SSH and guest service check; never a host shell fallback."""
+    try:
+        result = run(
+            root,
+            "test -f /var/lib/cloud/instance/boot-finished && "
+            "test -d /workspace && test -d /opt/master-source/rlm && "
+            "systemctl is-active --quiet research-desktop.service && "
+            "DISPLAY=:0 xdotool getdisplaygeometry && printf '\\nGUEST_READY\\n'",
+            seconds=5,
+            output_limit=1000,
+        )
+        ready = result["exit_code"] == 0 and "GUEST_READY" in result["stdout"]
+        return {
+            "ready": ready,
+            "state": "SSH, cloud-init, source mount and GUI ready"
+            if ready
+            else "SSH/installation/GUI not ready",
+            "exit_code": result["exit_code"],
+            "detail": result["stderr"][:300],
+            "checked_at": time.time(),
+        }
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        return {
+            "ready": False,
+            "state": "guest probe unavailable",
+            "detail": str(error)[:300],
+            "checked_at": time.time(),
+        }
 
 
 def screenshot(root: Path) -> dict:

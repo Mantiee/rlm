@@ -331,11 +331,21 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     )
                 if serving.get("resources", {}).get("public_benchmarks"):
                     from rlm.v100.public_benchmarks import evaluate as public_evaluate
+                    from rlm.v100.public_benchmarks import reusable as reusable_public
 
                     public_path = directory / "public-baseline.json"
                     note(directory, "official-public-baseline", context_window=context)
                     try:
-                        public_evaluate(root, serving, public_path)
+                        cached_public = reusable_public(root, serving)
+                        if cached_public:
+                            atomic_json(public_path, json.loads(cached_public.read_text()))
+                            atomic_json(
+                                directory / "public-baseline-reused.json",
+                                {"source": str(cached_public), "sha256": file_hash(cached_public)},
+                            )
+                            print("Reused pinned official baseline:", cached_public, flush=True)
+                        else:
+                            public_evaluate(root, serving, public_path)
                         serving["resources"]["public_baseline"] = str(public_path)
                         serving["resources"]["public_baseline_sha256"] = file_hash(public_path)
                     except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:

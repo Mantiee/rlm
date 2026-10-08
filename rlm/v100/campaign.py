@@ -1,10 +1,44 @@
 """Assemble already measured components without repeating long calibration sweeps."""
 
+import copy
 import json
 import time
 from pathlib import Path
 
 from rlm.v100.common import atomic_json, load_profile
+
+
+def measured_speed(root: Path, profile: dict) -> tuple[dict, Path | None]:
+    """Adopt a validated native speed profile only for identical target weights."""
+    from rlm.v100.mtp_gate import valid
+    from rlm.v100.protection import file_hash
+
+    paths = sorted(
+        (root / "research/logs").glob("mtp-ab-*/validated-profile.json"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    current_hash = None
+    for path in paths:
+        candidate = load_profile(path, root)
+        if not valid(candidate):
+            continue
+        if current_hash is None:
+            current_hash = file_hash(Path(profile["server"]["model"]))
+        if file_hash(Path(candidate["server"]["model"])) != current_hash:
+            continue
+        chosen = copy.deepcopy(profile)
+        chosen["server"] = candidate["server"]
+        chosen["runtime"] = candidate["runtime"]
+        chosen.setdefault("resources", {})["mtp_validation"] = candidate["resources"][
+            "mtp_validation"
+        ]
+        # Validation binds runtime/native settings, while training ancestry and
+        # both accepted lineages continue to come from the serving checkpoint.
+        if not valid(chosen):
+            raise ValueError("Merged measured configuration failed its bound speed/quality proof")
+        return chosen, path
+    return profile, None
 
 
 def choose_profile(root: Path) -> Path:
@@ -46,6 +80,7 @@ def prepare(
         raise ValueError("Stop the owned mission before changing its setup")
     source = path or choose_profile(root)
     profile = load_profile(source, root)
+    profile, speed_path = measured_speed(root, profile)
     folder = root / "research/campaign" / f"run-{time.time_ns()}"
     folder.mkdir(parents=True)
     stages = {}
@@ -84,6 +119,11 @@ def prepare(
     atomic_json(destination, profile)
     atomic_json(
         root / "research/campaign/current.json",
-        {"profile": str(destination), "source": str(source), "stages": stages},
+        {
+            "profile": str(destination),
+            "source": str(source),
+            "speed_profile": str(speed_path) if speed_path else None,
+            "stages": stages,
+        },
     )
     return destination

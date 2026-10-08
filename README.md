@@ -218,6 +218,6 @@ For the isolated single-V100 setup, source-preserving memory, verified LoRA feed
 and resumable checkpoints, see [V100.md](V100.md). Cloud provider SDKs are optional:
 install `.[providers]` when using the original remote backends.
 
-## V100 campaign v27
+## V100 campaign v28
 
 Persistent goals, A/B lineages, bounded research drones, concurrent chat, private Linux desktop and pinned public benchmark gates: see [CAMPAIGN.md](CAMPAIGN.md). Optional setup stages report deferred features explicitly.
