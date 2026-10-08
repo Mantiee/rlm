@@ -3,7 +3,6 @@
 import copy
 import json
 import os
-import socket
 import subprocess
 import sys
 import time
@@ -19,6 +18,7 @@ from rlm.v100.activity import ActivityLog
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.experiments import SharedLab, judge_duel, load_duel, plan_duel
 from rlm.v100.researchers import available_ram_gib, research_task, review_research
+from rlm.v100.serving import ensure_local_port_available
 
 
 def command(root: Path, profile: Path, *arguments: str) -> list[str]:
@@ -85,8 +85,7 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
         yield profile
         return
     origin = urlparse(profile["runtime"]["base_url"])
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", origin.port))
+    ensure_local_port_available(origin.port)
     cpu = profile.get("resources", {}).get("device") == "cpu"
     minimum = profile.get("resources", {}).get("min_available_ram_gib", 6)
     if cpu and available_ram_gib() < minimum:

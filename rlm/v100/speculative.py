@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import statistics
 import subprocess
 import sys
@@ -18,6 +17,7 @@ from pathlib import Path
 import requests
 
 from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.serving import ensure_local_port_available
 
 ASSISTANT_MODEL = "google/gemma-4-12B-it-assistant"
 ASSISTANT_REVISION = "46d4c6f13f0ac0ad827b915669b8df9b81c64c51"
@@ -216,8 +216,7 @@ def test_mtp(
             value = profile["server"][key]
             if value and not Path(value).is_file():
                 raise FileNotFoundError(value)
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 8089))
+    ensure_local_port_available(8089)
     memory = (
         subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],

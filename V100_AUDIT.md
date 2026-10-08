@@ -124,3 +124,11 @@ The updater includes this check before installing, so recovery also works with
 older installed packages. Live command/session ownership mismatches still abort
 without killing the process or replacing packages. Checkpoints and failure reports
 are retained. A successful update is not evidence of a successful weight promotion.
+
+## v100.36 native server restart ports
+
+Native and MTP availability probes now use SO_REUSEADDR and actually listen before
+closing the probe. Linux TIME_WAIT after a completed acceptance request no longer
+looks like a live server occupying the port. An existing loopback or wildcard
+listener still blocks launch, with the port included in the error. No listener is
+killed or reused, and no second model is started against an occupied endpoint.

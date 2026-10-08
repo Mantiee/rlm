@@ -2,11 +2,25 @@
 
 import json
 import os
+import socket
 from pathlib import Path
 from urllib.parse import urlparse
 
 from rlm.v100.common import atomic_json
 from rlm.v100.protection import execution_hash, file_hash
+
+
+def ensure_local_port_available(port: int) -> None:
+    """Reject live listeners, while allowing a restarted server's TIME_WAIT sockets."""
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("127.0.0.1", port))
+            probe.listen(1)
+        except OSError as error:
+            raise OSError(
+                error.errno, f"Local server port {port} unavailable: {error.strerror}"
+            ) from error
 
 
 def process_identity(pid: int) -> str:
