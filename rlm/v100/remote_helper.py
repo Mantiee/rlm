@@ -538,7 +538,7 @@ def selected_helper(root: Path) -> Path:
     return path
 
 
-def canonicalize_remote(root: Path) -> dict:
+def canonicalize_remote(root: Path, context_window: int | None = None) -> dict:
     """Rebind only proven parameter-order/date changes; never silently trust new templates."""
     from rlm.v100.common import load_profile
     from rlm.v100.competition import helper_client
@@ -549,9 +549,15 @@ def canonicalize_remote(root: Path) -> dict:
     path = root / "research/researcher-rtx3090.json"
     original = json.loads(path.read_text())
     profile = load_profile(path, root)
+    if context_window is not None:
+        if type(context_window) is not int or not 4096 <= context_window <= 262144:
+            raise ValueError("Invalid migration context budget")
+        profile["runtime"]["context_window"] = context_window
+        profile["server"]["context_per_slot"] = context_window
     client = helper_client(profile, root)
     if client.metadata_hash_scheme == ORDERED_METADATA:
         client.identity()
+        client.loaded()
         return {"status": "canonical identity verified"}
     snapshot = Path(profile["resources"]["metadata_snapshot"])
     if not snapshot.is_absolute():
@@ -572,6 +578,9 @@ def canonicalize_remote(root: Path) -> dict:
         metadata_sha256=metadata_sha(info, ORDERED_METADATA),
         metadata_snapshot=str((audit / "show.json").relative_to(root)),
     )
+    if context_window is not None:
+        original["runtime"]["context_window"] = context_window
+        original["server"]["context_per_slot"] = context_window
     validate_remote(original)
     atomic_json(path, original)
     return {

@@ -9,6 +9,29 @@ from pathlib import Path
 from rlm.v100.common import atomic_json, load_profile
 
 
+def sandbox_probe(folder: Path) -> dict:
+    from rlm.v100.code_lab import sandbox_command, sandbox_environment
+
+    (folder / "source").mkdir()
+    (folder / "checks").mkdir()
+    log = folder / "sandbox-probe.log"
+    with log.open("w") as stream:
+        child = subprocess.run(
+            sandbox_command(folder, [sys.executable, "-I", "-c", "print('sandbox-ok')"]),
+            env=sandbox_environment(),
+            timeout=30,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    output = log.read_text()
+    if child.returncode or output.strip() != "sandbox-ok":
+        raise RuntimeError(
+            f"Sandbox probe exit={child.returncode}; log={log}; detail={output[-1000:]}"
+        )
+    return {"namespace_execution": True, "network_unshared": True, "log": str(log)}
+
+
 def run(root: Path, profile_path: Path, desktop: bool = False) -> Path:
     from rlm.v100.competition import helper_client, managed_server, require_idle_gpu
     from rlm.v100.mission import status
@@ -35,7 +58,7 @@ def run(root: Path, profile_path: Path, desktop: bool = False) -> Path:
             result["checks"][name] = {
                 "state": "failed",
                 "error": type(error).__name__,
-                "detail": str(error)[:500],
+                "detail": str(error)[:1500],
             }
             if required:
                 result["required_passed"] = False
@@ -94,24 +117,7 @@ def run(root: Path, profile_path: Path, desktop: bool = False) -> Path:
 
     check("master-inference", master, required=True)
 
-    def sandbox():
-        from rlm.v100.code_lab import sandbox_command, sandbox_environment
-
-        (folder / "source").mkdir()
-        (folder / "checks").mkdir()
-        child = subprocess.run(
-            sandbox_command(folder, [sys.executable, "-I", "-c", "print('sandbox-ok')"]),
-            env=sandbox_environment(),
-            timeout=30,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        if child.stdout.strip() != "sandbox-ok":
-            raise ValueError("Sandbox probe returned another result")
-        return {"namespace_execution": True, "network_unshared": True}
-
-    check("private-code-sandbox", sandbox)
+    check("private-code-sandbox", lambda: sandbox_probe(folder))
 
     def rtx():
         path = root / "research/researcher-rtx3090.json"

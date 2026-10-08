@@ -51,11 +51,10 @@ def command(root: Path, source: Path, work: Path, broker: Path) -> list[str]:
         "ALL",
         "--clearenv",
     ]
-    for path in dict.fromkeys(
-        [Path("/usr"), Path("/lib"), Path("/lib64"), Path(sys.prefix), Path(sys.base_prefix)]
-    ):
-        if path.exists():
-            args += ["--ro-bind", str(path), str(path)]
+    from rlm.v100.sandbox_python import runtime_mounts
+
+    for path in runtime_mounts():
+        args += ["--ro-bind", str(path), str(path)]
     return args + [
         "--proc",
         "/proc",

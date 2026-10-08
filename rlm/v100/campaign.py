@@ -104,7 +104,7 @@ def prepare(
         print(json.dumps({"campaign": name, **stages[name]}), flush=True)
 
     def helper():
-        evidence = canonicalize_remote(root)
+        evidence = canonicalize_remote(root, context_window=32768)
         from rlm.v100.competition import helper_client
 
         helper_path = root / "research/researcher-rtx3090.json"

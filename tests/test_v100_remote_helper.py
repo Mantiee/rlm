@@ -109,6 +109,38 @@ def legacy_profile(root):
     return path, settings
 
 
+def test_canonical_migration_validates_new_loaded_context_without_losing_old_pin(
+    transport, tmp_path
+):
+    transport[1]["info"].update(parameters="temperature 1\ntop_k 20")
+    path, settings = prepared(tmp_path)
+    settings["runtime"]["context_window"] = 131072
+    settings["server"]["context_per_slot"] = 131072
+    atomic_json(path, settings)
+    transport[1]["info"]["parameters"] = "top_k 20\ntemperature 1"
+    report = remote_helper.canonicalize_remote(tmp_path, context_window=32768)
+    audit = Path(report["audit"])
+    assert json.loads((audit / "profile-before.json").read_text()) == settings
+    current = load_profile(path, tmp_path)
+    assert current["runtime"]["context_window"] == 32768
+    assert current["resources"]["metadata_hash_scheme"] == remote_helper.ORDERED_METADATA
+    assert remote_helper.canonicalize_remote(tmp_path)["status"] == "canonical identity verified"
+
+
+def test_canonical_migration_still_rejects_semantic_changes_or_unloaded_model(transport, tmp_path):
+    path, _ = prepared(tmp_path)
+    original = path.read_bytes()
+    transport[1]["info"]["template"] = "new unapproved template"
+    with pytest.raises(ValueError, match="beyond parameter order"):
+        remote_helper.canonicalize_remote(tmp_path, context_window=32768)
+    assert path.read_bytes() == original
+    transport[1]["info"] = copy.deepcopy(INFO)
+    transport[1]["loaded"]["context_length"] = 131072
+    with pytest.raises(ValueError, match="context"):
+        remote_helper.canonicalize_remote(tmp_path, context_window=32768)
+    assert path.read_bytes() == original
+
+
 def test_stable_metadata_ignores_only_date_and_keeps_legacy_semantics(transport):
     first = {**INFO, "modified_at": "before"}
     second = {**INFO, "modified_at": "after"}

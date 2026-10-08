@@ -109,11 +109,10 @@ def grade(root: Path, snapshot: Path, question: dict, answer: dict, folder: Path
         "--cap-drop",
         "ALL",
     ]
-    for path in dict.fromkeys(
-        [Path("/usr"), Path("/lib"), Path("/lib64"), Path(sys.base_prefix), python.parent.parent]
-    ):
-        if path.exists():
-            args += ["--ro-bind", str(path), str(path)]
+    from rlm.v100.sandbox_python import runtime_mounts
+
+    for path in runtime_mounts(python):
+        args += ["--ro-bind", str(path), str(path)]
     args += [
         "--proc",
         "/proc",

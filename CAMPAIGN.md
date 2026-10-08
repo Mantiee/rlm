@@ -1,4 +1,6 @@
-# V100 campaign v32
+# V100 campaign v33
+
+v33 repairs the deployment failures observed on Debian: systemd receives an unquoted absolute `WorkingDirectory` and validates the generated unit before starting it; the first supervisor start keeps the newly prepared configuration instead of reverting to an old failed run. NLTK downloads into an explicitly created, owner-private resource directory without disabling its security enforcement or changing the user's home permissions. Canonical helper migration checks the newly requested 32768 context and retains the old metadata snapshot; actual template, value or manifest changes still fail. Sandbox mounts include intermediate `uv` interpreter symlinks without exposing the whole project/home, and failed hardware probes preserve the full child diagnostic in `sandbox-probe.log`.
 
 Use `tools/upgrade-v100-campaign.sh RELEASE_COMMIT` on Debian after any existing training/calibration/MTP sweep completes. It updates only the existing isolated continual venv, repairs the launcher atomically, retains checkpoints, prepares optional components, runs mandatory short CUDA/master acceptance probes, and starts the owned supervisor only after those probes pass. Failed acceptance retains a report and leaves the mission stopped. Preparation prints each stage and records failures as `deferred`; a deferred feature is not operational.
 

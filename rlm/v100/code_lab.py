@@ -15,6 +15,7 @@ from rlm.v100.protection import file_hash
 # change its algorithms; the host prompt/evaluator/controller stay outside it.
 PROMPT_FILES = {
     "rlm/v100/hardware_acceptance.py",
+    "rlm/v100/sandbox_python.py",
     "rlm/v100/scratch_master.py",
     "rlm/v100/market_adapters.py",
     "rlm/v100/architecture_promotion.py",
@@ -226,10 +227,10 @@ def sandbox_command(
             "bubblewrap is required; untrusted code never falls back to host execution"
         )
     args = [bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL"]
-    prefixes = [Path("/usr"), Path("/lib"), Path("/lib64"), Path(sys.prefix), Path(sys.base_prefix)]
-    for path in dict.fromkeys(prefixes):
-        if path.exists():
-            args += ["--ro-bind", str(path), str(path)]
+    from rlm.v100.sandbox_python import runtime_mounts
+
+    for path in runtime_mounts():
+        args += ["--ro-bind", str(path), str(path)]
     args += [
         "--proc",
         "/proc",

@@ -45,11 +45,15 @@ def loop(root: Path, profile: Path) -> None:
                 prior_input = (
                     Path(record["run"]) / "input-profile.json" if record.get("run") else profile
                 )
-                resume = (
-                    Path(candidate)
-                    if candidate and Path(candidate).exists()
-                    else (prior_input if prior_input.exists() else profile)
-                )
+                # The installer already carried accepted weights into this profile.
+                # Do not discard its new setup in favor of an older failed run.
+                resume = profile
+                if last_run is not None:
+                    resume = (
+                        Path(candidate)
+                        if candidate and Path(candidate).exists()
+                        else (prior_input if prior_input.exists() else profile)
+                    )
                 try:
                     if failures >= 2:
                         from rlm.v100.architecture_promotion import rollback
@@ -140,10 +144,19 @@ def install(root: Path, profile: Path) -> dict:
         "[Unit]\nDescription=Owned V100 research and learning supervisor\nAfter=network.target\n"
         "[Service]\nType=simple\n"
         f'ExecStart=/bin/bash "{launcher}"\n'
-        f'WorkingDirectory="{root}"\n'
+        f"WorkingDirectory={root}\n"
         "Environment=PYTHONNOUSERSITE=1\nRestart=on-failure\nRestartSec=30\nTimeoutStopSec=60\n"
         "[Install]\nWantedBy=default.target\n"
     )
+    if shutil.which("systemd-analyze"):
+        verified = subprocess.run(
+            ["systemd-analyze", "verify", "--man=no", str(unit)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if verified.returncode:
+            raise RuntimeError("Invalid owned service unit: " + verified.stderr[-1500:])
     check = (
         subprocess.run(["systemctl", "--user", "show-environment"], capture_output=True, timeout=10)
         if shutil.which("systemctl")

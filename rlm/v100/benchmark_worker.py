@@ -2,12 +2,29 @@
 
 import hashlib
 import json
+import os
+import stat
 import sys
 from pathlib import Path
 
 
 def key(row):
     return "/".join(str(row[k]) for k in ("category", "task", "question_id"))
+
+
+def prepare_nltk(folder):
+    import nltk
+
+    # Authorize an existing private data root, rather than asking NLTK to trust
+    # the snapshot's possibly group-writable parent before creating it.
+    resources = folder / "nltk"
+    resources.mkdir(mode=0o700, exist_ok=True)
+    info = resources.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+        raise ValueError("Official grader resources must use an owned private directory")
+    for package in ("punkt", "punkt_tab", "averaged_perceptron_tagger_eng"):
+        if not nltk.download(package, download_dir=str(resources), quiet=True):
+            raise RuntimeError("Official grader resource download failed: " + package)
 
 
 def prepare(folder, limit, coding=False):
@@ -91,11 +108,7 @@ def prepare(folder, limit, coding=False):
             indent=2,
         )
     )
-    import nltk
-
-    for package in ("punkt", "punkt_tab", "averaged_perceptron_tagger_eng"):
-        if not nltk.download(package, download_dir=str(folder / "nltk"), quiet=True):
-            raise RuntimeError("Official grader resource download failed: " + package)
+    prepare_nltk(folder)
     # Import during preparation so missing official dependencies fail before GPU work.
     from livebench.gen_ground_truth_judgment import play_a_match_gt  # noqa: F401
 
