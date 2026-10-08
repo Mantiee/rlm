@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from rlm.v100.common import atomic_json
+from rlm.v100.common import atomic_json, load_profile
 
 
 def loop(root: Path, profile: Path) -> None:
@@ -42,8 +42,27 @@ def loop(root: Path, profile: Path) -> None:
                 ):
                     failures += 1
                 candidate = record.get("learning", {}).get("live_profile")
-                resume = Path(candidate) if candidate and Path(candidate).exists() else profile
+                prior_input = (
+                    Path(record["run"]) / "input-profile.json" if record.get("run") else profile
+                )
+                resume = (
+                    Path(candidate)
+                    if candidate and Path(candidate).exists()
+                    else (prior_input if prior_input.exists() else profile)
+                )
                 try:
+                    if failures >= 2:
+                        from rlm.v100.architecture_promotion import rollback
+
+                        restored, receipt = rollback(
+                            root,
+                            load_profile(resume, root),
+                            "Repeated owned mission serving failures",
+                        )
+                        if receipt["restored"]:
+                            resume = folder / f"architecture-rollback-{time.time_ns()}.json"
+                            atomic_json(resume, restored)
+                            atomic_json(folder / "last-architecture-rollback.json", receipt)
                     launched = start(root, resume, max_context=131072, flash_attention="on")
                     last_run = launched["run"]
                     # Even a startup failure cannot create a tight GPU reload loop.

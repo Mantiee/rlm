@@ -189,14 +189,13 @@ def trial(
             raise FileNotFoundError(candidate["server"]["model"])
         serving = folder / "serving.json"
         atomic_json(serving, candidate)
-        audit = None
-        if parent.get("resources", {}).get("fresh_audit_required"):
-            from rlm.v100 import fresh_audit
+        # Architecture promotion always needs a post-freeze fresh gate.
+        from rlm.v100 import fresh_audit
 
-            audit = fresh_audit.create(
-                root, parent, Path(candidate["server"]["model"]), folder / "fresh-audit"
-            )
-            fresh_audit.parent_report(root, parent, audit)
+        audit = fresh_audit.create(
+            root, parent, Path(candidate["server"]["model"]), folder / "fresh-audit"
+        )
+        fresh_audit.parent_report(root, parent, audit)
         with managed_server(serving, root, folder / "server.log"):
             client = helper_client(candidate, root)
             assert_served_expert(client, candidate, root)
@@ -229,6 +228,12 @@ def trial(
             quality=str(folder / "quality.json"),
             serving=str(serving),
             judgments=judgments,
+            expert_id="foundation-" + proposal["id"] if eligible else None,
+            fresh_audit=str(audit) if audit is not None else None,
+            public_quality=str(folder / "public-quality.json") if public is not None else None,
+            public_quality_sha256=file_hash(folder / "public-quality.json")
+            if public is not None
+            else None,
             status="registered independent expert; predecessor retained"
             if eligible
             else "rejected; predecessor retained",

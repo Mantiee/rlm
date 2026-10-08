@@ -1,6 +1,7 @@
 """Persistent, bounded source/CPU/RTX jobs independent of the V100 training phase."""
 
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -41,8 +42,14 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
         "critic",
         "desktop",
         "benchmark",
+        "compute-audit",
     ):
         raise ValueError("Choose A/B and source/python/researcher/critic/desktop")
+    if kind == "compute-audit" and (
+        not re.fullmatch(r"[a-f0-9]{24}", payload)
+        or not (root / "research/compute-jobs" / payload / "state.json").is_file()
+    ):
+        raise ValueError("Compute audit requires a registered host job")
     maximum = 12000 if kind in ("python", "desktop") else 1500 if kind == "source" else 400
     if not isinstance(payload, str) or not 1 <= len(payload) <= maximum:
         raise ValueError("Drone payload exceeds its budget")
@@ -99,6 +106,10 @@ def cancel(root: Path, identity: str) -> dict:
 
 
 def execute(root: Path, job: dict) -> dict:
+    if job["kind"] == "compute-audit":
+        from rlm.v100.distributed_compute import validate_locally
+
+        return validate_locally(root, job["payload"])
     if job["kind"] == "benchmark":
         from rlm.v100.public_benchmarks import evaluate
         from rlm.v100.remote_helper import selected_helper
@@ -178,6 +189,21 @@ def finish(root: Path, identity: str, value: dict) -> None:
         state = (
             "cancelled" if row["state"] == "cancelled" else "queued" if interval else "completed"
         )
+        if (
+            row["kind"] == "compute-audit"
+            and value.get("status") == "failed"
+            and state != "cancelled"
+        ):
+            source = root / "research/compute-jobs" / row["payload"] / "state.json"
+            job_state = json.loads(source.read_text())
+            retries = job_state.get("validation_retries", 0) + 1
+            job_state["validation_retries"] = retries
+            job_state["validation_error"] = value.get("detail", "Local validation failed")
+            if retries < 3:
+                state, interval = "queued", 60
+            else:
+                job_state["state"] = "validation-deferred"
+            atomic_json(source, job_state)
         db.execute(
             "UPDATE jobs SET state=?,due=?,updated=?,result=? WHERE id=?",
             (state, time.time() + interval, time.time(), json.dumps(value), identity),
@@ -193,6 +219,14 @@ def service(root: Path, stop: threading.Event) -> None:
     with ThreadPoolExecutor(max_workers=3) as workers:
         active = {}
         while not stop.is_set():
+            from rlm.v100.distributed_compute import tick
+
+            try:
+                tick(root)
+            except (ValueError, OSError, RuntimeError) as error:
+                ActivityLog(root, "controller", "compute").write(
+                    "errors", "compute-mailbox-unavailable", {"detail": str(error)[:400]}
+                )
             for identity, (future, _kind) in list(active.items()):
                 if future.done():
                     try:

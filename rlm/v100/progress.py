@@ -127,6 +127,7 @@ def report(root: Path) -> dict:
     value["plans"] = read_plans(root)
     for name, path in (
         ("drones", root / "research/drones-status.json"),
+        ("external_compute", root / "research/compute-status.json"),
         ("desktop", root / "research/desktop/status.json"),
         ("supervisor", root / "research/supervisor/status.json"),
         ("official_benchmark", root / "research/public-benchmarks/progress.json"),
@@ -139,6 +140,12 @@ def report(root: Path) -> dict:
     value["accepted_branch_versions"] = active_profile.get("resources", {}).get(
         "branch_lineages", {}
     )
+    value["architecture_history"] = active_profile.get("resources", {}).get(
+        "architecture_history", []
+    )
+    value["active_foundation_expert"] = active_profile.get("resources", {}).get(
+        "active_foundation_expert"
+    )
     lines = [
         f"Phase: {value['phase']} | Running: {value['running']}",
         f"Learning cycles: {len(cycles)} | Accepted weight updates in this run: {value['accepted_weight_updates_this_run']}",
@@ -148,6 +155,8 @@ def report(root: Path) -> dict:
         + (", ".join(value["accepted_branch_versions"]) or "none yet; seeded from the same base"),
         "Official benchmark: " + json.dumps(value["official_benchmark"]),
         "Resident workers: " + json.dumps(value["drones"]),
+        "External compute: " + json.dumps(value["external_compute"]),
+        "Active architecture: " + str(value["active_foundation_expert"] or "original"),
         "Private desktop: " + json.dumps(value["desktop"]),
     ]
     if cycles:

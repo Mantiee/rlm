@@ -9,6 +9,15 @@ from rlm.v100.protection import file_hash
 
 def read(profile: dict) -> tuple[dict, list[dict]]:
     parents, gates = {}, []
+    protected = profile.get("resources", {}).get("protected_architecture_gates")
+    if protected:
+        path = Path(protected["path"])
+        if file_hash(path) != protected["sha256"]:
+            raise ValueError("Protected architecture ancestor evidence changed")
+        manifest = json.loads(path.read_text())
+        if manifest.get("schema") != "v100-architecture-gates-v1" or not manifest.get("reports"):
+            raise ValueError("Invalid architecture ancestor evidence")
+        gates.extend(manifest["reports"])
     for branch, entry in profile.get("resources", {}).get("branch_lineages", {}).items():
         if branch not in ("A", "B"):
             raise ValueError("Unknown branch lineage")

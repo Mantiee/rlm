@@ -51,7 +51,7 @@ def audit(root: Path) -> dict:
         "desktop_prepared": (root / "research/desktop/manifest.json").exists(),
         "public_benchmarks_prepared": (root / "research/public-benchmarks/current.json").exists(),
         "resident_workers": evidence["drones"],
-        "implemented": "LoRA SFT and outcome-derived DPO preferences, optimizer checkpoints, replay/KL, fixed/public plus one-use fresh gates, new verified curriculum tool, bounded reward shadow head, alternative pretrained-base trials, source drones and sandbox/guest browser code candidates",
+        "implemented": "LoRA SFT and outcome-derived DPO preferences, optimizer checkpoints, replay/KL, fixed/public plus one-use fresh gates, new verified curriculum tool, bounded reward shadow head, automatic library-supported master architecture activation/rollback, owned distributed CPU training workers, source drones and sandbox/guest browser code candidates",
         "fresh_audit_required": profile.get("resources", {}).get("fresh_audit_required", False),
         "paper_research_enabled": profile.get("resources", {}).get("paper_research_enabled", False),
         "foundation_trials": [
@@ -59,6 +59,18 @@ def audit(root: Path) -> dict:
             for p in sorted((root / "research/foundation-trials").glob("*/proposal.json"))[:4]
         ],
         "normalized_provider_mappings": len(list((root / "research/providers").glob("*.json"))),
+        "master_architecture": {
+            "automatic_activation": True,
+            "active_expert": profile.get("resources", {}).get("active_foundation_expert"),
+            "history": profile.get("resources", {}).get("architecture_history", []),
+            "gate": "Task improvement, no retained regressions, fresh audit, public gate when configured and native boot probe; predecessor kept",
+        },
+        "owned_external_compute": evidence["external_compute"],
+        "colab": {
+            "interactive_trials": "Fresh datasets, bounded training, safe tensors and independent local validation",
+            "distributed_free_workers": "Not permitted by free managed Colab rules",
+            "source": "https://research.google.com/colaboratory/faq.html",
+        },
         "not_established": [
             "repeatable income edge",
             "universal zero forgetting",
@@ -68,10 +80,8 @@ def audit(root: Path) -> dict:
         ],
         "not_implemented": [
             "profit-maximizing policy RL",
-            "automatic promotion of alternative foundation architectures into the serving master",
             "automatic certification of sports/equities provider fees, account rights and settlement semantics",
             "automatic account creation or bypassing browser authentication/quotas",
-            "distributed free Colab workers",
         ],
         "outcome_learning_scope": "Causal earlier-input preferences from fully resolved audited paper trades enable LoRA DPO, including losses; observational hindsight labels and CPU shadow reward optimization are not unbiased policy RL or proof of profit",
         "helper_limit_scope": "30% request active-time target in R&D, not a hard per-process GPU utilization/power cap; game guard pauses only the isolated helper",

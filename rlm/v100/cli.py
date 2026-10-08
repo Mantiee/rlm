@@ -146,6 +146,15 @@ def main() -> None:
         help="Evaluate a served accepted model or RTX helper with official public graders",
     )
     official_run.add_argument("--output", type=Path, required=True)
+    compute_setup = sub.add_parser(
+        "compute-configure", help="Operator-only authenticated owned-compute mailbox setup"
+    )
+    compute_setup.add_argument("--mailbox", type=Path, required=True)
+    sub.add_parser("compute-status", help="Owned external worker readiness and job evidence")
+    compute_verify = sub.add_parser(
+        "compute-validate", help="Locally evaluate received safe-tensor small-model weights"
+    )
+    compute_verify.add_argument("identity")
     colab_import = sub.add_parser(
         "colab-import",
         help="Import bounded external metrics without executing code or loading pickle weights",
@@ -423,6 +432,20 @@ def main() -> None:
             json.dumps(evaluate(root, load_profile(args.profile, root), args.output), indent=2),
             flush=True,
         )
+        return
+    if args.command in ("compute-configure", "compute-status", "compute-validate"):
+        from rlm.v100.distributed_compute import configure, inspect, validate_locally
+
+        value = (
+            configure(root, args.mailbox)
+            if args.command == "compute-configure"
+            else (
+                inspect(root)
+                if args.command == "compute-status"
+                else validate_locally(root, args.identity)
+            )
+        )
+        print(json.dumps(value, indent=2), flush=True)
         return
     if args.command == "colab-import":
         from rlm.v100.colab_jobs import import_result

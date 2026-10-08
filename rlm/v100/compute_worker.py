@@ -1,0 +1,251 @@
+"""Owned-computer worker: bounded CPU jobs over an authenticated shared folder.
+
+This standalone file never imports the host controller, executes received code,
+uses the RTX or turns a free managed Colab session into a distributed worker.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from pathlib import Path
+
+
+def read_json(path: Path, limit: int = 2 * 2**20) -> dict:
+    if path.is_symlink() or path.stat().st_size > limit:
+        raise ValueError("Unsafe or oversized compute JSON")
+    with path.open("rb") as handle:
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("Compute JSON exceeds its limit")
+    return json.loads(data)
+
+
+def atomic(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name("." + path.name + "-" + uuid.uuid4().hex)
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            json.dump(value, handle, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def claim(mailbox: Path, worker: str) -> tuple[Path, dict] | None:
+    for path in sorted((mailbox / "jobs").glob("*.json"))[:128]:
+        if not re.fullmatch(r"[a-f0-9]{24}", path.stem):
+            continue
+        if (mailbox / "closed" / (path.stem + ".json")).exists():
+            continue
+        directory = mailbox / "claims" / path.stem
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            continue
+        lease = {
+            "job_id": path.stem,
+            "worker": worker,
+            "nonce": uuid.uuid4().hex,
+            "started": time.time(),
+            "heartbeat": time.time(),
+        }
+        atomic(directory / "lease.json", lease)
+        return path, lease
+    return None
+
+
+def available() -> tuple[bool, str]:
+    import psutil
+
+    if psutil.virtual_memory().available < 6 * 2**30:
+        return False, "Less than six GiB free host RAM"
+    if psutil.cpu_percent(interval=0.1) > 75:
+        return False, "Host CPU busy"
+    if any(
+        (p.info.get("name") or "").casefold() == "league of legends.exe"
+        for p in psutil.process_iter(["name"])
+    ):
+        return False, "Game running; CPU experiment paused"
+    return True, "ready"
+
+
+def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
+    import psutil
+
+    job = read_json(path)
+    if job.get("kernel_sha256") != hashlib.sha256(kernel.read_bytes()).hexdigest():
+        raise ValueError("Update the owned worker: pinned kernel mismatch")
+    if job.get("worker_sha256") != hashlib.sha256(Path(__file__).read_bytes()).hexdigest():
+        raise ValueError("Update the owned worker: pinned worker mismatch")
+    # Child validates all received fields, uses only built-in models and safe tensors.
+    work = kernel.parent / "work"
+    work.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="v100-compute-", dir=work) as temporary:
+        local = Path(temporary)
+        (local / "job.json").write_bytes(path.read_bytes())
+        environment = dict(
+            os.environ, CUDA_VISIBLE_DEVICES="", OMP_NUM_THREADS="2", MKL_NUM_THREADS="2"
+        )
+        result_path = mailbox / "results" / (path.stem + "-" + lease["nonce"])
+        result_path.mkdir(parents=True, exist_ok=False)
+        with (result_path / "worker.log").open("w", encoding="utf-8") as log:
+            process = subprocess.Popen(
+                [sys.executable, "-u", str(kernel), str(local / "job.json"), str(local / "output")],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=environment,
+                cwd=local,
+            )
+            started = time.monotonic()
+            try:
+                while process.poll() is None:
+                    lease_path = mailbox / "claims" / path.stem / "lease.json"
+                    if read_json(lease_path)["nonce"] != lease["nonce"]:
+                        raise RuntimeError("Compute lease revoked")
+                    if (mailbox / "closed" / (path.stem + ".json")).exists():
+                        raise RuntimeError("Compute job cancelled or already closed")
+                    try:
+                        owned = psutil.Process(process.pid)
+                        rss = sum(
+                            p.memory_info().rss for p in [owned] + owned.children(recursive=True)
+                        )
+                    except psutil.NoSuchProcess:
+                        process.wait()
+                        break
+                    if rss > 4 * 2**30 or time.monotonic() - started > 150:
+                        raise RuntimeError("Compute child exceeded four GiB RAM or 150 seconds")
+                    ready, reason = available()
+                    if not ready and ("Game" in reason or "RAM" in reason):
+                        raise RuntimeError(reason)
+                    lease["heartbeat"] = time.time()
+                    atomic(lease_path, lease)
+                    row = {
+                        "job": path.stem,
+                        "phase": "training",
+                        "worker": lease["worker"],
+                        "seconds": round(time.monotonic() - started, 1),
+                        "rss_gib": round(rss / 2**30, 2),
+                    }
+                    atomic(
+                        mailbox / "workers" / (lease["worker"] + ".json"),
+                        row | {"updated": time.time()},
+                    )
+                    print(json.dumps(row), flush=True)
+                    time.sleep(2)
+                if process.returncode:
+                    raise RuntimeError("Compute child failed; inspect worker.log")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+        for name in ("report.json", "weights.safetensors"):
+            source = local / "output" / name
+            if source.is_symlink() or source.stat().st_size > 16 * 2**20:
+                raise ValueError("Invalid compute result size")
+            shutil.copyfile(source, result_path / name)
+        atomic(
+            result_path / "receipt.json",
+            {
+                **lease,
+                "state": "complete",
+                "job_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "files": {
+                    name: hashlib.sha256((result_path / name).read_bytes()).hexdigest()
+                    for name in ("report.json", "weights.safetensors")
+                },
+            },
+        )
+
+
+def service(mailbox: Path, worker: str, kernel: Path, once: bool = False) -> None:
+    import psutil
+
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,48}", worker):
+        raise ValueError("Use a bounded alphanumeric worker name")
+    for name in ("jobs", "claims", "results", "workers", "closed"):
+        (mailbox / name).mkdir(parents=True, exist_ok=True)
+    lock = mailbox / "workers" / (worker + ".lock")
+    try:
+        lock.mkdir()
+    except FileExistsError:
+        lease_path = lock / "owner.json"
+        updated = (
+            read_json(lease_path)["heartbeat"] if lease_path.exists() else lock.stat().st_mtime
+        )
+        if time.time() - updated < 300:
+            raise ValueError("This worker name is already active; use another name") from None
+        lock.rename(lock.with_name(lock.name + "-retired-" + uuid.uuid4().hex))
+        lock.mkdir()
+    owner = {"nonce": uuid.uuid4().hex, "heartbeat": time.time()}
+    atomic(lock / "owner.json", owner)
+    try:
+        while True:
+            owner["heartbeat"] = time.time()
+            atomic(lock / "owner.json", owner)
+            ready, reason = available()
+            atomic(
+                mailbox / "workers" / (worker + ".json"),
+                {
+                    "updated": time.time(),
+                    "phase": "idle" if ready else "paused",
+                    "reason": reason,
+                    "device": "cpu",
+                    "threads": 2,
+                    "ram_limit_gib": 4,
+                },
+            )
+            task = claim(mailbox, worker) if ready else None
+            if task:
+                path, lease = task
+                try:
+                    execute(mailbox, path, lease, kernel)
+                except (ValueError, RuntimeError, OSError, psutil.Error) as error:
+                    destination = mailbox / "results" / (path.stem + "-" + lease["nonce"])
+                    atomic(
+                        destination / "receipt.json",
+                        {**lease, "state": "failed", "detail": str(error)[:400]},
+                    )
+                    print(
+                        json.dumps({"phase": "failed", "job": path.stem, "detail": str(error)}),
+                        flush=True,
+                    )
+            elif not once:
+                print(
+                    json.dumps(
+                        {"worker": worker, "phase": "idle" if ready else "paused", "reason": reason}
+                    ),
+                    flush=True,
+                )
+            if once:
+                return
+            time.sleep(10)
+    finally:
+        if read_json(lock / "owner.json")["nonce"] == owner["nonce"]:
+            (lock / "owner.json").unlink()
+            lock.rmdir()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mailbox", required=True, type=Path)
+    parser.add_argument("--name", required=True)
+    parser.add_argument("--once", action="store_true")
+    args = parser.parse_args()
+    if os.environ.get("COLAB_RELEASE_TAG") or os.environ.get("COLAB_BACKEND_VERSION"):
+        raise ValueError(
+            "Distributed service is not supported in free managed Colab; use the interactive notebook"
+        )
+    service(
+        args.mailbox.resolve(), args.name, Path(__file__).with_name("compute_kernel.py"), args.once
+    )

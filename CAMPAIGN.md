@@ -29,7 +29,7 @@ Separate pinned LiveBench environment, official grader and dataset snapshots. De
 
 Immutable originals, replay, preservation losses, independently verified examples, fixed regression suites and rollback reduce forgetting; finite tests cannot prove universal zero forgetting. Accepted updates are counted explicitly; a research cycle or saved hypothesis is not a weight update. Paper outcomes remain distinct from exploratory backtests. Real order execution is not installed.
 
-Colab remains an operator-started bounded notebook pilot with pinned input/result manifests and local reproduction before promotion. No automatic free-tier distributed workers, account/cookie quota rotation or paid API calls are implemented.
+Colab remains an operator-started bounded notebook pilot with fresh pinned inputs, safe-tensor output and independent host evaluation. Free managed Colab explicitly prohibits distributed workers; use the owned-computer system below instead. No account/cookie quota rotation or paid API calls are used.
 
 ## Windows visibility
 
@@ -43,7 +43,7 @@ Self-upgrade under the operator's goal is the default mission; financial researc
 
 Pinned official benchmarks remain comparison/regression measurements. `benchmark-prepare --limit 0 --coding` selects all tasks in the pinned release and uses private-VM coding graders. Agentic repository repair requires a separately provisioned privileged grading VM; its absence leaves the full report incomplete, never a fabricated leaderboard score. The smaller panel remains the default to keep ordinary upgrade cycles bounded.
 
-`propose_foundation_trial` can queue a different library-supported pretrained architecture, with pinned revision/download/context budgets, LoRA/export tests and the same quality gates. Successful alternatives become immutable independent experts; they do not automatically replace the serving master. Arbitrary guest-side architecture research and tiny all-weight pilots remain separate from trusted host loaders.
+`propose_foundation_trial` can queue a different library-supported pretrained architecture, with pinned revision/download/context budgets, LoRA/export tests and the same quality gates. Successful alternatives become immutable independent experts and can automatically become the master after a strict task improvement, no ancestor regressions, a passed fresh audit against the current master, public checks when configured, and an actual native boot probe. The preceding native model is copied into an immutable rollback expert; A/B adapter histories remain archived by base. No adapters from different bases are combined. Two repeated owned mission failures can restore the predecessor and quarantine the failed architecture. Arbitrary guest-side architecture research and tiny all-weight pilots remain separate from trusted host loaders.
 
 Normalized public JSON feeds can cover any already registered crypto/equity/sports instrument, with documented mappings, source timestamps and settlement semantics. Provider documentation/observations are archived; no retrieval-time quote rejuvenation, broker-rule certification or new fee discounts are invented. At most four registered feeds are read per observer tick, rotating across the registry. `consult_browser_model` opens a researched free service in the guest; authentication/captcha requires operator handoff, and quotas must be respected.
 
@@ -52,3 +52,13 @@ Normalized public JSON feeds can cover any already registered crypto/equity/spor
 Resident worker crashes requeue interrupted bounded jobs and restart after cooldown; a full persistent queue does not block mission startup. SQLite handles close after transactions. The supervisor user service sources the isolated environment and refreshes its owned predecessor on upgrade. `/status` in chat returns locally without inference. Replies identify V100 or the RTX delegate. Pinned complete public baselines are reused only for identical weights, datasets and generation; measured MTP can be adopted without replacing accepted training ancestry.
 
 Full requirement and evidence audit: [REQUIREMENTS.md](REQUIREMENTS.md).
+
+## v31 architecture switching and owned distributed compute
+
+`propose_foundation_trial` is connected to automatic activation in the learning loop, with immutable rollback models and hash-bound ancestor gates retained across restarts. An equally scoring architecture remains an expert, rather than replacing the master without a demonstrated improvement. Alternative architectures disable predecessor-bound MTP until measured again.
+
+The operator configures an authenticated dedicated shared folder with `compute-configure`. `tools/start-owned-compute-worker.ps1` and `.sh` create separate CPU-only environments and connect Windows/Linux computers to that folder. No listener, firewall rule, board power setting or original Ollama install is changed. The model can propose and cancel `propose_compute_trial` jobs and inspect `compute_trial_status`. Jobs choose built-in GRU/transformer shape, steps and learning rate under 2M parameter / 2 thread / 4 GiB child RAM / 150 second wall limits. The worker pauses for host pressure or League gameplay. Atomic exclusive claims prevent duplicate work, expired claims retry up to three times, and remote results remain untrusted. A host drone independently evaluates safe-tensor weights against the pinned heldout dataset before reporting local improvement. This is small-model R&D, not distributed Gemma full-weight training or automatic master promotion.
+
+`colab-import` can import pinned safe-tensor notebook output into this same local validation queue. Each proposal uses new calculator-verified examples. Notebook GPU usage is explicitly interactive, bounded to 120 seconds and separate from the owned worker service. A smaller heldout loss alone is neither a mastered general ability nor evidence of income.
+
+The feature-branch CI performs CPU tensor/training tests and parses Windows PowerShell scripts on standard public-repository runners. CUDA performance, guest boot, the LAN mount and RTX stability still require the operator's hardware; CI does not certify them.

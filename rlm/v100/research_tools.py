@@ -159,6 +159,32 @@ TOOLS = [
         },
     ),
     tool_schema(
+        "propose_compute_trial",
+        "Queue bounded built-in all-weight GRU/transformer pilots on authenticated operator-owned CPU computers. Fresh proof-domain data, independent local tensor validation. Does not replace master or use free managed Colab workers.",
+        {
+            "architecture": {"type": "string", "enum": ["gru", "transformer"]},
+            "steps": {"type": "integer", "minimum": 10, "maximum": 100},
+            "width": {"type": "integer", "minimum": 32, "maximum": 128},
+            "layers": {"type": "integer", "minimum": 1, "maximum": 2},
+            "learning_rate": {"type": "number", "minimum": 0.00001, "maximum": 0.01},
+            "purpose": {"type": "string", "maxLength": 600},
+            "domain": {
+                "type": "string",
+                "enum": ["arithmetic", "linear_equation", "decimal_calculation"],
+            },
+        },
+    ),
+    tool_schema(
+        "compute_trial_status",
+        "Read owned worker readiness and locally validated experiment results.",
+        {},
+    ),
+    tool_schema(
+        "cancel_compute_trial",
+        "Cancel a queued or active bounded owned-compute experiment.",
+        {"identity": {"type": "string"}},
+    ),
+    tool_schema(
         "propose_colab_trial",
         "Queue a short optional interactive Colab tiny-model training pilot. User opens notebook; this does not create accounts, remote workers, bypass quotas or replace the main model.",
         {
@@ -525,6 +551,24 @@ class ResearchTools:
             if name == "register_paper_spot" and set(arguments) == {"pair_codes"}:
                 return prepare(self.root, refresh=True, **arguments)
             raise ValueError("Invalid market discovery/registration arguments")
+        if name in ("propose_compute_trial", "compute_trial_status", "cancel_compute_trial"):
+            from rlm.v100.distributed_compute import cancel, inspect, propose
+
+            if name == "propose_compute_trial" and set(arguments) == {
+                "architecture",
+                "steps",
+                "purpose",
+                "domain",
+                "width",
+                "layers",
+                "learning_rate",
+            }:
+                return propose(self.root, self.branch, **arguments)
+            if name == "compute_trial_status" and not arguments:
+                return inspect(self.root)
+            if name == "cancel_compute_trial" and set(arguments) == {"identity"}:
+                return cancel(self.root, **arguments)
+            raise ValueError("Invalid owned compute arguments")
         if name == "propose_colab_trial":
             from rlm.v100.colab_jobs import propose
 
