@@ -63,7 +63,7 @@ The operator configures an authenticated dedicated shared folder with `compute-c
 
 The feature-branch CI performs CPU tensor/training tests and parses Windows PowerShell scripts on standard public-repository runners. CUDA performance, guest boot, the LAN mount and RTX stability still require the operator's hardware; CI does not certify them.
 
-Verified CPU/Windows checks: [run 37791661812](https://github.com/Mantiee/rlm/actions/runs/37791661812), 504 tests passed with none skipped, and all PowerShell scripts parsed successfully. This includes real tiny GRU/transformer training, the owned worker-to-host tensor round trip, adapter gradients, breeding and checkpoint resume. Native V100/RTX execution and private-VM boot were not run in CI.
+Verified v32 CPU/Windows checks: [run 37801425954](https://github.com/Mantiee/rlm/actions/runs/37801425954), 529 tests passed with none skipped, and all PowerShell scripts parsed successfully. This includes real tiny GRU/transformer training, the owned worker-to-host tensor round trip, adapter gradients, breeding, checkpoint resume, scratch full-weight continuation/inference, activation/rollback and completed-event settlement after odds disappear. Native V100/RTX execution and private-VM boot were not run in CI.
 
 
 ## v32 custom full-weight masters and on-device acceptance
