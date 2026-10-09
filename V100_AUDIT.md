@@ -1,5 +1,14 @@
 # V100 mission audit v100.39
 
+The optional `tools/start-v100-dashboard.sh` installs a separate read-only LAN
+viewer without updating or stopping the mission. It binds explicitly to
+192.168.0.68:8765, exports bounded status/log snapshots and allowlisted paper
+report assets, and has no command or training endpoint. Its data collection is
+resource-limited, and old-run reports are not attributed to a new mission.
+Serving a dashboard on the operator host does not relax the private VM's network
+or filesystem isolation. Reachability from another LAN device still needs an
+on-device check.
+
 This inventory separates source implementation from configuration, execution and
 demonstrated improvement. Passing controller tests does not certify GPU stability,
 profitable trading or a successful model promotion. It is not a declaration that
