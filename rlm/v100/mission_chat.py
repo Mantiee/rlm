@@ -244,6 +244,44 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    from rlm.v100 import chat_progress
+
+    if chat_progress.requested(message) or chat_progress.continue_requested(message):
+        result = chat_progress.respond(root)
+        if chat_progress.continue_requested(message):
+            result["answer"] = (
+                "Kontynuacja dotychczasowego celu. Nie zmieniam planu na edycję dashboardu. "
+                "Działająca misja kontynuuje swoją kolejkę; trening wymaga zweryfikowanych danych i bramek jakości. "
+                "Ta odpowiedź nie uruchamia zatrzymanej misji ani nie potwierdza nowych wag.\n"
+                + result["answer"]
+            )
+        return result
+    if (
+        any(word in message.casefold() for word in ("dashboard", "raport html"))
+        and re.search(r"\b(?:zrob|zrób|napraw|popraw)\b", message.casefold())
+        and not re.search(r"\b(?:nie|bez)\b", message.casefold())
+    ):
+        from rlm.v100.dashboard_editor import status as layout_status
+        from rlm.v100.dashboard_editor import write as layout_write
+        from rlm.v100.dashboard_layout import BASE_TEMPLATE
+
+        written = layout_write(root, BASE_TEMPLATE)
+        publication = layout_status(root)
+        return {
+            "answer": (
+                "Zapisano zweryfikowany widok statusu, agentów, zasobów, raportów i dowodów. "
+                "Poprzedni HTML zachowano w kopii. Dane odświeża renderer hosta. "
+                + (
+                    "Publikacja potwierdzona."
+                    if publication.get("published")
+                    else "Host nie potwierdził jeszcze publikacji; sprawdź dashboard_status."
+                )
+            ),
+            "actions": [],
+            "applied": [written],
+            "dashboard": publication,
+            "responder": {"model": "controller-dashboard", "delegated_while_master_busy": False},
+        }
     if re.fullmatch(
         r"(?:hej|czesc|cześć|hello|hi|witaj)(?:\s+(?:synta|master|v100))?[!.,\s]*", message, re.I
     ):
@@ -392,7 +430,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 "The work continues independently; report the queued job ID instead of claiming it already ran. "
                 "For requested dashboard HTML edits, prefer read_dashboard and write_dashboard to read, edit and verify "
                 "/workspace/dashboard/index.html before reporting completion. Preserve required IDs. "
-                "No scripts, event handlers or external resources: the host supplies live rendering. "
+                "No scripts, event handlers or external resources: the host supplies live rendering. Removing guest scripts does NOT disable host refresh or counters. Never treat a previous assistant promise as an executed change. "
                 "Use dashboard_status before claiming publication. A cat command only reads; it does not edit. GUI observation is unnecessary for HTML edits. "
                 "If vision is deferred, continue file work without waiting for an image."
                 " For a concrete implementation request, execute allowed tools now and verify their receipts. "
@@ -493,6 +531,23 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         evidence = chat_resources.status(root)
         result["answer"] = chat_resources.answer(evidence, tool_receipts, rejected)
         result["resource_contract"] = {"evidence": evidence, "rejected_actions": rejected}
+    implementation_requested = bool(
+        re.search(
+            r"\b(?:zrob|zrób|wprowadz|wprowadź|wdroz|wdroż|zaimplementuj|napraw)\b",
+            message.casefold(),
+        )
+    )
+    if (
+        implementation_requested
+        and not tool_receipts
+        and result["actions"]
+        and all(action.get("kind") in ("plan_short", "plan_mid") for action in result["actions"])
+    ):
+        result["actions"] = []
+        result["answer"] = (
+            "Nie wykonano żądanej implementacji: model zwrócił tylko plan, bez potwierdzenia narzędzi. "
+            "Nie zapisano go jako wykonanego zadania ani nie zmieniono planów."
+        )
     result["tool_receipts"] = tool_receipts
     result["applied"] = apply_actions(root, result["actions"], message)
     if dashboard_request or any(
@@ -643,6 +698,8 @@ def waiting_label(result: dict) -> str:
 
 
 def chat(root: Path, message: str | None = None) -> None:
+    from rlm.v100.chat_progress import requested as progress_requested
+
     print("\nV100 MASTER CHAT\n/exit closes chat only. /status reads mission status.\n")
     while True:
         try:
@@ -651,7 +708,11 @@ def chat(root: Path, message: str | None = None) -> None:
             break
         if text.strip() == "/exit":
             break
-        if text.strip() == "/status" or text.strip().startswith(("/goal ", "/cel ")):
+        if (
+            text.strip() == "/status"
+            or text.strip().startswith(("/goal ", "/cel "))
+            or progress_requested(text)
+        ):
             response = respond(root, root, {"message": text})
             print("Controller>", response["answer"], flush=True)
             if message is not None:

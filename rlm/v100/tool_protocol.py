@@ -81,10 +81,16 @@ def validate_value(value, schema: dict) -> None:
         raise ValueError("Action string argument exceeds its budget")
     if kind == "object":
         props = schema.get("properties", {})
-        if not set(schema.get("required", [])) <= set(value) or not set(value) <= set(props):
+        additional = schema.get("additionalProperties", True)
+        if not set(schema.get("required", [])) <= set(value):
             raise ValueError("Action argument fields differ from the schema")
         for key, item in value.items():
-            validate_value(item, props[key])
+            if key in props:
+                validate_value(item, props[key])
+            elif additional is False:
+                raise ValueError("Action argument fields differ from the schema")
+            elif isinstance(additional, dict):
+                validate_value(item, additional)
     if kind == "array":
         if not schema.get("minItems", 0) <= len(value) <= schema.get("maxItems", 64):
             raise ValueError("Action array argument exceeds its budget")

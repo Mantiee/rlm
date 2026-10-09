@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10047.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10048.txt"
 
 "$PY" <<'PY'
 import json, os

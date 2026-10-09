@@ -36,6 +36,23 @@ def collect(root: Path) -> dict:
         "scope": "Current mission evidence only. Missing metrics mean unknown, not zero. Attempted/global steps are not successful optimizer updates. Recorded updates do not prove accepted weights or profit. GUI readiness is not a prerequisite for native inference, calculator tools or GPU training. Arithmetic training is an optional experiment, not a prerequisite or proof of an income edge.",
     }
     if run:
+        progress = run / "public-baseline.progress.json"
+        if not progress.exists():
+            progress = root / "research/public-benchmarks/progress.json"
+        if progress.exists():
+            value = read_record(progress)
+            if Path(value.get("report", "")).resolve().is_relative_to(run.resolve()):
+                result["official_benchmark"] = value
+        complete = run / "public-baseline.json"
+        if complete.exists():
+            value = read_record(complete)
+            if value.get("complete"):
+                result["official_benchmark"] = {
+                    "state": "finished",
+                    "completed": len(value["cases"]),
+                    "total": len(value["cases"]),
+                    "report": str(complete),
+                }
         state_path = run / "learning/state.json"
         cycles = read_record(state_path).get("cycles", []) if state_path.exists() else []
         if state_path.exists():

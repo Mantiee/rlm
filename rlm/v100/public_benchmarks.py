@@ -242,6 +242,20 @@ def published(snapshot: Path, cases: list[dict]) -> list[dict]:
     return sorted(output, key=lambda row: row["panel_macro_mean"], reverse=True)[:20]
 
 
+def write_progress(root: Path, output: Path, report: dict, total: int, state: str, case=None):
+    value = {
+        "model": report["model_version"],
+        "completed": len(report["cases"]),
+        "total": total,
+        "report": str(output),
+        "state": state,
+        "current_case": case,
+        "updated": time.time(),
+    }
+    atomic_json(output.with_suffix(".progress.json"), value)
+    atomic_json(root / "research/public-benchmarks/progress.json", value)
+
+
 def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = None) -> dict:
     from rlm.v100.competition import helper_client
     from rlm.v100.remote_helper import remote_profile
@@ -297,10 +311,12 @@ def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = No
     client.pacing_root = str(root)
     rows = json.loads((snapshot / "questions.json").read_text())
     done = {row["key"] for row in report["cases"]}
+    write_progress(root, output, report, len(rows), "running")
     for question in rows:
         key = question_key(question)
         if key in done:
             continue
+        write_progress(root, output, report, len(rows), "generating", key)
         started, turns, messages = time.monotonic(), [], []
         error, finish = None, None
         try:
@@ -318,6 +334,7 @@ def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = No
         if error or finish == "length":
             answer["eval_status"] = "api_error" if error else "token_exhaustion"
         grading = output.parent / (output.stem + "-grading") / str(len(report["cases"]))
+        write_progress(root, output, report, len(rows), "grading", key)
         try:
             result = grade(root, snapshot, question, answer, grading)
         except (ValueError, OSError, subprocess.SubprocessError) as failure:
@@ -325,6 +342,7 @@ def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = No
             atomic_json(
                 output.with_suffix(".error.json"), {"key": key, "error": str(failure)[:500]}
             )
+            write_progress(root, output, report, len(rows), "failed", key)
             raise RuntimeError("Official grading failed; report remains partial") from failure
         report["cases"].append(
             {
@@ -337,15 +355,7 @@ def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = No
             }
         )
         atomic_json(partial, report)
-        atomic_json(
-            root / "research/public-benchmarks/progress.json",
-            {
-                "model": report["model_version"],
-                "completed": len(report["cases"]),
-                "total": len(rows),
-                "report": str(output),
-            },
-        )
+        write_progress(root, output, report, len(rows), "running")
         print(
             json.dumps(
                 {
@@ -361,6 +371,7 @@ def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = No
     report["finished_at"] = time.time()
     report["complete"] = len(report["cases"]) == len(rows)
     atomic_json(output, report)
+    write_progress(root, output, report, len(rows), "finished")
     return report
 
 

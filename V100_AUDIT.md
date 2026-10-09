@@ -446,3 +446,35 @@ publication, design-preserving script removal, deferred boot repair, scoped capa
 catalogs, greeting isolation and accepted CPU chat for substantive requests. Ruff,
 formatting, shell syntax and whitespace checks passed. LAN/GPU/Windows/guest execution
 requires deployment evidence.
+
+## v100.48 valid dynamic action objects and direct mission progress
+
+The action validator incorrectly rejected fields in open nested object schemas
+such as predict_goal_pattern.specification. It now follows additionalProperties:
+unspecified/true allows dynamic fields, false rejects extras, and a schema validates
+each extra value. Required and typed known properties remain validated; tool-level
+and business admission constraints remain unchanged. This is a reproducible cause
+of the reported schema error, not proof of the exact failed on-host tool call.
+
+Plain progress/learning-status questions receive controller evidence rather than
+model improvisation or plan actions. Terminal queries bypass the inference queue.
+Reports distinguish missing optimizer counters from zero, current benchmark counters
+from historical runs, and host-supplied live rendering from passive guest HTML.
+Official benchmark progress is written before generation, during grading, after each
+case and at completion, both beside its report and in the legacy shared location.
+Per-run evidence prefers the local counter so concurrent RTX runs do not overwrite it.
+The dashboard's main progress bar now shows the current official benchmark in that phase.
+
+Validation: full repository run 986 passed, 65 skipped, 1 process/RAM-dependent owned
+worker integration deselected and one PEFT configuration warning. The final focused
+10-test run also covers an added concurrent-helper/local-counter regression and direct
+terminal status bypass. Ruff, formatting, shell syntax and diff checks passed.
+No successful on-host forecast, training update or profitable outcome is certified.
+
+Continuation requests preserve the current mission goal and report the controller
+state without replacing research with HTML plans. Explicit basic dashboard repair
+requests write the validated default view with backup and separate publication
+receipt. Host styling improves panel separation and background contrast. A concrete
+implementation response consisting solely of plans without tool receipts is rejected
+instead of saving the plans as progress. Arbitrary future tasks still depend on the
+available scoped tools; this does not certify universal autonomous completion.
