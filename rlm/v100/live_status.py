@@ -75,6 +75,12 @@ def recent_events(root: Path, limit: int = 200) -> list[dict]:
                         if row.get("kind") == "local-model-reasoning"
                         else None,
                         "trace_part": payload.get("part"),
+                        "delta_channel": payload.get("channel")
+                        if row.get("kind") == "inference-delta"
+                        else None,
+                        "delta_text": payload.get("text")
+                        if row.get("kind") == "inference-delta"
+                        else None,
                         "source": str(path),
                         "device": payload.get("device"),
                         "model": payload.get("model"),
@@ -109,6 +115,14 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
         if event.get("device"):
             view["device"] = event["device"]
             view["model"] = event.get("model")
+        if event.get("delta_text"):
+            if view.get("stream_request") != event.get("request_id"):
+                view["stream_output"], view["stream_reasoning"] = "", ""
+            view["stream_request"] = event.get("request_id")
+            key = (
+                "stream_reasoning" if event.get("delta_channel") == "reasoning" else "stream_output"
+            )
+            view[key] = (view.get(key, "") + event["delta_text"])[-16384:]
         if event.get("returned_trace"):
             if event.get("trace_part") == 0:
                 view["returned_trace"] = ""

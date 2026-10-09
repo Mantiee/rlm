@@ -281,6 +281,10 @@ class OllamaResearchClient(LlamaCppClient):
                 if 300 <= response.status_code < 400:
                     raise ValueError("Remote helper redirected the request")
                 response.raise_for_status()
+                if endpoint == "/api/chat" and data and data.get("stream"):
+                    from rlm.v100.streaming import ollama_reply
+
+                    return ollama_reply(response.iter_lines(chunk_size=128), self.stream_delta)
                 body = bytearray()
                 for block in response.iter_content(65536):
                     body.extend(block)
@@ -385,7 +389,7 @@ class OllamaResearchClient(LlamaCppClient):
         payload = {
             "model": self.model_name,
             "messages": data["messages"],
-            "stream": False,
+            "stream": self.streaming_enabled(),
             "think": self.enable_thinking,
             "options": options,
             "keep_alive": -1,

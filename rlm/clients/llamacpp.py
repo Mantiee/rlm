@@ -77,9 +77,13 @@ class LlamaCppClient(BaseLM):
             **self.activity_context,
         )
         started = time.perf_counter()
+        self.thread_state.activity_request_id = request_id
+        self.thread_state.stream_buffer = {}
         try:
             result = self.http_request(endpoint, data)
+            self.flush_stream()
         except Exception as error:
+            self.flush_stream()
             journal.write(
                 "errors", "inference-failed", {"error": type(error).__name__}, request_id=request_id
             )
@@ -134,6 +138,48 @@ class LlamaCppClient(BaseLM):
         )
         return result
 
+    def streaming_enabled(self) -> bool:
+        if not self.activity_root:
+            return False
+        path = self.activity_root / "research/user-preferences.json"
+        if not path.exists():
+            return False
+        preferences = json.loads(path.read_text())
+        return (
+            preferences.get("stream_local_model_trace") is True
+            and preferences.get("capture_local_model_trace") is True
+        )
+
+    def stream_delta(self, channel: str, text: str) -> None:
+        self.remaining_timeout()
+        buffer = getattr(self.thread_state, "stream_buffer", {})
+        buffer[channel] = buffer.get(channel, "") + text
+        self.thread_state.stream_buffer = buffer
+        last = getattr(self.thread_state, "stream_flushed", 0)
+        if time.monotonic() - last >= 0.5 or len(buffer[channel]) >= 1024:
+            self.flush_stream()
+
+    def flush_stream(self) -> None:
+        from rlm.v100.activity import ActivityLog
+
+        journal = ActivityLog(self.activity_root, self.research_owner, self.activity_actor)
+        for channel, text in getattr(self.thread_state, "stream_buffer", {}).items():
+            if text:
+                journal.write(
+                    "steps",
+                    "inference-delta",
+                    {
+                        "channel": channel,
+                        "text": text,
+                        "model": self.model_name,
+                        "device": self.activity_context.get("device"),
+                        "partial": True,
+                    },
+                    request_id=getattr(self.thread_state, "activity_request_id", None),
+                )
+        self.thread_state.stream_buffer = {}
+        self.thread_state.stream_flushed = time.monotonic()
+
     def remaining_timeout(self) -> float:
         deadline = getattr(self, "request_deadline", None)
         if deadline is None:
@@ -145,6 +191,19 @@ class LlamaCppClient(BaseLM):
 
     def http_request(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         # No environment proxy routing for local model traffic.
+        if endpoint == "/v1/chat/completions" and data is not None and self.streaming_enabled():
+            from rlm.v100.streaming import local_reply
+
+            with requests.Session() as session:
+                session.trust_env = False
+                with session.post(
+                    self.base_url + endpoint,
+                    json={**data, "stream": True, "stream_options": {"include_usage": True}},
+                    timeout=self.remaining_timeout(),
+                    stream=True,
+                ) as response:
+                    response.raise_for_status()
+                    return local_reply(response.iter_lines(chunk_size=128), self.stream_delta)
         with requests.Session() as session:
             session.trust_env = False
             response = (

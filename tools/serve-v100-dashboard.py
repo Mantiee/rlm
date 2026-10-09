@@ -133,6 +133,15 @@ class DashboardState:
             "published_at": time.time(),
         }
 
+    def readiness(self):
+        from rlm.v100.readiness import assess
+
+        report = {
+            **self.data.get("report", {}),
+            "live_events": self.data.get("live", {}).get("events", []),
+        }
+        return assess(self.root, self.data.get("mission", {}), report, self.layout)
+
     def sync_layout(self):
         try:
             content = guest_layout(self.root)
@@ -298,6 +307,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     json.dumps(
                         self.server.state.data, ensure_ascii=False, allow_nan=False
                     ).encode(),
+                    "application/json; charset=utf-8",
+                )
+            elif route == "/api/live-inference":
+                from rlm.v100.live_status import agent_views, recent_events
+
+                events = recent_events(self.server.state.root)
+                body, mime = (
+                    json.dumps(
+                        {"events": events, "agents": agent_views(events, [])}, ensure_ascii=False
+                    ).encode(),
+                    "application/json; charset=utf-8",
+                )
+            elif route == "/api/readiness":
+                body, mime = (
+                    json.dumps(self.server.state.readiness(), ensure_ascii=False).encode(),
                     "application/json; charset=utf-8",
                 )
             elif route == "/api/actions":

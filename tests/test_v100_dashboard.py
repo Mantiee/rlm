@@ -42,6 +42,15 @@ def test_dashboard_private_bind_and_readonly_http_routes(tmp_path):
             with pytest.raises(HTTPError) as error:
                 urlopen(origin + "/api/actions?day=../secret", timeout=3)
             assert error.value.code == 404
+            with urlopen(origin + "/api/live-inference", timeout=3) as response:
+                live = json.load(response)
+                assert live["events"][0]["kind"] == "tool-start"
+                assert live["events"][0]["tool"] == "calculate"
+                assert isinstance(live["agents"], list)
+            with urlopen(origin + "/api/readiness", timeout=3) as response:
+                readiness = json.load(response)
+                assert readiness["schema"] == "synta-readiness-v1"
+                assert "Accepted production weights" in readiness["unverified"]
             with urlopen(origin + "/api/status", timeout=3) as response:
                 assert json.load(response)["mission"]["running"] is True
                 assert response.headers["Cache-Control"] == "no-store"

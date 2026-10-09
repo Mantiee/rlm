@@ -535,3 +535,29 @@ passed after replacing missing ML counters with explicitly unknown values. Tests
 cover archive pagination, goal attribution, incomplete tails, path/symlink rejection,
 HTTP action routes and goal-change separation while preserving verifiable replay.
 No hardware training improvement or universal goal oracle is certified.
+
+## v51: observable streaming and commissioning evidence
+
+Owned llama.cpp SSE and Ollama NDJSON transports now journal partial output and
+backend-returned local reasoning while generation is in progress. Both capture and
+stream preferences must be enabled; the upgrade enables these following the
+operator's request. Thinking modes remain unchanged. Deltas are flushed in bounded
+chunks; a lightweight read-only endpoint feeds the dashboard every two seconds
+without waiting for full hardware collection. Final token counts remain measured
+backend counters, not estimates from text. Incomplete streams are visible as
+partial output but never accepted as completed responses. Historical omitted
+reasoning, unrecorded actions and token IDs cannot be reconstructed.
+
+The readiness endpoint and dashboard distinguish worker heartbeat, reported job
+execution, verified optimizer counters, accepted weights, resolved goal outcomes,
+layout publication and observed stream transport. Unknown evidence is explicitly
+unknown. This does not bypass independent acceptance or force poor candidates into
+production. A ready worker does not prove execution, and busy inference does not
+prove training. Hardware commissioning still requires the installed user backends.
+
+Validation: full deterministic suite 1000 passed, 65 skipped, one resource-dependent
+owned-worker integration deselected and one existing PEFT warning. After adding a
+real framed-transport mock, focused streaming/helper/dashboard coverage passed
+115 tests. HTTP route checks also exercise the fast inference and readiness APIs.
+No user GPU, Windows workload or improved accepted production model was available
+for direct validation in this environment.
