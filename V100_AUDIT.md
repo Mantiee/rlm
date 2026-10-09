@@ -561,3 +561,37 @@ real framed-transport mock, focused streaming/helper/dashboard coverage passed
 115 tests. HTTP route checks also exercise the fast inference and readiness APIs.
 No user GPU, Windows workload or improved accepted production model was available
 for direct validation in this environment.
+
+## v52: automatic goal CPU pilots and combined retention
+
+The observer now dispatches bounded A/B owned CPU pilots automatically when a fresh
+idle worker and enough host-verified active-goal outcomes exist. GRU and Transformer
+trials use a separate compact projection; full evidence remains archived. Source
+splits are persisted, future outcomes are excluded from features, and exact labels,
+record selection and artifact provenance are rechecked locally. These trials do not
+automatically replace the master. Insufficient data is a visible blocker, not a
+dummy job. Existing queued jobs retain priority. The existing Windows pinned kernel
+and worker remain compatible.
+
+Retention mode 6 combines delta Fisher EWC, delta-A orthogonality and A-GEM-style
+gradient projection, alongside selected replay/KL and independently gated growth.
+This is an experimental combination, not a guarantee of better learning or zero
+forgetting. Candidates must still pass independent evaluation.
+
+A malformed tool argument receives one bounded schema correction before execution;
+identity, transport and budget failures are not retried by this mechanism. Live
+agent cards expose recorded partial output and explicitly captured local backend
+reasoning, plus actual actions, plans and evidence. Missing history is not invented.
+Goal CPU admission and host validation appear separately in the dashboard.
+
+A real CPU test trains the compact task, saves safetensors and reloads them for held-out
+scoring. No user V100 or Windows hardware is accessible here: installed worker
+execution, accepted master weights and improved task performance remain commissioning
+checks. This does not implement every published continual-learning algorithm, a
+universal reward oracle, guaranteed profit or simultaneous unrestricted GPU training
+and inference.
+
+Validation for v52: 1009 passed, 65 skipped, one resource-dependent owned-worker
+integration deselected, one existing PEFT warning. Ruff and upgrade shell syntax
+checks pass. Renderer behavior is tested in Node; no browser visual inspection or
+user hardware acceptance is claimed.

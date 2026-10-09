@@ -30,13 +30,13 @@ class TinyAdapter(torch.nn.Module):
         return SimpleNamespace(loss=(predicted - y).square().mean())
 
 
-@pytest.mark.parametrize("mode", [1, 2, 3, 4])
+@pytest.mark.parametrize("mode", [1, 2, 3, 4, 6])
 def test_penalty_zero_at_anchor_and_positive_after_change(mode, tmp_path):
     torch.manual_seed(7)
     model = TinyAdapter()
     state = AdapterRetention(model, options({"retention_mode": mode}))
     inputs = {"x": torch.ones(1, 3), "y": torch.ones(1, 1)}
-    if mode in (2, 4):
+    if mode in (2, 4, 6):
         state.estimate(model, [inputs])
         assert model.training
         assert state.samples == 1
@@ -103,6 +103,25 @@ def test_projection_removes_conflict_without_overwriting_loss_gradients():
     before = [p.grad.clone() for p in model.parameters()]
     assert not state.project(model, batch)["projected"]
     assert all(torch.equal(p.grad, old) for p, old in zip(model.parameters(), before, strict=True))
+
+
+def test_combined_retention_projects_conflicts_and_regularizes_drift():
+    model = TinyAdapter()
+    state = AdapterRetention(model, options({"retention_mode": 6}))
+    batch = {"x": torch.ones(1, 3), "y": torch.ones(1, 1)}
+    state.estimate(model, [batch])
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.add_(0.05)
+    assert state.penalty().item() > 0
+    reference = torch.autograd.grad(model(**batch).loss, tuple(model.parameters()))
+    for parameter, gradient in zip(model.parameters(), reference, strict=True):
+        parameter.grad = -gradient.clone()
+    assert state.project(model, batch)["projected"]
+    assert (
+        sum((p.grad * g).sum().item() for p, g in zip(model.parameters(), reference, strict=True))
+        >= -1e-5
+    )
 
 
 def test_rank_growth_preserves_scaling_delta_and_original_files(tmp_path):
@@ -212,6 +231,7 @@ def test_experiment_schema_exposes_measured_history_and_capacity_only(tmp_path):
     profile["training"].update(init_adapter=str(adapter), retention_has_history=True)
     schema = parameter_schema(profile)
     assert 5 in schema["retention_mode"]["enum"]
+    assert 6 in schema["retention_mode"]["enum"]
     assert schema["retention_rank_growth"]["enum"] == [1, 2]
     values = {key: rule["enum"][0] for key, rule in schema.items()}
     validate_parameters(values, schema)

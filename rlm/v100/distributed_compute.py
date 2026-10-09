@@ -90,6 +90,46 @@ def propose(
     ):
         raise ValueError("Compute queue is full; finish or cancel existing experiments")
     train, validation = fresh_examples(domain)
+    return queue_job(
+        root,
+        mailbox,
+        branch,
+        architecture,
+        steps,
+        purpose,
+        domain,
+        train,
+        validation,
+        width,
+        layers,
+        learning_rate,
+    )
+
+
+def queue_job(
+    root: Path,
+    mailbox: Path,
+    branch: str,
+    architecture: str,
+    steps: int,
+    purpose: str,
+    domain: str,
+    train: list,
+    validation: list,
+    width: int = 64,
+    layers: int = 1,
+    learning_rate: float = 0.001,
+    provenance: dict | None = None,
+) -> dict:
+    """Publish a frozen host-owned dataset to the same pinned CPU kernel."""
+    if branch not in ("A", "B") or not isinstance(purpose, str) or not 1 <= len(purpose) <= 600:
+        raise ValueError("Choose A/B and a bounded compute experiment purpose")
+    records = list((root / "research/compute-jobs").glob("*/state.json"))
+    if (
+        len(records) >= 128
+        or sum(read_json(p)["state"] in ("queued", "running", "imported") for p in records) >= 16
+    ):
+        raise ValueError("Compute queue is full; finish or cancel existing experiments")
     identity = uuid.uuid4().hex[:24]
     folder = root / "research/compute-jobs" / identity
     folder.mkdir(parents=True)
@@ -115,6 +155,8 @@ def propose(
         "validation": validation,
     }
     validate(job)
+    if provenance is not None:
+        job["provenance"] = provenance
     atomic_json(folder / "job.json", job)
     shutil.copyfile(kernel, folder / "kernel.py")
     (folder / "kernel.py").chmod(0o444)
@@ -135,7 +177,7 @@ def propose(
         "id": identity,
         "state": "queued",
         "weights_changed": False,
-        "scope": "Tiny all-weight CPU model on fresh independent examples; not master weights or a proven goal improvement",
+        "scope": "Tiny all-weight CPU model on frozen host-verified examples; not master weights or a proven goal improvement",
     }
 
 
@@ -275,6 +317,10 @@ def validate_locally(root: Path, identity: str) -> dict:
     ):
         raise ValueError("Local compute validation requires frozen original input")
     job = read_json(folder / "job.json")
+    if job.get("domain") == "goal_observation":
+        from rlm.v100.goal_compute import verify_job
+
+        verify_job(root, job)
     if file_hash(folder / "kernel.py") != job["kernel_sha256"]:
         raise ValueError("Local trusted compute kernel changed")
     received = Path(state["result"])

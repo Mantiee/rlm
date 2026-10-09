@@ -69,3 +69,12 @@ unchanged old-route/old-ID outputs after new-parameter training. LoRA growth has
 structural factor/scaling tests. Fisher, penalties, projection and tamper-sensitive
 resume have deterministic tensor tests. **Full NF4/FP16 Gemma training, retention
 improvement and native export of an expanded adapter still need on-device tests.**
+
+### v52 combined pilot
+
+Mode 6 combines the existing delta Fisher EWC penalty, delta-A orthogonality penalty
+and A-GEM-style reference gradient projection. Replay/KL and independently gated
+rank or frozen auxiliary growth remain selectable. This is our experimental
+composition, not a reproduction of an unnamed state-of-the-art method. Extra
+regularization can impede adaptation; independent held-out and retention gates
+remain mandatory, with the accepted predecessor retained on rejection.

@@ -10,6 +10,7 @@ from rlm.v100.common import atomic_json
 
 
 def tick(root: Path) -> None:
+    from rlm.v100.goal_compute import tick as compute_tick
     from rlm.v100.goal_learning import tick as goal_tick
     from rlm.v100.spot_bootstrap import prepare
 
@@ -19,6 +20,7 @@ def tick(root: Path) -> None:
         ActivityLog(root, "controller", "goal-learning").write(
             "errors", "goal-observer-failed", {"detail": str(error)[:400]}
         )
+    compute_tick(root)
     ledger = root / "research/paper/ledger.sqlite3"
     if not ledger.exists():
         return

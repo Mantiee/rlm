@@ -16,6 +16,7 @@ RESOURCE_TOOLS = {
     "mission_evidence",
     "drone_status",
     "propose_compute_trial",
+    "propose_goal_compute_trial",
     "compute_trial_status",
     "cancel_compute_trial",
     "schedule_drone",
@@ -91,7 +92,9 @@ def answer(evidence: dict, trace: list[dict], rejected: list[dict]) -> str:
     for worker in active:
         text += f"\n{worker.get('name', 'worker')}: {worker.get('phase', 'unknown')}, {worker.get('threads', '?')} wątki, limit RAM {worker.get('ram_limit_gib', '?')} GiB."
     allocations = [
-        row for row in trace if row["tool"] in ("propose_compute_trial", "schedule_drone")
+        row
+        for row in trace
+        if row["tool"] in ("propose_compute_trial", "propose_goal_compute_trial", "schedule_drone")
     ]
     for row in allocations:
         result = row["result"]

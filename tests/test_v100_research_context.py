@@ -10,6 +10,44 @@ from rlm.v100.agent import tool_schema
 from rlm.v100.tool_protocol import json_tool_turn
 
 
+def test_rejected_schema_has_one_correction_and_no_transport_retry(tmp_path, monkeypatch):
+    from rlm.v100.activity import ActivityLog
+
+    calls = []
+
+    def route(client, messages, **kwargs):
+        calls.append(messages)
+        if len(calls) == 1:
+            raise ValueError("Action argument fields differ from the schema")
+        return {"role": "assistant", "content": "Corrected"}
+
+    monkeypatch.setattr(research_tools, "tool_turn", route)
+    client = SimpleNamespace(tool_protocol="json")
+    journal = ActivityLog(tmp_path)
+    assert research_tools.route_research_tool(client, [], [], journal)["content"] == "Corrected"
+    assert len(calls) == 2 and "BEFORE execution" in calls[1][-1]["content"]
+
+    def transport(client, messages, **kwargs):
+        calls.append(messages)
+        raise ValueError("Remote model metadata changed")
+
+    monkeypatch.setattr(research_tools, "tool_turn", transport)
+    calls.clear()
+    with pytest.raises(ValueError, match="metadata"):
+        research_tools.route_research_tool(client, [], [], journal)
+    assert len(calls) == 1
+
+    def bad_schema(client, messages, **kwargs):
+        calls.append(messages)
+        raise ValueError("Action argument fields differ from the schema")
+
+    monkeypatch.setattr(research_tools, "tool_turn", bad_schema)
+    calls.clear()
+    with pytest.raises(ValueError, match="schema"):
+        research_tools.route_research_tool(client, [], [], journal)
+    assert len(calls) == 2
+
+
 def test_large_tool_result_is_explicitly_partial_and_full_evidence_is_preserved(tmp_path):
     result = {"rows": [{"id": i, "text": "źródło" * 300} for i in range(30)]}
     preview = json.loads(research_tools.bounded_tool_result(tmp_path, result, 2048))

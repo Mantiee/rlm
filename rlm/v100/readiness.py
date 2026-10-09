@@ -33,7 +33,7 @@ def assess(root: Path, mission: dict, report: dict, layout: dict) -> dict:
     completed = [
         j
         for j in external.get("jobs", [])
-        if j.get("state") in ("completed", "validated")
+        if j.get("state") in ("completed", "validated", "locally-validated", "rejected")
         or j.get("phase") in ("completed", "validated")
     ]
     add(
@@ -41,6 +41,13 @@ def assess(root: Path, mission: dict, report: dict, layout: dict) -> dict:
         "observed" if completed else "unknown",
         f"{len(completed)} reported completed jobs; host validation remains separate",
         "external_compute.jobs",
+    )
+    validated = [j for j in external.get("jobs", []) if j.get("state") == "locally-validated"]
+    add(
+        "Owned worker host validation",
+        "passed" if validated else "unknown",
+        f"{len(validated)} host-validated trials; no master promotion implied",
+        "external_compute.jobs.local_report",
     )
     updates = evidence.get("optimizer_updates_observed")
     add(

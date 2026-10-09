@@ -189,7 +189,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         raise ValueError("Stop inference server before training: need at least 28 GiB free VRAM")
     settings = profile["training"]
     retention_options = options(settings)
-    if retention_options["mode"] in (2, 3, 4, 5) and not settings.get("init_adapter"):
+    if retention_options["mode"] in (2, 3, 4, 5, 6) and not settings.get("init_adapter"):
         raise ValueError("Historical retention modes require a pinned predecessor adapter")
     best_arguments = best_model_arguments(settings)
     seed = settings.get("seed", 42)
@@ -401,7 +401,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         historical_groups = set(settings.get("retention_reference_groups", []))
         reference = select_reference([row for row in train if row["group"] in historical_groups])
         source_groups = [row["group"] for row in reference]
-        if retention_options["mode"] in (2, 4, 5):
+        if retention_options["mode"] in (2, 4, 5, 6):
             if not settings["init_adapter"] or not reference:
                 raise ValueError(
                     "EWC/projection needs a predecessor and historical TRAINING references"
@@ -416,7 +416,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
         if resume:
             retention.restore(output, source_groups)
         else:
-            if retention_options["mode"] in (2, 4):
+            if retention_options["mode"] in (2, 4, 6):
                 print(
                     json.dumps({"training_stage": "historical-fisher", "examples": len(reference)}),
                     flush=True,
@@ -439,7 +439,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
 
     class Progress(TrainerCallback):
         def on_pre_optimizer_step(self, args, state, control, **kwargs):
-            if retention is not None and retention_options["mode"] == 5:
+            if retention is not None and retention_options["mode"] in (5, 6):
                 # Trainer has unscaled and clipped gradients at this callback.
                 # Skip nonfinite AMP-overflow attempts; the numerical gate tracks them.
                 if all(

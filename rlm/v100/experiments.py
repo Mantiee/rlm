@@ -131,10 +131,10 @@ def parameter_schema(profile: dict) -> dict:
         schema.update(
             retention_mode={
                 "type": "integer",
-                "description": "0=replay+KL only; 1=L2 anchor; 2=empirical diagonal EWC; 3=L2+experimental delta-A orthogonality; 4=EWC+delta-A orthogonality; 5=A-GEM replay gradient projection (first-order, AdamW is not a no-forgetting guarantee). Historical modes require prior verified TRAINING data. Compare time, new learning and retention, not training loss alone.",
+                "description": "0=replay+KL only; 1=L2 anchor; 2=empirical diagonal EWC; 3=L2+experimental delta-A orthogonality; 4=EWC+delta-A orthogonality; 5=A-GEM projection; 6=EWC+delta-A+projection. All retain replay and chosen KL; growth is independent. Combined methods can hurt learning and cost more. Historical modes require pinned prior TRAINING references. Compare new learning, retention and time; no universal guarantee.",
                 "enum": [0, 1]
                 + ([3] if old_rank else [])
-                + ([2, 4, 5] if profile["training"].get("retention_has_history") else []),
+                + ([2, 4, 5, 6] if profile["training"].get("retention_has_history") else []),
             },
             retention_strength={"type": "number", "enum": [0.001, 0.01, 0.1, 1.0]},
             retention_rank_growth={

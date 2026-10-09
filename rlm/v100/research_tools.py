@@ -254,6 +254,11 @@ TOOLS = [
         },
     ),
     tool_schema(
+        "propose_goal_compute_trial",
+        "Queue a bounded owned-CPU pilot using host-verified ACTIVE goal outcomes and source-disjoint validation. Requires enough resolved outcomes. Compact numeric/text features, not master weights, causal proof or profits. Missing data blocks execution with an explicit reason.",
+        {},
+    ),
+    tool_schema(
         "compute_trial_status",
         "Read owned worker readiness and locally validated experiment results.",
         {},
@@ -705,6 +710,10 @@ class ResearchTools:
             if name == "register_paper_spot" and set(arguments) == {"pair_codes"}:
                 return prepare(self.root, refresh=True, **arguments)
             raise ValueError("Invalid market discovery/registration arguments")
+        if name == "propose_goal_compute_trial" and not arguments:
+            from rlm.v100.goal_compute import propose
+
+            return propose(self.root, self.branch)
         if name in ("propose_compute_trial", "compute_trial_status", "cancel_compute_trial"):
             from rlm.v100.distributed_compute import cancel, inspect, propose
 
@@ -1006,6 +1015,34 @@ def bounded_tool_result(root: Path, result: dict, limit: int = 4096) -> str:
     )
 
 
+def route_research_tool(client, messages: list[dict], tools: list[dict], journal) -> dict:
+    """One correction of rejected JSON arguments, before any tool is executed."""
+    json_protocol = getattr(client, "tool_protocol", "native") == "json"
+    route = tool_turn if json_protocol else native_turn
+    try:
+        return route(client, messages, tools=tools, retry_output_limit=2048)
+    except ValueError as error:
+        # Transport, identity, context and output-budget failures must not become
+        # implicit retry loops. Only explicit local schema rejection is repairable.
+        if not json_protocol or not str(error).startswith(
+            ("Action argument", "Model action selected", "Action arguments")
+        ):
+            raise
+        journal.write(
+            "errors", "tool-schema-rejected", {"detail": str(error)[:300], "executed": False}
+        )
+        corrected_messages = [
+            *messages,
+            {
+                "role": "user",
+                "content": "The previous tool selection was rejected BEFORE execution: "
+                + str(error)[:300]
+                + ". Correct the request using exactly the listed argument names and types. Do not invent receipt IDs or claim an action ran. This is the only correction attempt.",
+            },
+        ]
+        return route(client, corrected_messages, tools=tools, retry_output_limit=2048)
+
+
 def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dict:
     from rlm.v100.research_policy import apply
 
@@ -1040,21 +1077,7 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
             for tool in available_tools
             if tool["function"]["name"] != "read_source" or tools.known_memory_sources
         ]
-        turn = (
-            tool_turn(
-                router,
-                messages,
-                tools=available_tools,
-                retry_output_limit=2048,
-            )
-            if getattr(client, "tool_protocol", "native") == "json"
-            else native_turn(
-                router,
-                messages,
-                tools=available_tools,
-                retry_output_limit=2048,
-            )
-        )
+        turn = route_research_tool(router, messages, available_tools, journal)
         calls = turn.get("tool_calls") or []
         if not calls:
             break

@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10051.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10052.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -70,9 +70,10 @@ preferences = json.loads(preferences_path.read_text()) if preferences_path.exist
 preferences['system_name'] = 'Synta'
 preferences['capture_local_model_trace'] = True
 preferences['stream_local_model_trace'] = True
+preferences['automatic_goal_compute'] = True
 preferences['retention'] = {
     'research': 'RETENTION_RESEARCH.md in the readonly own-source mount',
-    'experiments': 'Bounded replay/KL, L2, empirical diagonal Fisher EWC, delta-A orthogonality, A-GEM and standard LoRA rank growth are exposed to A/B planning. Historical modes require prior verified TRAINING references. Frozen-column/embedding growth primitives are tiny-model experiments, not serving Gemma modifications.',
+    'experiments': 'Bounded replay/KL, L2, empirical diagonal Fisher EWC, delta-A orthogonality, A-GEM, combined EWC+orthogonality+projection and standard LoRA rank growth are exposed to A/B planning. Historical modes require prior verified TRAINING references. Frozen-column/embedding growth primitives are tiny-model experiments, not serving Gemma modifications.',
     'scope': 'Do not change the operator long-term goal. Prefer measured learning/retention/time trade-offs; never bypass ancestor, official or fresh audit gates.'
 }
 preferences['goal_learning'] = {

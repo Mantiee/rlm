@@ -137,7 +137,7 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
             view["declaration"] = event["summary"]
         elif event.get("summary"):
             view["result"] = event["summary"]
-    result = list(views.values())[-12:]
+    result = list(views.values())
     for job in jobs[:16]:
         result.append(
             {

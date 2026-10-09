@@ -18,7 +18,7 @@ def options(settings: dict) -> dict:
     mode = settings.get("retention_mode", 0)
     strength = settings.get("retention_strength", 0.01)
     growth = settings.get("retention_rank_growth", 1)
-    if type(mode) is not int or mode not in range(6):
+    if type(mode) is not int or mode not in range(7):
         raise ValueError("Unknown retention mode")
     if type(growth) is not int or growth not in (1, 2):
         raise ValueError("Retention rank growth must be 1 or 2")
@@ -145,14 +145,14 @@ class AdapterRetention:
         total = first.new_zeros((), dtype=torch.float32)
         if mode in (0, 5):
             return total
-        if mode in (2, 4) and not self.samples:
+        if mode in (2, 4, 6) and not self.samples:
             raise ValueError("EWC requires measured historical Fisher information")
         for name, parameter in self.parameters.items():
             anchor = self.anchor[name].to(parameter.device)
             delta = parameter.float() - anchor
-            importance = self.fisher[name].to(parameter.device) if mode in (2, 4) else 1
+            importance = self.fisher[name].to(parameter.device) if mode in (2, 4, 6) else 1
             total = total + (importance * delta.square()).sum() / 2
-            if mode in (3, 4) and "lora_A." in name:
+            if mode in (3, 4, 6) and "lora_A." in name:
                 # Penalize only CHANGES along previous row directions; initialization
                 # has zero penalty even when resuming a nonzero accepted adapter.
                 norm = anchor.norm(dim=1, keepdim=True).clamp_min(1e-8)

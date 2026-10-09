@@ -35,6 +35,9 @@ def collect(root: Path) -> dict:
         "errors": [],
         "scope": "Current mission evidence only. Missing metrics mean unknown, not zero. Attempted/global steps are not successful optimizer updates. Recorded updates do not prove accepted weights or profit. GUI readiness is not a prerequisite for native inference, calculator tools or GPU training. Arithmetic training is an optional experiment, not a prerequisite or proof of an income edge.",
     }
+    dispatcher = root / "research/goal-compute/status.json"
+    if dispatcher.exists():
+        result["goal_learning"]["owned_cpu_dispatch"] = read_record(dispatcher)
     if run:
         progress = run / "public-baseline.progress.json"
         if not progress.exists():

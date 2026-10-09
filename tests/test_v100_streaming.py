@@ -172,7 +172,7 @@ def test_local_http_transport_requests_stream_and_assembles_real_frames(tmp_path
             seen.append(kwargs)
             return Response()
 
-    monkeypatch.setattr("rlm.clients.llamacpp.requests.Session", Session)
+    monkeypatch.setattr(LlamaCppClient.http_request.__globals__["requests"], "Session", Session)
     client = LlamaCppClient(activity_root=tmp_path)
     result = client.request("/v1/chat/completions", {"model": "v100", "stream": False})
     assert seen[0]["json"]["stream"] is True
