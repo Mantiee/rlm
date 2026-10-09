@@ -105,8 +105,25 @@ New-Item -ItemType Directory -Path $Root -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Root 'models') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Root 'logs') -Force | Out-Null
 
-$ExistingRule = Get-NetFirewallRule -Name $Rule -ErrorAction SilentlyContinue
-if ($ExistingRule -or (Get-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue)) { throw "Helper firewall rule already exists; inspect it before restarting." }
+function Confirm-HelperRule([string]$Name, [string]$Action, [string[]]$Remote, [string]$Program) {
+    $existing = @(Get-NetFirewallRule -Name $Name -ErrorAction SilentlyContinue)
+    if ($existing.Count -eq 0) { return $false }
+    if ($existing.Count -ne 1) { throw "Ambiguous helper firewall rule: $Name" }
+    $item = $existing[0]
+    $ports = $item | Get-NetFirewallPortFilter
+    $addresses = $item | Get-NetFirewallAddressFilter
+    $app = $item | Get-NetFirewallApplicationFilter
+    $expected = ($Remote | Sort-Object) -join ','
+    $actual = (@($addresses.RemoteAddress) | Sort-Object) -join ','
+    if ($item.Direction -ne 'Inbound' -or $item.Action -ne $Action -or $item.Enabled -ne 'True' -or
+        [string]$ports.Protocol -notin @('TCP','6') -or [string]$ports.LocalPort -ne [string]$Port -or
+        [string]$addresses.LocalAddress -ne $WindowsIp -or $actual -ne $expected -or
+        ($Program -and $app.Program -ne $Program)) {
+        throw "Existing helper firewall scope differs: $Name. Nothing replaced."
+    }
+    Write-Host "Reusing verified helper firewall rule: $Name"
+    return $true
+}
 
 # The current model manifest rejects the user's installed Ollama 0.21.2.
 # Use the official standalone runtime, including optional NVIDIA MLX libraries,
@@ -167,13 +184,21 @@ foreach ($number in $Allowed) {
 }
 if ($First -lt 4294967295) { $Ranges += "$(Number-Ip $First)-255.255.255.255" }
 $Worker = $null
+$CreatedAllowRule = $false
+$CreatedBlockRule = $false
 Remove-Item -LiteralPath $OwnerPath -ErrorAction SilentlyContinue
 try {
+if (-not (Confirm-HelperRule $BlockRule 'Block' $Ranges '')) {
 New-NetFirewallRule -Name $BlockRule -DisplayName $BlockRule -Direction Inbound -Action Block `
     -Protocol TCP -LocalPort $Port -LocalAddress $WindowsIp -RemoteAddress $Ranges -Profile Any | Out-Null
+$CreatedBlockRule = $true
+}
+if (-not (Confirm-HelperRule $Rule 'Allow' @($DebianIp) $Ollama)) {
 New-NetFirewallRule -Name $Rule -DisplayName $Rule -Direction Inbound -Action Allow `
     -Protocol TCP -LocalPort $Port -LocalAddress $WindowsIp -RemoteAddress $DebianIp `
     -Program $Ollama -Profile Any | Out-Null
+$CreatedAllowRule = $true
+}
 
 $WorkerScript = Join-Path $Root 'serve-worker.ps1'
 @'
@@ -353,7 +378,7 @@ $Ready = $false
     if ($Worker -and -not $Worker.HasExited) { $Worker.Kill() }
     try { Stop-HelperProcesses $RuntimeRoot }
     catch { Write-Warning "Helper cleanup failed: $($_.Exception.Message)" }
-    Remove-NetFirewallRule -Name $Rule -ErrorAction SilentlyContinue
-    Remove-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue
+    if ($CreatedAllowRule) { Remove-NetFirewallRule -Name $Rule -ErrorAction SilentlyContinue }
+    if ($CreatedBlockRule) { Remove-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue }
     throw $LaunchError
 }

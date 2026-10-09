@@ -614,3 +614,14 @@ Validation: 1010 passed, 65 skipped, one resource-dependent worker integration
 deselected, one existing PEFT warning. Final dashboard/chat checks passed 29 tests.
 No Windows PowerShell runtime is available here; scheduled task operation must be
 confirmed on Windows.
+
+## v54: reusable scoped firewall and retained reading nodes
+
+The previous Windows launcher rejected its own persistent firewall rules after
+reboot. Matching inbound TCP port, local/remote address, action, enabled state and
+program rules are now reused. A mismatched rule is rejected and left unchanged;
+failure cleanup removes only rules created by this launch. The watchdog retains
+the existing game guard and 50 percent target. Windows runtime validation remains
+required. Dashboard keyed details and their existing text nodes are retained and
+updated in place, including nested text scroll and open/closed state. This replaces
+reconstruction of reading nodes, not just restoration of their open flags.

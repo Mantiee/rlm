@@ -31,7 +31,7 @@ for(const id of ['actors','goals','events']){if(!$(id)){const node=document.crea
 agentView(data);
 $('actors').replaceChildren();
 for(const a of data.live?.actors||[]){
- const node=document.createElement('article');node.className='card';const title=document.createElement('h3');title.textContent=a.label;
+ const node=document.createElement('article');node.className='card';node.dataset.scrollKey=a.label+'-resource-card';const title=document.createElement('h3');title.textContent=a.label;
  const state=document.createElement('strong');state.textContent=a.state+(a.stale?' | nieaktualne lub brak danych':'');state.style.color=a.stale?'#ffbf86':'#75c5ae';
  const detail=document.createElement('p');detail.textContent=a.detail||'';node.append(title,state,detail);
  if(a.cooldown_seconds){const p=document.createElement('p');p.textContent='Przerwa helpera: '+a.cooldown_seconds+' s';node.append(p)}
@@ -44,9 +44,10 @@ restoreDisclosures();const plans=data.live?.goals||{};$('goals').textContent=JSO
 }
 
 function textField(parent,label,value){if(value===undefined||value===null||value==='')return;const p=document.createElement('p'),b=document.createElement('strong');b.textContent=label+': ';p.append(b,document.createTextNode(String(value)));parent.append(p)}
-const disclosureStates=new Map(), disclosureScroll=new Map();
-function rememberDisclosures(){for(const n of document.querySelectorAll('details[data-key]')){disclosureStates.set(n.dataset.key,n.open);const pre=n.querySelector?.('pre');if(pre)disclosureScroll.set(n.dataset.key,[pre.scrollTop,pre.scrollLeft])}}
-function restoreDisclosures(){for(const n of document.querySelectorAll('details[data-key]')){if(disclosureStates.has(n.dataset.key))n.open=disclosureStates.get(n.dataset.key);const pre=n.querySelector?.('pre'),position=disclosureScroll.get(n.dataset.key);if(pre&&position){pre.scrollTop=position[0];pre.scrollLeft=position[1]}}}
+const disclosureStates=new Map(), disclosureScroll=new Map(), disclosureNodes=new Map(), panelScroll=new Map();
+function updateNode(old,fresh){if(old.nodeType!==fresh.nodeType||old.nodeName!==fresh.nodeName){old.replaceWith(fresh);return}if(old.nodeType===3){if(old.nodeValue!==fresh.nodeValue)old.nodeValue=fresh.nodeValue;return}const a=[...old.childNodes],b=[...fresh.childNodes];for(let i=0;i<Math.max(a.length,b.length);i++){if(!b[i])a[i].remove();else if(!a[i])old.append(b[i]);else updateNode(a[i],b[i])}}
+function rememberDisclosures(){for(const n of document.querySelectorAll('[data-scroll-key]'))if(n.dataset.scrollKey)panelScroll.set(n.dataset.scrollKey,[n.scrollTop,n.scrollLeft]);for(const n of document.querySelectorAll('details[data-key]')){disclosureStates.set(n.dataset.key,n.open);disclosureNodes.set(n.dataset.key,n);const pre=n.querySelector?.('pre');if(pre)disclosureScroll.set(n.dataset.key,[pre.scrollTop,pre.scrollLeft])}}
+function restoreDisclosures(){for(const n of document.querySelectorAll('[data-scroll-key]')){const position=panelScroll.get(n.dataset.scrollKey);if(position){n.scrollTop=position[0];n.scrollLeft=position[1]}}for(let n of document.querySelectorAll('details[data-key]')){const previous=disclosureNodes.get(n.dataset.key);if(previous&&previous!==n&&n.replaceWith){updateNode(previous,n);n.replaceWith(previous);n=previous}if(disclosureStates.has(n.dataset.key))n.open=disclosureStates.get(n.dataset.key);const pre=n.querySelector?.('pre'),position=disclosureScroll.get(n.dataset.key);if(pre&&position){pre.scrollTop=position[0];pre.scrollLeft=position[1]}}}
 function detailsField(parent,label,value,key,open=false){if(!value)return;const d=document.createElement('details'),h=document.createElement('summary'),p=document.createElement('pre');d.dataset.key=key;d.open=open;h.textContent=label;p.textContent=String(value);d.append(h,p);parent.append(d)}
 function panel(id,title,after){let p=$(id);if(!p){p=document.createElement('section');p.id=id;const h=document.createElement('h2');h.textContent=title;p.append(h);after.after(p)}return p}
 function agentView(data){
