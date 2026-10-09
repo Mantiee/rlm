@@ -588,6 +588,24 @@ def run_branches(
         serving["runtime"]["model_version"] = f"{output.name}-{branch}"
         serving_path = output / branch / "serving.json"
         atomic_json(serving_path, serving)
+        from rlm.v100.goal_learning import development_suite
+
+        goal_suite = development_suite(
+            root,
+            Path(item["dataset"]),
+            Path(profile["training"]["split_ledger"]),
+            output / branch / "goal-development.jsonl",
+        )
+        if goal_suite is not None:
+            with managed_server(
+                Path(item["profile"]), root, output / branch / "goal-parent-server.log"
+            ):
+                evaluate_suite(
+                    helper_client(profile, root, branch),
+                    profile,
+                    goal_suite,
+                    output / branch / "goal-parent.json",
+                )
         audit = None
         if profile.get("resources", {}).get("fresh_audit_required"):
             from rlm.v100 import fresh_audit
@@ -602,6 +620,8 @@ def run_branches(
             assert_served_expert(client, serving, root)
             report_path = output / branch / "development-quality.json"
             reports[branch] = evaluate_suite(client, serving, suite, report_path)
+            if goal_suite is not None:
+                evaluate_suite(client, serving, goal_suite, output / branch / "goal-candidate.json")
             if serving.get("resources", {}).get("public_benchmarks"):
                 from rlm.v100.public_benchmarks import evaluate as public_evaluate
 

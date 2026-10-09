@@ -176,7 +176,7 @@ def paper_round(
                     "a chronological price/event backtest using backtest_prices, another zero-deposit income opportunity, or a learning/tool "
                     "upgrade. Compare time, resources, costs and independently testable evidence. "
                     "You may propose isolated CPU submodels within the fixed pilot budget. "
-                    "No real sale, spending or guaranteed-profit claim."
+                    "Seek goal-linked patterns beyond fixed assets. Read get_plan, archive signals with observe_goal_source and precommit measurable outcomes with predict_goal_pattern; failed predictions count too. No real sale, spending or guaranteed-profit claim."
                 )
                 jobs[1]["brief"] = (
                     "Critique the income or self-upgrade hypothesis: legality, costs, time to "
@@ -205,6 +205,9 @@ def paper_round(
                 worker = helper_client(selected_profile, book.root, selected_branch)
                 available = getattr(worker, "research_tool_names", None)
                 worker.research_tool_names = {
+                    "goal_learning_status",
+                    "observe_goal_source",
+                    "predict_goal_pattern",
                     "propose_foundation_trial",
                     "foundation_trial_status",
                     "request_fresh_curriculum",

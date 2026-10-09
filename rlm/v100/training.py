@@ -28,12 +28,22 @@ def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], li
         raise ValueError("Empty dataset")
     paper_labels = None
     policy_labels = None
+    goal_labels = None
     for record in records:
         verification = record.get("verification", {})
         if verification.get("kind") == "deterministic_reference":
             from rlm.v100.insights import verify_record
 
             verify_record(record)
+        elif verification.get("kind") == "goal_observation":
+            from rlm.v100.goal_learning import records as goal_records
+
+            if ledger is None:
+                raise ValueError("Goal observations require a host split ledger")
+            if goal_labels is None:
+                goal_labels = {row["id"]: row for row in goal_records(ledger.resolve().parents[2])}
+            if record != goal_labels.get(record.get("id")):
+                raise ValueError("Goal label differs from the host-observed future outcome")
         elif verification.get("kind") == "historical_postmortem":
             from rlm.v100.backtest_learning import verified
 
@@ -261,6 +271,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
                 "backtest_learning.py",
                 "backtesting.py",
                 "retention.py",
+                "goal_learning.py",
             )
         },
         "train_records": len(train),

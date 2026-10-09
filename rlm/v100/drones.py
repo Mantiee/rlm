@@ -151,6 +151,9 @@ def execute(root: Path, job: dict) -> dict:
     client.identity()
     client.activity_actor = "resident-" + job["kind"]
     client.research_tool_names = {
+        "goal_learning_status",
+        "observe_goal_source",
+        "predict_goal_pattern",
         "mission_evidence",
         "read_tool_result",
         "read_public_page",
@@ -218,9 +221,24 @@ def finish(root: Path, identity: str, value: dict) -> None:
 def service(root: Path, stop: threading.Event) -> None:
     # A single RTX job plus two CPU/network jobs. RTX requests share the global
     # existing helper pacing lock with foreground researchers and benchmark clients.
-    with ThreadPoolExecutor(max_workers=3) as workers:
+    with ThreadPoolExecutor(max_workers=4) as workers:
         active = {}
+        goal_future = None
+        goal_due = 0
         while not stop.is_set():
+            from rlm.v100.goal_learning import tick as goal_tick
+
+            if goal_future is not None and goal_future.done():
+                try:
+                    goal_future.result()
+                except Exception as error:
+                    ActivityLog(root, "controller", "goal-learning").write(
+                        "errors", "goal-observer-failed", {"detail": str(error)[:400]}
+                    )
+                goal_future = None
+            if goal_future is None and time.time() >= goal_due:
+                goal_future = workers.submit(goal_tick, root)
+                goal_due = time.time() + 30
             from rlm.v100.distributed_compute import tick
 
             try:
@@ -289,7 +307,7 @@ def alongside(root: Path):
             root,
             branch,
             role,
-            "Investigate the operator-owned goal and useful self-upgrades using fresh public evidence. Read previous findings, avoid repeated hypotheses, select one concrete next experiment and schedule a useful source or CPU task. Check net costs and falsify weak claims.",
+            "Read get_plan. Follow user directions or seek goal-relevant patterns in any domain. Use observe_goal_source, predict_goal_pattern and goal_learning_status to test fresh hypotheses. Learn from failed predictions too. Avoid repeated ideas, invented labels, causal or profit claims. Schedule useful source/CPU work and self-upgrades.",
             900,
         )
     if (root / "research/public-benchmarks/current.json").exists():

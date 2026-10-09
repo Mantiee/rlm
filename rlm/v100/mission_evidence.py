@@ -17,9 +17,12 @@ def collect(root: Path) -> dict:
     from rlm.v100.mission import status
 
     mission = status(root)
+    from rlm.v100.goal_learning import status as goal_status
+
     run = Path(mission["run"]) if mission.get("run") else None
     result = {
         "schema": "v100-mission-evidence-v1",
+        "goal_learning": goal_status(root),
         "mission_running": mission["running"],
         "phase": mission.get("state", {}).get("phase", mission.get("phase")),
         "run": str(run) if run else None,

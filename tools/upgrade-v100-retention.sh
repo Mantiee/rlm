@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10040.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10041.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -70,8 +70,13 @@ preferences['retention'] = {
     'experiments': 'Bounded replay/KL, L2, empirical diagonal Fisher EWC, delta-A orthogonality, A-GEM and standard LoRA rank growth are exposed to A/B planning. Historical modes require prior verified TRAINING references. Frozen-column/embedding growth primitives are tiny-model experiments, not serving Gemma modifications.',
     'scope': 'Do not change the operator long-term goal. Prefer measured learning/retention/time trade-offs; never bypass ancestor, official or fresh audit gates.'
 }
+preferences['goal_learning'] = {
+    'instructions': 'Read get_plan and follow user directions or discover goal-relevant hypotheses yourself in any domain. Use observe_goal_source to archive fresh signals and a numeric public outcome, then predict_goal_pattern to precommit probability, threshold and horizon. The resident CPU/network observer checks future outcomes; both successes and failures become host-verified training candidates. Goal-linked development gates require sufficient independent validation groups. A goal score is not causal or profit proof.',
+    'evidence': 'research/goal-learning/ledger.sqlite3 and mission_evidence.goal_learning',
+    'scope': 'The operator alone authorizes long-term goal changes; no fixed asset, source or pattern list.'
+}
 atomic_json(preferences_path, preferences)
 print(json.dumps(install(root, path), indent=2), flush=True)
-print('RETENTION EXPERIMENTS AVAILABLE. Existing setup preserved; no calibration sweep.', flush=True)
+print('RETENTION AND GOAL-LINKED FORECAST LEARNING AVAILABLE. Existing setup preserved; no calibration sweep.', flush=True)
 PY
 "$AI_V100_ROOT/bin/v100-continual" mission-status

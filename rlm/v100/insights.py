@@ -219,7 +219,7 @@ class InsightQueue:
         self.db.close()
 
 
-def extend_pool(pool: Path, root: Path, destination: Path) -> bool:
+def extend_pool(pool: Path, root: Path, destination: Path, profile: dict | None = None) -> bool:
     from rlm.v100.experiments import record_id
 
     original = [json.loads(line) for line in pool.read_text().splitlines() if line.strip()]
@@ -237,6 +237,11 @@ def extend_pool(pool: Path, root: Path, destination: Path) -> bool:
     from rlm.v100.backtest_learning import records as historical_records
 
     extra.extend(historical_records(root))
+    from rlm.v100.goal_learning import admit
+    from rlm.v100.goal_learning import records as goal_records
+
+    goal_examples = goal_records(root)
+    extra.extend(admit(root, goal_examples, profile) if profile is not None else goal_examples)
     combined = {record_id(record): record for record in original}
     before = len(combined)
     combined.update({record_id(record): record for record in extra})

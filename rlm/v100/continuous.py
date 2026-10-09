@@ -275,7 +275,7 @@ def learn_loop(
                                 flush=True,
                             )
                     expanded = output / f"pool-{cycle:04d}.jsonl"
-                    changed = extend_pool(current_pool, root, expanded)
+                    changed = extend_pool(current_pool, root, expanded, profile=current)
                     if initial_update and cycle == 1 and not changed:
                         expanded.write_bytes(current_pool.read_bytes())
                         changed = True

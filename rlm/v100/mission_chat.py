@@ -375,6 +375,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
 
         client.research_owner = "A"
         client.research_tool_names = {
+            "goal_learning_status",
+            "observe_goal_source",
+            "predict_goal_pattern",
             "mission_evidence",
             "read_tool_result",
             "get_plan",

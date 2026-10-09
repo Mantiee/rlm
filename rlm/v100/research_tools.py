@@ -33,6 +33,21 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "goal_learning_status",
+        "Read precommitted goal-linked forecasts and observed scores; scores are not causal/profit proof.",
+        {},
+    ),
+    tool_schema(
+        "observe_goal_source",
+        "Archive a free public source now. Optional dotted JSON field selects a numeric outcome in any domain. No operator credentials or synthetic labels.",
+        {"url": {"type": "string"}, "field": {"type": "string", "maxLength": 200}},
+    ),
+    tool_schema(
+        "predict_goal_pattern",
+        "Commit a goal-relevant hypothesis BEFORE its outcome. specification: question, rationale, evidence (1-8 host observation IDs), target (fresh numeric observation ID), horizon_seconds (60-604800), threshold (positive absolute change in target units), probabilities ([down,flat,up] sum=1). Host observer later resolves the outcome. Search domains and signals yourself or follow the user's direction; do not change the long-term goal.",
+        {"specification": {"type": "object"}},
+    ),
+    tool_schema(
         "read_tool_result",
         "Read the next 512 UTF-8 bytes of a complete archived tool result using its SHA256 and byte offset. Pages fit the small helper tool-response budget even with JSON escaping. Validate every page against the archive hash; continue until next_offset is null. An excerpt is incomplete evidence.",
         {
@@ -479,6 +494,18 @@ class ResearchTools:
         self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name == "goal_learning_status" and not arguments:
+            from rlm.v100.goal_learning import status
+
+            return status(self.root)
+        if name == "observe_goal_source" and set(arguments) == {"url", "field"}:
+            from rlm.v100.goal_learning import observe
+
+            return observe(self.root, **arguments)
+        if name == "predict_goal_pattern" and set(arguments) == {"specification"}:
+            from rlm.v100.goal_learning import predict
+
+            return predict(self.root, self.branch, arguments["specification"])
         if name == "read_tool_result" and set(arguments) == {"sha256", "offset"}:
             digest, offset = arguments["sha256"], arguments["offset"]
             if (

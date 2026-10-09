@@ -291,3 +291,14 @@ embedding prototypes. Their old routes/IDs stay unchanged in tensor tests; this
 does not implement live Gemma layer/vocabulary surgery or prove retention on
 unseen tasks. Full NF4/FP16 training and grown-adapter native export require V100
 acceptance. The dedicated upgrade preserves setup and skips calibration sweeps.
+
+
+## v100.41 goal-linked learning
+
+Public host-timestamped source observations and preregistered forecasts now connect to
+verified supervised direction labels, including failed predictions. Resident network
+observation runs independently of GUI/paper feeds and GPU training. Current long/mid/short
+plans guide researchers and curricula. Token admission defers oversized records. Exported
+LoRA A/B candidates receive an additional goal-linked development gate when enough current-goal
+validation data exists. It is not an untouched financial audit or causal/profit proof.
+See GOAL_PATTERN_LEARNING.md for tool schemas, artifact locations and limits.

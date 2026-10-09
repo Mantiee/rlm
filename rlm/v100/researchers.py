@@ -108,6 +108,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
         raise ValueError("Research assignment exceeds its budget")
     from rlm.v100.goals import load_goal
     from rlm.v100.mission_memory import recall
+    from rlm.v100.planning import read as read_plan
 
     client = copy.copy(client)
     client.sampling_args = dict(client.sampling_args)
@@ -164,7 +165,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
         [
             {
                 "role": "system",
-                "content": "You are a small lab assistant. Analyze the assigned development observations and public peer notes. Be concise, at most 80 words of prose. Separate observations from hypotheses. Propose a falsifiable test or counterexample. Also propose up to two useful NEW formal exercises for future learning: bounded integer arithmetic with +,-,*,//,% and parentheses, or linear equations of the form a*x+b=c or a*x-b=c with small integers and nonzero a. Choose useful challenges distinct from previous public notes. Do not supply or certify their answers: the host reference computes them independently. Other hypotheses remain advisory, never training approval or quality verdict.",
+                "content": "You are a small lab assistant. Analyze the assigned development observations and public peer notes. Be concise, at most 80 words of prose. Separate observations from hypotheses. Propose a falsifiable test or counterexample. Prefer patterns and measurable forecasts relevant to the user goal and current plans, in any useful domain. Use observe_goal_source and predict_goal_pattern for host-timestamped evidence and later independent outcome labels. Follow operator directions or search independently. Do not certify causal or profit claims. Formal exercises are optional support, not the main objective. If useful propose up to two NEW exercises: bounded integer arithmetic with +,-,*,//,% and parentheses, or linear equations of the form a*x+b=c or a*x-b=c with small integers and nonzero a. Choose useful challenges distinct from previous public notes. Do not supply or certify their answers: the host reference computes them independently. Other hypotheses remain advisory, never training approval or quality verdict.",
             },
             {
                 "role": "user",
@@ -172,6 +173,9 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
                     {
                         "branch": branch,
                         "user_goal": load_goal(root),
+                        "current_plans": {
+                            key: str(read_plan(root).get(key, {}))[:600] for key in ("short", "mid")
+                        },
                         "assignment": job,
                         "observations": observations,
                         "public_peer_notes": history,
