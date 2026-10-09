@@ -631,3 +631,26 @@ def test_cli_initializes_and_reports_without_server_profile(tmp_path, monkeypatc
     main()
     assert "Paper report:" in capsys.readouterr().out
     assert (tmp_path / "research/paper/latest-report.json").exists()
+
+
+def test_archived_expired_fees_are_not_current_execution_blockers(tmp_path):
+    book, clock, config = setup(tmp_path)
+    try:
+        clock.advance(31 * 86400)
+        assert summarize(book)["expired_fee_profiles"] == ["test-fees-v1"]
+        current = configuration(clock)["fee_profiles"][0]
+        current["id"] = "test-fees-v2"
+        book.configure(
+            {
+                "fee_profiles": [current],
+                "fee_updates": [{"symbol": "TEST", "fee_profile": "test-fees-v2"}],
+            }
+        )
+        report = summarize(book)
+        assert report["expired_fee_profiles"] == []
+        assert report["expired_archived_fee_profiles"] == ["test-fees-v1"]
+        assert "test-fees-v1" in book.state()["fee_profiles"]
+        clock.advance(31 * 86400)
+        assert summarize(book)["expired_fee_profiles"] == ["test-fees-v2"]
+    finally:
+        book.close()

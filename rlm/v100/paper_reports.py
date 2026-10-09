@@ -105,10 +105,16 @@ def summarize_snapshot(book: PaperBook, period: str) -> dict:
         > state["risk"]["quote_age_seconds"]
         and symbol not in state["outcomes"]
     ]
+    active_fee_ids = {instrument["fee_profile"] for instrument in state["instruments"].values()}
     expired_fees = [
         key
         for key, profile in state["fee_profiles"].items()
-        if timestamp(profile["valid_until"]) <= now
+        if key in active_fee_ids and timestamp(profile["valid_until"]) <= now
+    ]
+    expired_archived_fees = [
+        key
+        for key, profile in state["fee_profiles"].items()
+        if key not in active_fee_ids and timestamp(profile["valid_until"]) <= now
     ]
     branches = {}
     for branch in ("A", "B"):
@@ -154,6 +160,7 @@ def summarize_snapshot(book: PaperBook, period: str) -> dict:
         "price_series": price_series,
         "stale_symbols": stale_symbols,
         "expired_fee_profiles": expired_fees,
+        "expired_archived_fee_profiles": expired_archived_fees,
         "audit_tail_sha256": events[-1]["event_hash"],
         "ledger_sequence": events[-1]["sequence"],
         "descriptive_leader": max(branches, key=lambda branch: Decimal(branches[branch]["equity"])),

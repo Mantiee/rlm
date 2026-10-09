@@ -33,6 +33,11 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "compute_resources",
+        "Read actual pinned helper load, owned CPU worker heartbeats and queued/running jobs. Worker RAM/disk stay worker-local; never infer pooled host RAM or actual execution from readiness.",
+        {},
+    ),
+    tool_schema(
         "dashboard_status",
         "Verify the guest HTML and exact host publication hash. A model declaration is not publication.",
         {},
@@ -619,6 +624,10 @@ class ResearchTools:
                 "text": content[offset : offset + 6000],
                 "remaining": max(0, len(content) - offset - 6000),
             }
+        if name == "compute_resources" and not arguments:
+            from rlm.v100.chat_resources import status
+
+            return status(self.root)
         if name in ("dashboard_status", "read_dashboard") and not arguments:
             from rlm.v100.dashboard_editor import status
 
@@ -1039,6 +1048,12 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
             tool_call_id=call["id"],
         )
         try:
+            if (
+                getattr(client, "resource_only_chat", False)
+                and call["function"]["name"] == "schedule_drone"
+                and json.loads(call["function"]["arguments"]).get("kind") == "desktop"
+            ):
+                raise ValueError("Resource request cannot schedule an unrelated GUI/desktop script")
             result = tools.execute(
                 call["function"]["name"], json.loads(call["function"]["arguments"])
             )

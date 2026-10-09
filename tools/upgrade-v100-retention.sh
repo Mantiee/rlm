@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10044.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10045.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -56,6 +56,7 @@ from rlm.v100.common import atomic_json
 from rlm.v100.self_code import prepare
 from rlm.v100.desktop import prepare as prepare_desktop
 from rlm.v100.supervisor import install
+from rlm.v100.chat_resources import repair_completed
 
 root = Path(os.environ['AI_V100_ROOT'])
 prepare(root)
@@ -76,6 +77,7 @@ preferences['goal_learning'] = {
     'scope': 'The operator alone authorizes long-term goal changes; no fixed asset, source or pattern list.'
 }
 atomic_json(preferences_path, preferences)
+print('CHAT RESOURCE RECOVERY:', json.dumps(repair_completed(root), ensure_ascii=False), flush=True)
 print(json.dumps(install(root, path), indent=2), flush=True)
 print('RETENTION AND GOAL-LINKED FORECAST LEARNING AVAILABLE. Existing setup preserved; no calibration sweep.', flush=True)
 PY

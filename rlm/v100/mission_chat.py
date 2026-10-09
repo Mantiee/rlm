@@ -332,6 +332,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     client.sampling_args = dict(client.sampling_args)
     client.sampling_args["max_tokens"] = min(2048, client.sampling_args.get("max_tokens", 2048))
     client.activity_context = {**client.activity_context, "chat_request_id": request.get("id")}
+    from rlm.v100 import chat_resources
+
+    resource_request = chat_resources.instruction(message)
     with connect(root) as db:
         history = db.execute(
             "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 3"
@@ -370,11 +373,20 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             ),
         }
     ]
-    for old in reversed(history):
+    for old in reversed([] if resource_request else history):
         messages += [
             {"role": "user", "content": old["message"][:1500]},
             {"role": "assistant", "content": json.loads(old["response"])["answer"][:1500]},
         ]
+    if resource_request:
+        messages[0]["content"] += (
+            " CURRENT REQUEST: allocate operator-owned RTX/Windows CPU resources for the EXISTING goal. "
+            "Do not change short/mid/long plans, invent trading strategies, edit HTML, run GUI or submit placeholder scripts. "
+            "Read compute_resources and get_plan if needed. Use schedule_drone for a useful concrete bounded researcher/critic/source task, "
+            "or propose_compute_trial only for a genuinely useful proof-domain architecture experiment. "
+            "Report actual tool job IDs/states; do not claim work completed before independent receipts. "
+            "A worker uses its own RAM/disk; it does not enlarge Debian RAM or V100 VRAM."
+        )
     messages.append(
         {
             "role": "user",
@@ -404,6 +416,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
 
         client.research_owner = "A"
         client.research_tool_names = {
+            "compute_resources",
+            "schedule_drone",
+            "cancel_drone",
             "propose_compute_trial",
             "compute_trial_status",
             "cancel_compute_trial",
@@ -424,10 +439,14 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             "search_memory",
             "read_source",
         }
-        result = json.loads(
-            research_turn(client, messages, schema(allow_long_goal), root)["content"]
-        )
+        if resource_request:
+            client.research_tool_names = chat_resources.RESOURCE_TOOLS
+            client.resource_only_chat = True
+        research = research_turn(client, messages, schema(allow_long_goal), root)
+        tool_receipts = research.get("research_trace", [])
+        result = json.loads(research["content"])
     else:
+        tool_receipts = []
         result = json.loads(
             native_turn(
                 client,
@@ -437,6 +456,12 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         )
     if set(result) != {"answer", "actions"} or not isinstance(result["answer"], str):
         raise ValueError("Invalid chat response")
+    if resource_request:
+        result["actions"], rejected = chat_resources.filter_actions(result["actions"])
+        evidence = chat_resources.status(root)
+        result["answer"] = chat_resources.answer(evidence, tool_receipts, rejected)
+        result["resource_contract"] = {"evidence": evidence, "rejected_actions": rejected}
+    result["tool_receipts"] = tool_receipts
     result["applied"] = apply_actions(root, result["actions"], message)
     if dashboard_request:
         from rlm.v100.dashboard_editor import status as dashboard_status

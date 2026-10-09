@@ -1,3 +1,31 @@
+## v100.45 current-request resource contract
+
+A reported v44 resource request received an unrelated trading/dashboard answer,
+changed short/mid plans and queued a placeholder VM script. Those receipts did not
+prove Windows allocation or useful execution. This revision fixes that path:
+
+- Resource-only instructions do not replay unrelated dashboard conversation history.
+  Their tool allowlist exposes actual resource status, owned compute proposals and
+  bounded drone scheduling, without HTML edits or GUI/desktop jobs.
+- Unrelated plan/sandbox actions are rejected before application. The displayed
+  answer is composed from host resource evidence and executed tool receipts, not
+  from an unverified model success declaration. Tool receipts are retained in chat.
+- `compute_resources` distinguishes pinned RTX model load, CPU worker heartbeat,
+  local worker RAM/disk budgets and actual job states. Windows RAM/VRAM is not pooled
+  into the Debian address space. Worker readiness alone is not execution.
+- The stopped upgrade archives completed misrouted resource requests, restores only
+  still-current short/mid versions they replaced, cancels only matching still-queued
+  desktop scripts and requeues the original resource request. Later user plans and
+  the operator long-term goal are preserved. Already executed scripts are not
+  claimed to be undone.
+- Expired fee profiles retained solely as accounting history are separate from
+  expired profiles still referenced by active instruments. Historical records stay
+  intact; currently expired instrument fees still block paper execution.
+
+This correction does not certify that a model will choose a useful CPU experiment,
+that its job passes independent validation, or that distributing work is faster.
+Those outcomes require actual job receipts and measurements.
+
 ## v100.44 integration and observed limits
 
 This revision connects the existing capabilities; it does not certify live hardware,
@@ -365,3 +393,11 @@ The JavaScript live renderer was executed against an older layout with missing l
 sections. Ruff, formatting, diff whitespace checks and both installer shell syntax
 checks passed. No V100/RTX hardware, LAN, Windows process or guest boot is certified
 by those results.
+
+Validation for v100.45: 968 repository tests passed, 65 skipped, 1 deselected,
+with one PEFT configuration warning. The excluded owned-worker process integration
+requires process/RAM introspection unavailable here. Resource request tests cover
+history isolation, host receipts, rejection before desktop execution, archive/requeue
+recovery, preservation of later plans and refusal to repair a running mission.
+Ruff, formatting, shell syntax and diff whitespace checks passed. Hardware/LAN
+allocation and useful execution still require the operator's deployment receipts.
