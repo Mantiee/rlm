@@ -10,10 +10,37 @@ import time
 import uuid
 from pathlib import Path
 
+from rlm.v100.activity import ActivityLog
 from rlm.v100.common import atomic_json
 from rlm.v100.compute_kernel import validate
 from rlm.v100.compute_worker import read_json
 from rlm.v100.protection import file_hash
+
+
+def record_state(root: Path, path: Path, state: dict) -> None:
+    """Journal observable job transitions once, retaining the full state artifact."""
+    before = read_json(path) if path.exists() else {}
+    atomic_json(path, state)
+    fields = ("state", "worker", "attempts", "validation_job", "local_report_sha256")
+    if any(before.get(key) != state.get(key) for key in fields):
+        job_path = path.parent / "job.json"
+        experiment_goal = (
+            read_json(job_path).get("provenance", {}).get("goal_id") if job_path.exists() else None
+        )
+        ActivityLog(root, state.get("branch", "controller"), "owned-compute").write(
+            "training",
+            "compute-state-changed",
+            {
+                "job_id": path.parent.name,
+                "experiment_goal_id": experiment_goal,
+                "previous_state": before.get("state"),
+                **{key: state[key] for key in fields if key in state},
+                "state_file": str(path),
+                "detail": state.get("detail"),
+                "weights_promoted": state.get("weights_promoted", False),
+                "scope": "Observed coordinator transition; remote metrics remain untrusted until host validation",
+            },
+        )
 
 
 def configure(root: Path, mailbox: Path) -> dict:
@@ -160,7 +187,8 @@ def queue_job(
     atomic_json(folder / "job.json", job)
     shutil.copyfile(kernel, folder / "kernel.py")
     (folder / "kernel.py").chmod(0o444)
-    atomic_json(
+    record_state(
+        root,
         folder / "state.json",
         {
             "state": "queued",
@@ -209,7 +237,7 @@ def cancel(root: Path, identity: str) -> dict:
     path = root / "research/compute-jobs" / identity / "state.json"
     state = read_json(path)
     state.update(state="cancelled")
-    atomic_json(path, state)
+    record_state(root, path, state)
     atomic_json(mailbox_path(root) / "closed" / (identity + ".json"), {"state": "cancelled"})
     return state
 
@@ -225,7 +253,7 @@ def tick(root: Path) -> None:
                 try:
                     scheduled = schedule(root, state["branch"], "compute-audit", identity, 0)
                     state["validation_job"] = scheduled["id"]
-                    atomic_json(path, state)
+                    record_state(root, path, state)
                 except ValueError:
                     # A full bounded queue defers validation, never a completed import.
                     pass
@@ -252,7 +280,7 @@ def tick(root: Path) -> None:
             if receipt is None:
                 if time.time() - lease["heartbeat"] < 300:
                     state.update(state="running", worker=lease["worker"])
-                    atomic_json(path, state)
+                    record_state(root, path, state)
                     continue
                 raise ValueError("Compute worker lease expired")
             if receipt.get("nonce") != lease["nonce"] or receipt.get("job_id") != identity:
@@ -286,7 +314,7 @@ def tick(root: Path) -> None:
                 weights_promoted=False,
                 detail="Remote metrics untrusted; queued local safe-tensor validation",
             )
-            atomic_json(path, state)
+            record_state(root, path, state)
             atomic_json(mailbox / "closed" / (identity + ".json"), {"state": "imported"})
         except (ValueError, KeyError, TypeError, OSError) as error:
             attempts = state["attempts"] + 1
@@ -295,7 +323,7 @@ def tick(root: Path) -> None:
                 attempts=attempts,
                 detail=str(error)[:400],
             )
-            atomic_json(path, state)
+            record_state(root, path, state)
             if attempts >= 3:
                 atomic_json(mailbox / "closed" / (identity + ".json"), {"state": "failed"})
             claim = mailbox / "claims" / identity
@@ -383,5 +411,5 @@ def validate_locally(root: Path, identity: str) -> dict:
         weights_promoted=False,
         detail="Independent host loss evaluation of safe tensors; not a master promotion or proof of the user goal",
     )
-    atomic_json(folder / "state.json", state)
+    record_state(root, folder / "state.json", state)
     return state

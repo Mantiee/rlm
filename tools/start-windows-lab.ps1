@@ -18,7 +18,7 @@ foreach ($name in @('start-rtx3090-helper.ps1','watch-rtx3090-helper.ps1','start
 $helper = Join-Path $source 'start-rtx3090-helper.ps1'
 & powershell -NoProfile -ExecutionPolicy Bypass -File $helper -Stop
 if ($LASTEXITCODE -ne 0) { throw 'Owned RTX helper did not stop; no replacement started.' }
-& powershell -NoProfile -ExecutionPolicy Bypass -File $helper -Context 32768 -BatchTokens 16 -ActiveTimePercent 15 -DebugLogs
+& powershell -NoProfile -ExecutionPolicy Bypass -File $helper -Context 32768 -BatchTokens 16 -ActiveTimePercent 50 -DebugLogs
 if ($LASTEXITCODE -ne 0) { throw 'RTX helper acceptance failed; inspect the displayed diagnostic.' }
 
 # A shared-folder mapping needs existing operator SMB access. No credentials,
@@ -51,7 +51,7 @@ if (-not $existing) {
 } else {
     Write-Host 'Existing owned CPU worker retained; no duplicate started.'
 }
-Write-Host 'Helper request active-time target: 15%. This is not a hard GPU peak or power cap.'
+Write-Host 'Helper request active-time target: 50%. This is not a hard GPU peak or power cap.'
 Write-Host 'League game guard pauses the isolated helper; previous black-screen cause remains unresolved.'
 if (-not $NoWatch) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $source 'watch-rtx3090-helper.ps1')

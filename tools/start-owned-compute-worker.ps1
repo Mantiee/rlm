@@ -11,6 +11,7 @@ if ($WorkerName -notmatch '^[a-zA-Z0-9_-]{1,48}$') { throw 'Invalid worker name.
 if (-not (Test-Path -LiteralPath $Mailbox)) { throw 'Connect the authenticated shared compute folder first.' }
 $dir = Join-Path $env:USERPROFILE 'ai-owned-compute'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
+@{revision=$Revision; mailbox=$Mailbox; worker=$WorkerName} | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $dir 'worker-settings.json')
 $uvDir = Join-Path $dir 'uv-0.8.22'
 $uv = Join-Path $uvDir 'uv.exe'
 if (-not (Test-Path -LiteralPath $uv)) {
@@ -32,10 +33,14 @@ try {
         & $uv --no-config venv --python 3.11 $venv
         if ($LASTEXITCODE -ne 0) { throw 'Isolated CPU venv creation failed.' }
     }
-    & $uv --no-config pip install --python $python --index-url 'https://download.pytorch.org/whl/cpu' 'torch==2.6.0'
-    if ($LASTEXITCODE -ne 0) { throw 'CPU Torch install failed.' }
-    & $uv --no-config pip install --python $python --index-url 'https://pypi.org/simple' 'safetensors==0.5.3' 'psutil==7.0.0'
-    if ($LASTEXITCODE -ne 0) { throw 'CPU worker dependency install failed.' }
+    # Avoid network package resolution at every logon when exact dependencies exist.
+    & $python -c "import importlib.metadata as m; assert m.version('torch').split('+')[0] == '2.6.0'; assert m.version('safetensors') == '0.5.3'; assert m.version('psutil') == '7.0.0'" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        & $uv --no-config pip install --python $python --index-url 'https://download.pytorch.org/whl/cpu' 'torch==2.6.0'
+        if ($LASTEXITCODE -ne 0) { throw 'CPU Torch install failed.' }
+        & $uv --no-config pip install --python $python --index-url 'https://pypi.org/simple' 'safetensors==0.5.3' 'psutil==7.0.0'
+        if ($LASTEXITCODE -ne 0) { throw 'CPU worker dependency install failed.' }
+    }
     $source = Join-Path $dir $Revision
     New-Item -ItemType Directory -Force -Path $source | Out-Null
     foreach ($name in @('compute_worker.py','compute_kernel.py')) {

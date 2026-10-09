@@ -167,11 +167,24 @@ def test_owned_worker_executes_pinned_child_and_host_validates_weights(tmp_path,
 
     mailbox, identity = configured(tmp_path, monkeypatch)
     monkeypatch.setattr(compute_worker, "available", lambda: (True, "Test CPU host ready"))
-    available_memory = psutil.virtual_memory()
     monkeypatch.setattr(
         psutil,
         "virtual_memory",
-        lambda: available_memory._replace(available=12 * 2**30),
+        lambda: type("Memory", (), {"available": 12 * 2**30})(),
+    )
+    # The sandbox has no /proc. Training and validation are real subprocesses;
+    # resource sensor readings are simulated, not asserted as hardware validation.
+    monkeypatch.setattr(
+        psutil,
+        "Process",
+        lambda pid: type(
+            "Process",
+            (),
+            {
+                "memory_info": lambda self: type("RSS", (), {"rss": 100 * 2**20})(),
+                "children": lambda self, recursive: [],
+            },
+        )(),
     )
     path, lease = compute_worker.claim(mailbox, "actual-cpu")
     compute_worker.execute(mailbox, path, lease, Path(compute_kernel.__file__))
@@ -210,3 +223,22 @@ def test_full_drone_queue_defers_import_without_discarding_weights(tmp_path, mon
     monkeypatch.setattr(drones, "schedule", actual)
     distributed_compute.tick(tmp_path)
     assert drones.inspect(tmp_path)[0]["kind"] == "compute-audit"
+
+
+def test_compute_transition_journal_is_complete_and_does_not_repeat_polling(tmp_path):
+    path = tmp_path / "research/compute-jobs" / ("a" * 24) / "state.json"
+    state = {"state": "queued", "branch": "A", "attempts": 0}
+    distributed_compute.record_state(tmp_path, path, state)
+    distributed_compute.record_state(tmp_path, path, state)
+    state.update(state="running", worker="windows-cpu")
+    distributed_compute.record_state(tmp_path, path, state)
+    state.update(state="failed", attempts=3, detail="Worker failed")
+    distributed_compute.record_state(tmp_path, path, state)
+    events = [
+        json.loads(line)
+        for p in tmp_path.glob("research/logs/activity/*/timeline.jsonl")
+        for line in p.read_text().splitlines()
+    ]
+    assert [e["payload"]["state"] for e in events] == ["queued", "running", "failed"]
+    assert all(e["payload"]["job_id"] == "a" * 24 for e in events)
+    assert events[-1]["payload"]["detail"] == "Worker failed"

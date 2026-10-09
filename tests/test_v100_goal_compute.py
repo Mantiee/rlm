@@ -131,3 +131,55 @@ def test_goal_projection_really_trains_and_reloads_cpu_weights(outcomes):
     )
     assert restored["heldout_loss"] == pytest.approx(trained["heldout_loss"], rel=1e-5)
     assert restored["weights_promoted"] is False
+
+
+def test_goal_outcomes_execute_owned_child_and_receive_independent_host_decision(
+    outcomes, monkeypatch
+):
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
+    from pathlib import Path
+
+    import psutil
+
+    from rlm.v100 import compute_kernel, compute_worker
+
+    root, mailbox, goal, _ = outcomes
+    # Real child training/reload; sensor readings simulated because this sandbox
+    # does not expose /proc. No Windows/CUDA resource-cap assertion is made.
+    monkeypatch.setattr(compute_worker, "available", lambda: (True, "Test CPU ready"))
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=12 * 2**30))
+    monkeypatch.setattr(
+        psutil,
+        "Process",
+        lambda pid: SimpleNamespace(
+            memory_info=lambda: SimpleNamespace(rss=100 * 2**20), children=lambda recursive: []
+        ),
+    )
+    proposed = goal_compute.propose(root, "A")
+    path, lease = compute_worker.claim(mailbox, "goal-cpu")
+    assert lease["job_id"] == proposed["id"]
+    compute_worker.execute(mailbox, path, lease, Path(compute_kernel.__file__))
+    report = json.loads(
+        (mailbox / "results" / (proposed["id"] + "-" + lease["nonce"]) / "report.json").read_text()
+    )
+    assert report["metrics"][-1]["step"] > 0
+    distributed_compute.tick(root)
+    checked = distributed_compute.validate_locally(root, proposed["id"])
+    assert checked["state"] in ("locally-validated", "rejected")
+    assert checked["weights_promoted"] is False
+    assert Path(checked["local_report"]).is_file()
+    events = [
+        json.loads(line)
+        for p in root.glob("research/logs/activity/*/timeline.jsonl")
+        for line in p.read_text().splitlines()
+    ]
+    transitions = [e["payload"]["state"] for e in events if e["kind"] == "compute-state-changed"]
+    assert transitions == ["queued", "imported", checked["state"]]
+    # Historical experiments retain their original goal, but their labels
+    # cannot enter a newly selected goal training pool.
+    set_goal(root, "Different goal", outcomes[3])
+    job = json.loads(path.read_text())
+    goal_compute.verify_job(root, job)
+    assert job["provenance"]["goal_id"] == goal["id"]
+    assert goal_compute.propose(root)["state"] == "blocked"

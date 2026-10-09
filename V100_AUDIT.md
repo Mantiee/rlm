@@ -670,3 +670,30 @@ deselected; one existing PEFT warning. Ruff, diff and upgrade shell checks pass.
 Tests cover the actual question route (one generation, bounded identity check,
 no CPU cold start/tool loop), incomplete output rejection and queue advancement
 after terminal connection failures.
+
+## v57: complete requirement audit, CPU startup and compute action journal
+
+`SYNTA_REQUIREMENTS_AUDIT.md` maps the conversation to concrete modules/checks and
+separates implemented mechanisms, bounded experiments, hardware acceptance and
+unavailable guarantees. The Windows helper installer now includes a limited
+current-user CPU autostart task and a separate visible read-only monitor. Existing
+mailbox configuration/running worker is preserved, no credentials/share are
+created, and the monitor uses the actual LAN binding. Both Windows helper paths
+use the operator's 50 percent active-time target. Installed exact CPU dependencies
+are checked before resolving packages over the network.
+
+Owned-compute state transitions are journaled once with job IDs, artifact paths,
+errors and independent validation decisions. Remote metrics remain untrusted.
+The real subprocess integration formerly deselected for lack of /proc is now
+exercised with explicit simulated sensor readings; training/tensor reload remain
+real. A new integration uses precommitted goal observations all the way through
+worker training and independent host validation, preserving goal provenance.
+Windows Scheduled Task execution and real browser/GPU operation still require
+operator hardware. This audit does not replace those checks with assertions.
+
+Validation: full suite 1028 passed, 65 skipped, no deselected tests; one existing
+PEFT warning. Ruff checks over `rlm` and `tests`, diff whitespace checks and upgrade
+shell syntax pass. Goal/worker integrations perform actual CPU optimizer updates
+and safe-tensor subprocess reload, with explicit simulated resource sensors.
+PowerShell execution is not available in this sandbox; startup policy checks do
+not certify Windows task registration/execution.
