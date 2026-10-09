@@ -7,6 +7,7 @@ User directives steer R&D. Only the local user's explicit natural-language reque
 import copy
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -243,6 +244,15 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    if re.fullmatch(
+        r"(?:hej|czesc|cześć|hello|hi|witaj)(?:\s+(?:synta|master|v100))?[!.,\s]*", message, re.I
+    ):
+        return {
+            "answer": "Cześć! Jestem dostępny. Co mam sprawdzić lub wykonać?",
+            "actions": [],
+            "applied": [],
+            "responder": {"model": "controller-chat", "delegated_while_master_busy": False},
+        }
     if message.startswith(("/goal ", "/cel ")):
         receipt = update_plan(root, "long", message.split(" ", 1)[1], "user")
         return {
@@ -385,6 +395,11 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 "No scripts, event handlers or external resources: the host supplies live rendering. "
                 "Use dashboard_status before claiming publication. A cat command only reads; it does not edit. GUI observation is unnecessary for HTML edits. "
                 "If vision is deferred, continue file work without waiting for an image."
+                " For a concrete implementation request, execute allowed tools now and verify their receipts. "
+                "A plan alone does not implement the request. If blocked, name the exact error and unfinished work. "
+                "read_dashboard returns invalid source for editing; use repair_dashboard to safely repair it with backup. "
+                "Never ask the user to paste guest HTML merely because it failed publication validation. "
+                "Use capabilities to inspect named operations and their scope; never invent missing operations."
             ),
         }
     ]
@@ -431,6 +446,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
 
         client.research_owner = "A"
         client.research_tool_names = {
+            "capabilities",
+            "repair_dashboard",
             "compute_resources",
             "schedule_drone",
             "cancel_drone",
@@ -478,7 +495,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         result["resource_contract"] = {"evidence": evidence, "rejected_actions": rejected}
     result["tool_receipts"] = tool_receipts
     result["applied"] = apply_actions(root, result["actions"], message)
-    if dashboard_request:
+    if dashboard_request or any(
+        row["tool"] in ("write_dashboard", "repair_dashboard") for row in tool_receipts
+    ):
         from rlm.v100.dashboard_editor import status as dashboard_status
 
         receipt = dashboard_status(root)

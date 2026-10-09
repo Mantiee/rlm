@@ -181,3 +181,39 @@ const sample={collected_at:1,mission:{running:true,state:{phase:'research'}},rep
     program += "\nrender(sample);if(nodes.actors.children.length!==2||!nodes.goals.textContent.includes('Operator goal')||nodes.events.children.length!==1||nodes['agent-grid'].children.length!==1)throw Error('Live renderer failed');\n"
     result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
     assert result.returncode == 0, result.stderr
+
+
+def test_invalid_dashboard_source_can_be_read_without_being_published(tmp_path, monkeypatch):
+    invalid = dashboard_layout.BASE_TEMPLATE.replace("</html>", "<script>alert(1)</script></html>")
+    monkeypatch.setattr(dashboard_editor, "guest_layout", lambda root: invalid)
+    value = dashboard_editor.status(tmp_path, include_html=True)
+    assert not value["valid"] and not value["published"]
+    assert value["html"] == invalid and value["repair_tool"] == "repair_dashboard"
+    assert "html" not in dashboard_editor.status(tmp_path)
+
+
+def test_dashboard_repair_removes_scripts_preserves_design_and_uses_backup(tmp_path, monkeypatch):
+    original = dashboard_layout.BASE_TEMPLATE.replace("<h1>", '<h1 style="color:red">').replace(
+        "</html>", '<SCRIPT type="text/javascript">bad()</SCRIPT></html>'
+    )
+    monkeypatch.setattr(dashboard_editor, "guest_layout", lambda root: original)
+    writes = []
+    monkeypatch.setattr(
+        dashboard_editor,
+        "write",
+        lambda root, content: writes.append(content) or {"written": True, "published": False},
+    )
+    value = dashboard_editor.repair(tmp_path)
+    assert value["repaired"] and not value["published"]
+    assert "scripts removed" in value["mode"]
+    assert "color:red" in writes[0] and "<SCRIPT" not in writes[0]
+    dashboard_layout.validate_template(writes[0])
+
+
+def test_capabilities_lists_only_the_current_request_tools(tmp_path):
+    from rlm.v100.research_tools import ResearchTools
+
+    tools = ResearchTools(tmp_path, {}, "A")
+    tools.allowed_tool_names = {"read_dashboard", "repair_dashboard"}
+    names = {row["name"] for row in tools.execute("capabilities", {})["tools"]}
+    assert names == tools.allowed_tool_names

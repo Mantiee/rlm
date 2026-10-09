@@ -187,3 +187,35 @@ def test_guest_layout_seed_preserves_master_edits_and_bounds_transfer(tmp_path, 
     path.write_bytes(b"x" * 262145)
     with pytest.raises(ValueError, match="256 KiB"):
         dashboard.guest_layout(tmp_path)
+
+
+def test_dashboard_sync_retries_guest_repair_after_boot_without_publishing_invalid_html(
+    tmp_path, monkeypatch
+):
+    from rlm.v100 import dashboard_editor, dashboard_layout
+
+    state = dashboard.DashboardState(tmp_path, lambda root: {})
+    reads = iter(
+        [
+            RuntimeError("guest booting"),
+            dashboard_layout.BASE_TEMPLATE.replace("</html>", "<script>bad()</script></html>"),
+            dashboard_layout.BASE_TEMPLATE,
+        ]
+    )
+
+    def read(root):
+        value = next(reads)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(dashboard, "guest_layout", read)
+    repairs = []
+    monkeypatch.setattr(
+        dashboard_editor, "repair", lambda root: repairs.append(root) or {"repaired": True}
+    )
+    state.sync_layout()
+    assert not repairs and state.layout["state"] == "previous validated layout retained"
+    state.sync_layout()
+    assert repairs == [tmp_path] and state.layout["state"] == "validated layout active"
+    assert state.layout["repair"]["repaired"]

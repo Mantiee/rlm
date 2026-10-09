@@ -132,7 +132,7 @@ def test_chat_selects_same_accepted_master_during_gpu_training(tmp_path, monkeyp
         "research_turn",
         lambda c, *a: seen.append(c) or {"content": '{"answer":"accepted master", "actions":[]}'},
     )
-    result = mission_chat.respond(tmp_path, tmp_path, {"message": "Hej"}, manager)
+    result = mission_chat.respond(tmp_path, tmp_path, {"message": "Sprawdź stan misji"}, manager)
     assert seen == [cpu]
     assert result["responder"]["accepted_master_on_cpu"]
     assert not result["responder"]["delegated_while_master_busy"]

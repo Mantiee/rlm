@@ -2,6 +2,7 @@
 
 import base64
 import json
+import re
 import time
 from pathlib import Path
 
@@ -11,9 +12,21 @@ from rlm.v100.dashboard_layout import BASE_TEMPLATE, guest_layout, validate_temp
 def status(root: Path, include_html: bool = False) -> dict:
     try:
         content = guest_layout(root)
-        identity = validate_template(content)
     except (ValueError, OSError, RuntimeError) as error:
         return {"valid": False, "published": False, "error": str(error)[:300]}
+    try:
+        identity = validate_template(content)
+    except ValueError as error:
+        result = {
+            "valid": False,
+            "published": False,
+            "error": str(error)[:300],
+            "repair_tool": "repair_dashboard",
+        }
+        if include_html:
+            result["html"] = content
+            result["scope"] = "Untrusted source text for editing only; not executable or published"
+        return result
     path = root / "research/dashboard/layout-status.json"
     receipt = json.loads(path.read_text()) if path.exists() and path.stat().st_size < 8192 else {}
     published = (
@@ -61,11 +74,18 @@ def write(root: Path, content: str) -> dict:
 
 
 def repair(root: Path) -> dict:
-    """Operator upgrade repairs invalid layouts while retaining the original guest file."""
+    """Repair invalid passive HTML and preserve the original in a guest backup."""
+    content = guest_layout(root)
     try:
-        content = guest_layout(root)
         validate_template(content)
         return {"repaired": False, "reason": "Existing layout valid"}
-    except (ValueError, OSError, RuntimeError) as error:
+    except ValueError as error:
         reason = str(error)[:300]
-    return {**write(root, BASE_TEMPLATE), "repaired": True, "reason": reason}
+    cleaned = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", content, flags=re.I | re.S)
+    try:
+        validate_template(cleaned)
+        mode = "scripts removed; passive layout preserved"
+    except ValueError:
+        cleaned = BASE_TEMPLATE
+        mode = "default valid layout restored; original backed up"
+    return {**write(root, cleaned), "repaired": True, "reason": reason, "mode": mode}

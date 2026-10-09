@@ -423,3 +423,26 @@ one PEFT configuration warning. Tests execute the trusted renderer on an old lay
 cover pending-request deduplication, queue/processing labels, clean interruption,
 source attribution and omission of private reasoning fields. Ruff, shell syntax
 and diff whitespace checks passed. No V100/Windows/LAN execution is certified here.
+
+## v100.47 repairable source and executable capability discovery
+
+read_dashboard now returns invalid HTML as untrusted source plus the validation
+error. Validation still gates writes and publication. repair_dashboard removes script
+elements and preserves a valid passive design; if further errors remain it restores
+the default layout. Both paths back up the original guest file. Dashboard sync
+retries after guest boot and repairs invalid layouts before publication, retaining
+the repair receipt. A model does not need an operator to paste guest source.
+
+capabilities lists only the current request's allowed operations and their scope.
+Chat instructions require tools and verification for concrete implementation requests,
+not a plan-only success claim. Repair/write tool calls trigger publication checks even
+when the user says only a short follow-up. Simple recognized greetings are answered
+by the explicitly labelled controller without model/tool calls or plan changes.
+This does not guarantee arbitrary task completion or useful workload allocation.
+
+Validation: 977 passed, 65 skipped, 1 process/RAM-dependent owned-worker integration
+deselected, one PEFT configuration warning. Tests cover invalid-source reads without
+publication, design-preserving script removal, deferred boot repair, scoped capability
+catalogs, greeting isolation and accepted CPU chat for substantive requests. Ruff,
+formatting, shell syntax and whitespace checks passed. LAN/GPU/Windows/guest execution
+requires deployment evidence.

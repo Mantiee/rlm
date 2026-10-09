@@ -135,7 +135,17 @@ class DashboardState:
 
     def sync_layout(self):
         try:
-            self.publish_layout(guest_layout(self.root))
+            content = guest_layout(self.root)
+            try:
+                validate_template(content)
+            except ValueError:
+                from rlm.v100.dashboard_editor import repair
+
+                self.last_repair = repair(self.root)
+                content = guest_layout(self.root)
+            self.publish_layout(content)
+            if hasattr(self, "last_repair"):
+                self.layout["repair"] = self.last_repair
         except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
             self.layout = {
                 **self.layout,

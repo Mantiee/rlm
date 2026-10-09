@@ -70,3 +70,16 @@ def test_agent_activity_preserves_evidence_without_private_thinking(tmp_path):
     assert "example.com" in views[0]["task"]
     assert "PRIVATE" not in json.dumps(views)
     assert views[0]["source"].endswith("timeline.jsonl")
+
+
+def test_greeting_never_calls_model_or_changes_plans(tmp_path, monkeypatch):
+    from rlm.v100 import competition
+
+    monkeypatch.setattr(
+        competition,
+        "helper_client",
+        lambda *args: (_ for _ in ()).throw(AssertionError("Greeting called inference")),
+    )
+    response = mission_chat.respond(tmp_path, tmp_path, {"message": "Hej Synta"})
+    assert not response["actions"] and not response["applied"]
+    assert not (tmp_path / "research/plans/current.json").exists()
