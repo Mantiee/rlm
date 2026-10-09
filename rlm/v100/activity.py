@@ -77,6 +77,9 @@ class ActivityLog:
             raise ValueError("Unknown activity category")
         now = datetime.now(UTC)
         event_id = uuid.uuid4().hex
+        goal_path = self.root / "research/goal.json"
+        if goal_path.exists() and goal_path.stat().st_size <= 8192:
+            context["operator_goal_id_at_event"] = json.loads(goal_path.read_text()).get("id")
         event = {
             "time": now.isoformat(timespec="milliseconds"),
             "id": event_id,

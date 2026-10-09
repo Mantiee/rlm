@@ -32,6 +32,16 @@ def test_dashboard_private_bind_and_readonly_http_routes(tmp_path):
         thread.start()
         origin = f"http://127.0.0.1:{server.server_port}"
         try:
+            from rlm.v100.activity import ActivityLog
+
+            event_id = ActivityLog(tmp_path).write("tools", "tool-start", {"tool": "calculate"})
+            with urlopen(origin + "/api/actions?limit=1", timeout=3) as response:
+                actions = json.load(response)
+                assert actions["events"][0]["id"] == event_id
+                assert len(actions["days"]) == 1
+            with pytest.raises(HTTPError) as error:
+                urlopen(origin + "/api/actions?day=../secret", timeout=3)
+            assert error.value.code == 404
             with urlopen(origin + "/api/status", timeout=3) as response:
                 assert json.load(response)["mission"]["running"] is True
                 assert response.headers["Cache-Control"] == "no-store"

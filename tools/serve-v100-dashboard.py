@@ -14,7 +14,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from rlm.v100.dashboard_layout import (
     APP_SCRIPT,
@@ -300,6 +300,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     ).encode(),
                     "application/json; charset=utf-8",
                 )
+            elif route == "/api/actions":
+                from rlm.v100.activity_browser import days, page
+
+                query = parse_qs(urlsplit(self.path).query, strict_parsing=True)
+                if set(query) - {"day", "cursor", "limit"} or any(
+                    len(v) != 1 for v in query.values()
+                ):
+                    raise ValueError("Invalid action archive query")
+                available = days(self.server.state.root)
+                day = query.get("day", [available[-1] if available else None])[0]
+                result = (
+                    page(
+                        self.server.state.root,
+                        day,
+                        int(query.get("cursor", [0])[0]),
+                        int(query.get("limit", [100])[0]),
+                    )
+                    if day
+                    else {"events": [], "has_more": False, "next_cursor": 0}
+                )
+                result["days"] = available
+                body, mime = (
+                    json.dumps(result, ensure_ascii=False).encode(),
+                    "application/json; charset=utf-8",
+                )
             else:
                 path, mime = paper_asset(self.server.state.root, self.path)
                 body = path.read_bytes()
@@ -342,7 +367,7 @@ def main():
     with DashboardServer((args.bind, args.port), state) as server:
         thread = threading.Thread(target=state.loop, daemon=True)
         thread.start()
-        print(f"V100 dashboard: http://{args.bind}:{args.port} - read-only", flush=True)
+        print(f"Synta dashboard: http://{args.bind}:{args.port} - read-only", flush=True)
         try:
             server.serve_forever()
         finally:

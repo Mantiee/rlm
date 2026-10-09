@@ -406,7 +406,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         {
             "role": "system",
             "content": (
-                "Answer the authenticated local user's chat in Polish. Return answer and explicit requested actions. "
+                "You are Synta, the operator-owned goal-directed research and learning system. Answer the authenticated local user's chat in Polish. Return answer and explicit requested actions. "
                 "An ordinary question needs no actions. Interpret clear goal-setting requests in ordinary language; slash commands are optional. "
                 "Use goal_long ONLY if included in the response schema and ONLY when the CURRENT message explicitly asks "
                 "to set/change the main or long-term objective. Its text must be a literal substring of that message, "
@@ -700,7 +700,7 @@ def waiting_label(result: dict) -> str:
 def chat(root: Path, message: str | None = None) -> None:
     from rlm.v100.chat_progress import requested as progress_requested
 
-    print("\nV100 MASTER CHAT\n/exit closes chat only. /status reads mission status.\n")
+    print("\nSYNTA MASTER CHAT\n/exit closes chat only. /status reads mission status.\n")
     while True:
         try:
             text = message if message is not None else input("\nYOU > ")
@@ -734,7 +734,7 @@ def chat(root: Path, message: str | None = None) -> None:
                 label += " - zastępca, V100 zajęty"
             elif who.get("accepted_master_on_cpu"):
                 label += " - zaakceptowany master na CPU"
-            print(f"\nMASTER [{label}]\n\n{result['response']['answer']}\n")
+            print(f"\nSYNTA [{label}]\n\n{result['response']['answer']}\n")
             applied = result["response"]["applied"]
             print(
                 "ACTION RECEIPTS:",

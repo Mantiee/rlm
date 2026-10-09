@@ -33,7 +33,7 @@ unit = Path.home() / '.config/systemd/user/v100-dashboard.service'
 if unit.exists():
     unit.with_suffix('.service.backup').write_bytes(unit.read_bytes())
 unit.write_text(
-    '[Unit]\nDescription=Read-only V100 LAN dashboard\nAfter=network.target\n'
+    '[Unit]\nDescription=Synta read-only LAN dashboard\nAfter=network.target\n'
     '[Service]\nType=simple\n'
     f'ExecStart="{sys.executable}" -u "{script}" --root "{root}" --bind 192.168.0.68 --port 8765\n'
     f'WorkingDirectory={root}\n'

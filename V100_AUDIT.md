@@ -507,3 +507,31 @@ deselected; one existing PEFT warning. Node runtime exercises the trusted render
 on older guest layouts. Browser visual QA could not run because the local browser
 binary is unavailable. Ruff, shell syntax and diff checks passed. Hardware execution
 and LAN publication of v49 await operator installation.
+
+
+## v50: Synta, paginated actions and active-goal learning evidence
+
+Synta is the system name in host-rendered HTML, terminal chat, chat instructions,
+preferences and dashboard service description. Existing binary names and model
+aliases stay compatible. The read-only /api/actions endpoint pages exact recorded,
+already-redacted daily journals by byte cursor, with bounded pages, date validation,
+symlink exclusion and retry-safe incomplete-tail handling. The dashboard exposes
+day selection and all recorded fields, arguments, outputs and correlation IDs.
+Activity events record the operator goal ID at event time; this does not override
+an experiment's original goal snapshot. No missing historical events are fabricated.
+
+The goal ML panel exposes task inputs, observed targets, metrics, training admission,
+optimizer evidence and accepted weights. New goal examples default to the active
+goal; older verified labels remain archived and independently revalidated when
+used for retention replay. Old or unattributed admission counters are not shown as
+current goal admission. Malformed evidence/target objects fail validation before
+set membership or database binding. This is a generic source-based numerical
+forecast task and independently verified auxiliary tasks, not a claim that any
+natural-language goal automatically supplies labels, a reward oracle or profit.
+
+Validation: 996 passed, 65 skipped, one resource-dependent owned-worker integration
+deselected and one existing PEFT warning. Final focused renderer/telemetry checks
+passed after replacing missing ML counters with explicitly unknown values. Tests
+cover archive pagination, goal attribution, incomplete tails, path/symlink rejection,
+HTTP action routes and goal-change separation while preserving verifiable replay.
+No hardware training improvement or universal goal oracle is certified.

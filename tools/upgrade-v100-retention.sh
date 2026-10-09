@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10049.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10050.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -67,6 +67,7 @@ profile = json.loads(path.read_text())
 preferences_path = root / 'research/user-preferences.json'
 preferences = json.loads(preferences_path.read_text()) if preferences_path.exists() else {'directive': '', 'alerts': False}
 # Explicit operator request: display reasoning returned by owned local models.
+preferences['system_name'] = 'Synta'
 preferences['capture_local_model_trace'] = True
 preferences['retention'] = {
     'research': 'RETENTION_RESEARCH.md in the readonly own-source mount',

@@ -160,6 +160,7 @@ def predict(root: Path, branch: str, specification: dict) -> dict:
     if (
         not isinstance(evidence, list)
         or not 1 <= len(evidence) <= 8
+        or any(not isinstance(identity, str) for identity in evidence)
         or len(set(evidence)) != len(evidence)
     ):
         raise ValueError("Choose 1-8 distinct host evidence IDs")
@@ -177,6 +178,8 @@ def predict(root: Path, branch: str, specification: dict) -> dict:
         or abs(sum(probabilities) - 1) > 1e-6
     ):
         raise ValueError("Probabilities [down, flat, up] must sum to one")
+    if not isinstance(specification["target"], str):
+        raise ValueError("Target must be a host observation ID")
     target = observation(root, specification["target"])
     features = [observation(root, identity) for identity in evidence]
     now = time.time()
@@ -270,16 +273,23 @@ def tick(root: Path) -> None:
             )
 
 
-def records(root: Path) -> list[dict]:
+def records(root: Path, active_only: bool = True) -> list[dict]:
     with database(root) as db:
         items = list(
             db.execute(
                 "SELECT id, data, outcome FROM forecasts WHERE outcome IS NOT NULL ORDER BY due"
             )
         )
+    from rlm.v100.goals import load_goal
+
+    current_goal = load_goal(root)
     result = []
     for item in items:
         forecast = json.loads(item["data"])
+        if active_only and (
+            not current_goal or forecast["plan"]["long"]["id"] != current_goal["id"]
+        ):
+            continue
         if digest(forecast) != item["id"]:
             raise ValueError("Forecast commitment changed")
         saved = json.loads(item["outcome"])
@@ -347,8 +357,10 @@ def admit(root: Path, candidates: list[dict], profile: dict) -> list[dict]:
         return []
     from transformers import AutoTokenizer
 
+    from rlm.v100.goals import load_goal
     from rlm.v100.training import encode_record
 
+    goal_id = (load_goal(root) or {}).get("id")
     settings = profile["training"]
     admitted, deferred = [], []
     try:
@@ -356,7 +368,12 @@ def admit(root: Path, candidates: list[dict], profile: dict) -> list[dict]:
     except (OSError, ValueError) as error:
         atomic_json(
             root / "research/goal-learning/admission.json",
-            {"admitted": 0, "deferred": len(candidates), "reason": str(error)[:400]},
+            {
+                "goal_id": goal_id,
+                "admitted": 0,
+                "deferred": len(candidates),
+                "reason": str(error)[:400],
+            },
         )
         return []
     for row in candidates:
@@ -369,6 +386,7 @@ def admit(root: Path, candidates: list[dict], profile: dict) -> list[dict]:
     atomic_json(
         root / "research/goal-learning/admission.json",
         {
+            "goal_id": goal_id,
             "admitted": len(admitted),
             "deferred_count": len(deferred),
             "deferred": deferred[:16],
@@ -385,9 +403,33 @@ def status(root: Path) -> dict:
         items = list(
             db.execute("SELECT id, due, data, outcome FROM forecasts ORDER BY due DESC LIMIT 16")
         )
-    resolved = [json.loads(item["outcome"]) for item in items if item["outcome"]]
+    from rlm.v100.goals import load_goal
+
+    goal = load_goal(root)
+    current = [
+        item
+        for item in items
+        if goal and json.loads(item["data"])["plan"]["long"]["id"] == goal["id"]
+    ]
+    resolved = [json.loads(item["outcome"]) for item in current if item["outcome"]]
+    admission_record = json.loads(admission.read_text()) if admission.exists() else None
+    if admission_record and admission_record.get("goal_id") != (goal or {}).get("id"):
+        admission_record = {
+            "state": "historical or unattributed",
+            "goal_id": admission_record.get("goal_id"),
+            "scope": "Not admission evidence for the active goal",
+        }
     return {
-        "training_admission": json.loads(admission.read_text()) if admission.exists() else None,
+        "goal_id": goal["id"] if goal else None,
+        "learning_task": {
+            "inputs": "Archived evidence available before prediction",
+            "targets": "Independently observed future down/flat/up outcomes",
+            "metric": "Brier score and source-disjoint goal development accuracy",
+            "training": "Supervised adapter candidates using verified outcomes, including failed predictions",
+            "acceptance": "Goal development improvement plus retention and independent audit gates",
+            "scope": "Generic numeric forecast task across sources; arbitrary goals need independently verifiable task labels",
+        },
+        "training_admission": admission_record,
         "forecasts": [
             {
                 "id": item["id"],
@@ -402,7 +444,7 @@ def status(root: Path) -> dict:
                 if item["due"] + 300 < time.time()
                 else "pending",
             }
-            for item in items
+            for item in current
         ],
         "recent_resolved": len(resolved),
         "recent_brier": sum(row["brier"] for row in resolved) / len(resolved) if resolved else None,

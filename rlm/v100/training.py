@@ -41,7 +41,10 @@ def load_records(path: Path, ledger: Path | None = None) -> tuple[list[dict], li
             if ledger is None:
                 raise ValueError("Goal observations require a host split ledger")
             if goal_labels is None:
-                goal_labels = {row["id"]: row for row in goal_records(ledger.resolve().parents[2])}
+                goal_labels = {
+                    row["id"]: row
+                    for row in goal_records(ledger.resolve().parents[2], active_only=False)
+                }
             if record != goal_labels.get(record.get("id")):
                 raise ValueError("Goal label differs from the host-observed future outcome")
         elif verification.get("kind") == "historical_postmortem":

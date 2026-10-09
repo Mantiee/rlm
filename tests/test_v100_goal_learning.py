@@ -302,3 +302,39 @@ def test_goal_gate_requires_more_than_a_constant_answer(tmp_path, labels, expect
     gate = lab.verified_gate(tmp_path, parent, candidate)
     assert gate["passed"] is expected
     assert gate["beats_best_constant_baseline"] is expected
+
+
+def test_goal_change_keeps_archive_but_excludes_old_goal_from_new_training_pool(world):
+    root, clock, values, spec, goal = world
+    forecast = lab.predict(root, "A", spec)
+    clock[0] = 1060
+    after = lab.observe(root, "https://example.org/metric", "value")
+    lab.settle(root, forecast["id"], after["id"])
+    assert len(lab.records(root)) == 1
+    set_goal(root, "A genuinely new operator task", root / "suite.jsonl")
+    assert lab.records(root) == []
+    assert len(lab.records(root, active_only=False)) == 1
+    status = lab.status(root)
+    assert status["forecasts"] == []
+    assert status["goal_id"] != goal["id"]
+    with lab.database(root) as db:
+        assert db.execute("SELECT count(*) FROM forecasts").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    "field,value", [("evidence", [{"id": "not-an-id"}]), ("target", {"id": "not-an-id"})]
+)
+def test_non_string_observation_ids_fail_as_validation_errors(world, field, value):
+    root, clock, values, spec, goal = world
+    spec[field] = value
+    with pytest.raises(ValueError):
+        lab.predict(root, "A", spec)
+
+
+def test_old_admission_is_not_a_current_goal_training_claim(world):
+    root, clock, values, spec, goal = world
+    folder = root / "research/goal-learning"
+    (folder / "admission.json").write_text(json.dumps({"admitted": 99, "goal_id": "previous"}))
+    admission = lab.status(root)["training_admission"]
+    assert admission["state"] == "historical or unattributed"
+    assert "admitted" not in admission
