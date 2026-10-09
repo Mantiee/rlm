@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10052.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10053.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -59,6 +59,16 @@ from rlm.v100.supervisor import install
 from rlm.v100.chat_resources import repair_completed
 
 root = Path(os.environ['AI_V100_ROOT'])
+# Operator explicitly requested a 50 percent helper wall-time target.
+helper_path = root / 'research/researcher-rtx3090.json'
+if helper_path.exists():
+    helper = json.loads(helper_path.read_text())
+    before = helper_path.with_name('researcher-rtx3090.before-v53.json')
+    if not before.exists():
+        before.write_text(helper_path.read_text())
+    helper.setdefault('resources', {})['helper_duty_percent'] = 50
+    atomic_json(helper_path, helper)
+    print('Helper active wall-time target:', helper['resources']['helper_duty_percent'], 'percent; not a hard GPU cap')
 prepare(root)
 if (root / 'research/desktop/manifest.json').exists():
     prepare_desktop(root)

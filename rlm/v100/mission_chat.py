@@ -244,6 +244,28 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    if re.search(
+        r"\b(?:co potrafisz|co umiesz|twoje możliwości|twoje mozliwosci|what can you do)\b",
+        message.casefold(),
+    ):
+        return {
+            "answer": "\n".join(
+                [
+                    "- Badam publiczne źródła i zapisuję dowody pod aktualny cel.",
+                    "- Zlecam ograniczone zadania CPU/RTX i sprawdzam ich wyniki; dostępność zasobów nie oznacza wykonania zadania.",
+                    "- Uruchamiam kod w izolowanej VM oraz edytuję i waliduję dashboard.",
+                    "- Rejestruję prognozy przed wynikiem i weryfikuję późniejsze etykiety do ML.",
+                    "- Trenuję kandydatów z zabezpieczeniami pamięci; nowe wagi wymagają niezależnych testów.",
+                    "- Pokazuję akcje, plany, wyniki, blokady i zmierzone tokeny w dashboardzie.",
+                    "- Zmieniam cel na wyraźne polecenie operatora. Nie składam realnych zleceń ani nie gwarantuję zysku.",
+                    "- Aktualny postęp odczytasz przez /status lub pytanie o postęp; brak danych pokazuję jako nieznany.",
+                ]
+            ),
+            "actions": [],
+            "applied": [],
+            "responder": {"model": "controller-capabilities"},
+            "scope": "Implemented mechanisms; not proof of current execution or accepted improvement",
+        }
     from rlm.v100 import chat_progress
 
     if chat_progress.requested(message) or chat_progress.continue_requested(message):

@@ -170,3 +170,13 @@ def test_resource_guard_retires_only_owned_cpu_process(tmp_path, monkeypatch, ca
     monkeypatch.setattr(competition, "available_ram_gib", lambda: 2 if cause == "ram" else 24)
     competition.guard_cpu_process(process, {"min_free_ram_gib": 4, "max_rss_gib": 14}, stop, cancel)
     assert calls == [("terminate", 123), ("wait", 123)]
+
+
+def test_capability_question_needs_no_inference_or_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(competition, "helper_client", lambda *a, **k: pytest.fail("LLM not needed"))
+    result = mission_chat.respond(
+        tmp_path, tmp_path, {"message": "co potrafisz robic i jak. w punktach"}
+    )
+    assert result["responder"]["model"] == "controller-capabilities"
+    assert result["actions"] == []
+    assert "nie gwarantuję zysku" in result["answer"]

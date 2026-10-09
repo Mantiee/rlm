@@ -595,3 +595,22 @@ Validation for v52: 1009 passed, 65 skipped, one resource-dependent owned-worker
 integration deselected, one existing PEFT warning. Ruff and upgrade shell syntax
 checks pass. Renderer behavior is tested in Node; no browser visual inspection or
 user hardware acceptance is claimed.
+
+## v53: readable refresh and Windows helper logon recovery
+
+Dashboard disclosure state retains both open and user-closed choices across live
+updates and learning-panel refreshes. Agent ordering is stable by identity and
+refresh preserves a visible keyed scroll anchor where available. Capability
+questions are answered by the controller without LLM inference or VM access.
+The Windows installer registers an elevated current-user logon task, without a
+saved password, and a watchdog that retains the identified existing guardian and
+game guard. It does not promise startup before user login or prevent PC shutdown.
+Startup helper pacing is 50 percent; Debian upgrade sets the explicitly requested
+50 percent research target and saves the old profile. This
+is request wall-time pacing, not a board power or GPU peak cap. CPU worker budgets
+remain unchanged. Windows execution requires operator commissioning.
+
+Validation: 1010 passed, 65 skipped, one resource-dependent worker integration
+deselected, one existing PEFT warning. Final dashboard/chat checks passed 29 tests.
+No Windows PowerShell runtime is available here; scheduled task operation must be
+confirmed on Windows.

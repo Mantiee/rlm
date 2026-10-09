@@ -5,7 +5,7 @@ param(
     [int]$Context = 32768,
     [ValidateSet(16, 32, 64)]
     [int]$BatchTokens = 16,
-    [ValidateRange(1,30)]
+    [ValidateRange(1,65)]
     [int]$ActiveTimePercent = 30,
     [switch]$DebugLogs,
     [switch]$Stop
