@@ -19,9 +19,11 @@ fi
 chmod 700 "$TMP"
 mv "$TMP" "$TARGET"
 "$PY" <<'PY'
+import json
 import os
 import sys
 from pathlib import Path
+from rlm.v100.common import atomic_json
 
 root = Path(os.environ['AI_V100_ROOT']).resolve()
 script = root / 'bin/serve-v100-dashboard.py'
@@ -40,6 +42,19 @@ unit.write_text(
     'MemoryMax=512M\nTasksMax=64\nUMask=0077\n'
     '[Install]\nWantedBy=default.target\n'
 )
+path = root / 'research/user-preferences.json'
+preferences = json.loads(path.read_text()) if path.exists() else {'directive': '', 'alerts': False}
+if not isinstance(preferences, dict):
+    raise ValueError('Invalid user preferences; no goal changes applied')
+preferences['dashboard'] = {
+    'url': 'http://192.168.0.68:8765',
+    'editable_guest_file': '/workspace/dashboard/index.html',
+    'edit_action': 'sandbox',
+    'instructions': 'The operator authorizes dashboard HTML/CSS edits from chat. Use a sandbox action to read/edit this file inside the private VM. Keep all existing component IDs. Do not add scripts, external resources or change the data API. The host validates and publishes the layout automatically; receipts are in research/dashboard/layout-status.json. A queued edit is not proof of publication.',
+    'data_refresh_seconds': 20,
+    'scope': 'Presentation permission only. Long-term goal, training gates, weights and financial records are unchanged. Endpoint is configured, not proof of reachability.'
+}
+atomic_json(path, preferences)
 PY
 systemctl --user daemon-reload
 systemctl --user enable v100-dashboard.service

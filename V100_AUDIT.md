@@ -9,6 +9,16 @@ Serving a dashboard on the operator host does not relax the private VM's network
 or filesystem isolation. Reachability from another LAN device still needs an
 on-device check.
 
+The master can edit `/workspace/dashboard/index.html` through the existing chat
+`sandbox` action. The viewer pulls only this fixed guest file, validates bounded
+HTML/CSS and component IDs, preserves prior versions and retains the last valid
+layout on failure. The data renderer remains host-owned and CSP permits only its
+exact script hash. The user preferences carry this presentation permission
+without changing the long-term goal or existing directives. Status is saved in
+`research/dashboard/layout-status.json`. Browser polling refreshes data and
+reloads a changed validated layout automatically. This is presentation editing,
+not permission to change financial evidence or run arbitrary host commands.
+
 This inventory separates source implementation from configuration, execution and
 demonstrated improvement. Passing controller tests does not certify GPU stability,
 profitable trading or a successful model promotion. It is not a declaration that

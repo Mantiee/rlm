@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import threading
 from pathlib import Path
@@ -23,7 +25,8 @@ def test_dashboard_rejects_unspecified_public_and_non_ipv4_binds(address):
 
 def test_dashboard_private_bind_and_readonly_http_routes(tmp_path):
     assert dashboard.validate_bind("192.168.0.68") == "192.168.0.68"
-    state = SimpleNamespace(root=tmp_path, data={"mission": {"running": True}})
+    state = dashboard.DashboardState(tmp_path, lambda root: {})
+    state.data = {"mission": {"running": True}}
     with dashboard.DashboardServer(("127.0.0.1", 0), state) as server:
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
@@ -34,6 +37,10 @@ def test_dashboard_private_bind_and_readonly_http_routes(tmp_path):
                 assert response.headers["Cache-Control"] == "no-store"
             with urlopen(origin, timeout=3) as response:
                 assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+                assert "script-src 'sha256-" in response.headers["Content-Security-Policy"]
+                assert (
+                    "script-src 'unsafe-inline'" not in response.headers["Content-Security-Policy"]
+                )
                 assert b"/api/status" in response.read()
             for path in ("/env.sh", "/paper/%2e%2e/env.sh", "/api/stop"):
                 with pytest.raises(HTTPError) as error:
@@ -100,3 +107,80 @@ def test_dashboard_report_timeout_is_visible_and_does_not_hide_live_mission(tmp_
     assert state.data["report"] == {}
     assert state.data["gpu"] == {}
     assert len(state.data["errors"]) == 2
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "<script>alert(1)</script>",
+        '<div onclick="alert(1)">x</div>',
+        '<iframe src="http://192.168.0.1"></iframe>',
+        '<style>@import "https://example.com/leak";</style>',
+        "<style>body{background:u/**/rl(https://example.com)}</style>",
+        '<meta http-equiv="refresh" content="0;url=https://example.com">',
+        '<a href="https://example.com">outside</a>',
+    ],
+)
+def test_master_layout_refuses_active_content_and_external_resources(addition):
+    content = dashboard.BASE_TEMPLATE.replace("</html>", addition + "</html>")
+    with pytest.raises(ValueError):
+        dashboard.validate_template(content)
+
+
+def test_master_layout_preserves_data_components_and_fixed_renderer():
+    content = dashboard.BASE_TEMPLATE.replace("background:#101721", "background:#172b35")
+    identity = dashboard.validate_template(content)
+    page = dashboard.render_template(content, identity)
+    assert "background:#172b35" in page
+    assert page.count("<script>") == 1
+    assert f"const layoutVersion='{identity}'" in page
+    assert "setInterval(refresh,5000)" in page
+    with pytest.raises(ValueError, match="component IDs"):
+        dashboard.validate_template(content.replace('id="cards"', 'id="other"'))
+
+
+def test_master_invalid_edit_keeps_previous_layout_and_survives_restart(tmp_path, monkeypatch):
+    state = dashboard.DashboardState(tmp_path, lambda root: {})
+    changed = dashboard.BASE_TEMPLATE.replace("V100 - postęp misji", "Mój pulpit V100")
+    monkeypatch.setattr(dashboard, "guest_layout", lambda root: changed)
+    state.sync_layout()
+    accepted = state.page
+    identity = state.layout["active_sha256"]
+    assert "Mój pulpit V100" in accepted
+    monkeypatch.setattr(dashboard, "guest_layout", lambda root: "<script>bad()</script>")
+    state.sync_layout()
+    assert state.page == accepted
+    assert state.layout["active_sha256"] == identity
+    assert state.layout["error"]
+    restarted = dashboard.DashboardState(tmp_path, lambda root: {})
+    assert restarted.page == accepted
+    assert len(list((tmp_path / "research/dashboard/layouts").glob("*.html"))) == 2
+
+
+def test_master_oversized_layout_is_not_published():
+    with pytest.raises(ValueError, match="UTF-8 bytes"):
+        dashboard.validate_template(dashboard.BASE_TEMPLATE + (" " * 262144))
+
+
+def test_guest_layout_seed_preserves_master_edits_and_bounds_transfer(tmp_path, monkeypatch):
+    from rlm.v100 import desktop
+
+    path = tmp_path / "guest/dashboard/index.html"
+    monkeypatch.setattr(dashboard, "GUEST_TEMPLATE", str(path))
+
+    def guest_run(root, script, **kwargs):
+        assert len(script) <= 16000
+        assert kwargs == {"seconds": 8, "output_limit": 360000}
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exec(script.split("\n", 1)[1].rsplit("V100_LAYOUT", 1)[0], {})
+        return {"exit_code": 0, "stdout": output.getvalue(), "stderr": ""}
+
+    monkeypatch.setattr(desktop, "run", guest_run)
+    assert dashboard.guest_layout(tmp_path) == dashboard.BASE_TEMPLATE
+    changed = dashboard.BASE_TEMPLATE.replace("V100 - postęp misji", "Nowy wygląd")
+    path.write_text(changed)
+    assert dashboard.guest_layout(tmp_path) == changed
+    path.write_bytes(b"x" * 262145)
+    with pytest.raises(ValueError, match="256 KiB"):
+        dashboard.guest_layout(tmp_path)
