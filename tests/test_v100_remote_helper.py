@@ -834,3 +834,40 @@ def test_remote_transport_rejects_redirect_and_ignores_proxy(monkeypatch):
         client().remote_request("/api/tags")
     with pytest.raises(ValueError, match="management"):
         client().remote_request("/api/pull", {"model": remote_helper.MODEL})
+
+
+def test_chat_deadline_expires_before_any_http_request(monkeypatch):
+    instance = LlamaCppClient(timeout=600)
+    instance.request_deadline = 10
+    monkeypatch.setattr(remote_helper.time, "monotonic", lambda: 11)
+    with pytest.raises(requests.Timeout, match="total time budget"):
+        instance.http_request("/props")
+
+
+def test_chat_deadline_bounds_timeout_and_helper_cooldown(transport, tmp_path, monkeypatch):
+    instance = client(activity_root=str(tmp_path))
+    clock = {"now": 0.0}
+    monkeypatch.setattr(remote_helper.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        remote_helper.time, "sleep", lambda seconds: clock.update(now=clock["now"] + seconds)
+    )
+    with instance.workload_slot() as quota:
+        instance.reserve_helper_idle(quota, 600)
+    instance.request_deadline = 3
+    assert instance.remaining_timeout() == min(instance.timeout, 3)
+    with pytest.raises(requests.Timeout, match="total time budget"):
+        with instance.workload_slot():
+            pytest.fail("Cooldown outlived the chat deadline")
+    assert clock["now"] == 3
+    assert not transport[0]
+
+
+def test_chat_does_not_inherit_research_thinking_budget(tmp_path):
+    from rlm.v100.research_policy import apply, choose
+
+    choose(tmp_path, "master", True, 8192, 512)
+    instance = LlamaCppClient(sampling_args={"max_tokens": 2048}, enable_thinking=False)
+    instance.activity_actor = "chat"
+    actual = apply(instance, tmp_path)
+    assert actual.enable_thinking is False
+    assert actual.sampling_args["max_tokens"] == 2048

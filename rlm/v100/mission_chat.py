@@ -6,6 +6,7 @@ User directives steer R&D. Only the local user's explicit natural-language reque
 
 import copy
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -60,6 +61,15 @@ def inspect(root: Path, identity: str) -> dict:
     result = dict(row)
     if result["response"]:
         result["response"] = json.loads(result["response"])
+    active_path = root / "research/state/chat-active.json"
+    if active_path.exists():
+        active = json.loads(active_path.read_text())
+        if active.get("id") == identity and result["state"] == "queued":
+            from rlm.v100.mission import status
+
+            mission = status(root)
+            if mission["running"] and mission.get("pid") == active.get("pid"):
+                result["processing"] = active
     return result
 
 
@@ -316,6 +326,12 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             client.enable_thinking = False
             client.activity_actor = "chat-delegate"
             delegated = True
+    client.request_deadline = request.get("deadline", time.monotonic() + 180)
+    client.timeout = min(client.timeout, 60)
+    client.enable_thinking = False
+    client.sampling_args = dict(client.sampling_args)
+    client.sampling_args["max_tokens"] = min(2048, client.sampling_args.get("max_tokens", 2048))
+    client.activity_context = {**client.activity_context, "chat_request_id": request.get("id")}
     with connect(root) as db:
         history = db.execute(
             "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 3"
@@ -440,6 +456,17 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
         if row is None:
             continue
         request = dict(row)
+        request["deadline"] = time.monotonic() + 180
+        atomic_json(
+            root / "research/state/chat-active.json",
+            {
+                "id": request["id"],
+                "pid": os.getpid(),
+                "started": time.time(),
+                "time_budget_seconds": 180,
+                "phase": "processing",
+            },
+        )
         try:
             response = (
                 respond(root, directory, request, accepted_cpu)
@@ -448,17 +475,23 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
             )
             with connect(root) as db:
                 db.execute(
-                    "UPDATE requests SET state='completed',response=?,error=NULL,updated=? WHERE id=?",
+                    "UPDATE requests SET state='completed',response=?,error=NULL,updated=? WHERE id=? AND state='queued'",
                     (json.dumps(response, ensure_ascii=False), time.time(), request["id"]),
                 )
             ActivityLog(root, "controller", "chat").write(
                 "decisions", "user-command-completed", {"id": request["id"], **response}
             )
         except (requests.ConnectionError, requests.Timeout) as error:
+            expired = time.monotonic() >= request["deadline"] or isinstance(error, requests.Timeout)
             with connect(root) as db:
                 db.execute(
-                    "UPDATE requests SET attempts=attempts+1,error=?,updated=? WHERE id=?",
-                    (str(error)[:300], time.time(), request["id"]),
+                    "UPDATE requests SET state=?,attempts=attempts+1,error=?,updated=? WHERE id=? AND state='queued'",
+                    (
+                        "failed" if expired else "queued",
+                        str(error)[:300],
+                        time.time(),
+                        request["id"],
+                    ),
                 )
         except Exception as error:
             with connect(root) as db:
@@ -469,6 +502,8 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
             ActivityLog(root, "controller", "chat").write(
                 "errors", "user-command-failed", {"id": request["id"], "error": str(error)[:500]}
             )
+        finally:
+            atomic_json(root / "research/state/chat-active.json", {"phase": "idle"})
 
 
 @contextmanager

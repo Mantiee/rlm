@@ -114,14 +114,25 @@ class LlamaCppClient(BaseLM):
         )
         return result
 
+    def remaining_timeout(self) -> float:
+        deadline = getattr(self, "request_deadline", None)
+        if deadline is None:
+            return self.timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise requests.Timeout("Chat request exceeded its total time budget")
+        return min(self.timeout, remaining)
+
     def http_request(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         # No environment proxy routing for local model traffic.
         with requests.Session() as session:
             session.trust_env = False
             response = (
-                session.get(self.base_url + endpoint, timeout=self.timeout)
+                session.get(self.base_url + endpoint, timeout=self.remaining_timeout())
                 if data is None
-                else session.post(self.base_url + endpoint, json=data, timeout=self.timeout)
+                else session.post(
+                    self.base_url + endpoint, json=data, timeout=self.remaining_timeout()
+                )
             )
             response.raise_for_status()
             return response.json()

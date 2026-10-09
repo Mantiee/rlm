@@ -50,6 +50,9 @@ def choose(root: Path, target: str, thinking: bool, max_tokens: int, batch_token
 
 def apply(client, root: Path):
     result = copy.copy(client)
+    if getattr(client, "activity_actor", "").startswith("chat"):
+        # Interactive latency limits must not inherit long research thinking/output budgets.
+        return result
     if getattr(client, "research_device", None) == "cpu":
         return result
     target = "helper" if hasattr(result, "helper_batch_tokens") else "master"

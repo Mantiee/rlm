@@ -180,7 +180,13 @@ class OllamaResearchClient(LlamaCppClient):
         if type(wait) is not bool:
             raise ValueError("Helper wait must be boolean")
         with ExitStack() as scope:
-            if not HELPER_WORKLOAD_LOCK.acquire(blocking=wait):
+            deadline_bound = getattr(self, "request_deadline", None)
+            acquired = (
+                HELPER_WORKLOAD_LOCK.acquire(timeout=self.remaining_timeout())
+                if wait and deadline_bound is not None
+                else HELPER_WORKLOAD_LOCK.acquire(blocking=wait)
+            )
+            if not acquired:
                 raise TimeoutError("Helper busy; optional work deferred")
             scope.callback(HELPER_WORKLOAD_LOCK.release)
             path = None
@@ -194,7 +200,18 @@ class OllamaResearchClient(LlamaCppClient):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 lease = scope.enter_context(path.with_suffix(".lock").open("a"))
                 try:
-                    fcntl.flock(lease, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+                    while True:
+                        try:
+                            fcntl.flock(
+                                lease,
+                                fcntl.LOCK_EX
+                                | (fcntl.LOCK_NB if not wait or deadline_bound else 0),
+                            )
+                            break
+                        except BlockingIOError:
+                            if not wait:
+                                raise
+                            time.sleep(min(0.1, self.remaining_timeout()))
                 except BlockingIOError as error:
                     raise TimeoutError("Helper lease busy; optional work deferred") from error
                 state = json.loads(path.read_text()) if path.exists() else {}
@@ -213,6 +230,7 @@ class OllamaResearchClient(LlamaCppClient):
             if not wait and started < deadline:
                 raise TimeoutError("Helper cooling down; optional work deferred")
             while time.monotonic() < deadline:
+                self.remaining_timeout()
                 time.sleep(max(0, min(1, deadline - time.monotonic())))
             quota = {
                 "path": path,
@@ -255,7 +273,7 @@ class OllamaResearchClient(LlamaCppClient):
             arguments = {} if data is None else {"json": data}
             with method(
                 self.base_url + endpoint,
-                timeout=(5, self.timeout),
+                timeout=(min(5, self.remaining_timeout()), self.remaining_timeout()),
                 allow_redirects=False,
                 stream=True,
                 **arguments,

@@ -565,3 +565,26 @@ def test_crossbreed_promotes_only_after_independent_strict_improvement(
     )
     assert verdict["passed"] is improves
     assert (selected is source) is not improves
+
+
+def test_chat_timeout_is_terminal_and_clears_processing_marker(tmp_path, monkeypatch):
+    import requests
+
+    from rlm.v100 import mission_chat
+
+    identity = mission_chat.submit(tmp_path, "Edit the dashboard")
+    stop = threading.Event()
+
+    def reply(root, directory, request):
+        active = json.loads((root / "research/state/chat-active.json").read_text())
+        assert active["id"] == identity and active["phase"] == "processing"
+        stop.set()
+        raise requests.Timeout("Read timed out")
+
+    monkeypatch.setattr(mission_chat, "respond", reply)
+    mission_chat.service(tmp_path, tmp_path, stop)
+    actual = mission_chat.inspect(tmp_path, identity)
+    assert actual["state"] == "failed" and actual["attempts"] == 1
+    assert json.loads((tmp_path / "research/state/chat-active.json").read_text()) == {
+        "phase": "idle"
+    }

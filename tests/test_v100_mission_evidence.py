@@ -147,7 +147,13 @@ def test_ordinary_chat_gets_host_evidence_before_model_can_guess(tmp_path, monke
     monkeypatch.setattr(
         mission_chat, "load_profile", lambda *args: {"runtime": {}, "server": {"model": str(model)}}
     )
-    client = SimpleNamespace(request=lambda *args: {"model_path": str(model)}, model_name="v100")
+    client = SimpleNamespace(
+        request=lambda *args: {"model_path": str(model)},
+        model_name="v100",
+        timeout=120,
+        sampling_args={"max_tokens": 2048},
+        activity_context={},
+    )
     monkeypatch.setattr(competition, "helper_client", lambda *args: client)
     seen = []
 

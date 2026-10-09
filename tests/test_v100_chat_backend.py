@@ -113,6 +113,9 @@ def test_wrong_cpu_endpoint_is_not_reused(tmp_path, monkeypatch):
 
 def test_chat_selects_same_accepted_master_during_gpu_training(tmp_path, monkeypatch):
     accepted, cpu, _ = admitted(tmp_path, monkeypatch)
+    cpu.timeout = 600
+    cpu.sampling_args = {"max_tokens": 1024}
+    cpu.activity_context = {}
     atomic_json(tmp_path / "serving-active.json", accepted)
     monkeypatch.setattr(
         mission,
