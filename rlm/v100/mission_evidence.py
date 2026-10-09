@@ -81,7 +81,20 @@ def collect(root: Path) -> dict:
                     != counters["optimizer_updates"] + counters["amp_skipped_steps"]
                 ):
                     raise ValueError("Inconsistent optimizer counters")
-                result["training_runs"].append({"path": str(path), **counters})
+                evidence = {"path": str(path), **counters}
+                retention = path.parent / "retention.json"
+                if retention.exists():
+                    record = read_record(retention)
+                    evidence["retention"] = {
+                        "path": str(retention),
+                        "configuration": record.get("configuration"),
+                        "fisher_samples": record.get("fisher_samples"),
+                        "scope": "Configured reference; not proof of retention or promotion",
+                    }
+                growth = path.parent / "capacity-growth.json"
+                if growth.exists():
+                    evidence["capacity_growth"] = {"path": str(growth), **read_record(growth)}
+                result["training_runs"].append(evidence)
             except (ValueError, OSError) as error:
                 result["errors"].append({"path": str(path), "detail": str(error)[:300]})
         if result["training_runs"]:

@@ -145,6 +145,7 @@ def prepare(
 
         stage("private-desktop", lambda: prepare_desktop(root))
     resources = profile.setdefault("resources", {})
+    resources["retention_experiments"] = True
     if benchmarks and current(root) and resources.get("public_baseline"):
         from rlm.v100.protection import file_hash
 

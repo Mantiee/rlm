@@ -95,7 +95,7 @@ def parameter_schema(profile: dict) -> dict:
         lengths = [n for n in lengths if n <= budget["max_length"]]
         if not rank or not lengths:
             raise ValueError("Parent adapter exceeds measured training budget; recalibrate")
-    return {
+    schema = {
         "learning_rate": {
             "type": "number",
             "minimum": 0.000001,
@@ -125,6 +125,25 @@ def parameter_schema(profile: dict) -> dict:
             "enum": [0.01, 0.05, 0.1, 0.2, 0.5, 1.0],
         },
     }
+    if profile.get("resources", {}).get("retention_experiments"):
+        old_rank = rank[0] if profile["training"]["init_adapter"] else None
+        max_rank = budget["max_rank"] if budget else 64
+        schema.update(
+            retention_mode={
+                "type": "integer",
+                "description": "0=replay+KL only; 1=L2 anchor; 2=empirical diagonal EWC; 3=L2+experimental delta-A orthogonality; 4=EWC+delta-A orthogonality; 5=A-GEM replay gradient projection (first-order, AdamW is not a no-forgetting guarantee). Historical modes require prior verified TRAINING data. Compare time, new learning and retention, not training loss alone.",
+                "enum": [0, 1]
+                + ([3] if old_rank else [])
+                + ([2, 4, 5] if profile["training"].get("retention_has_history") else []),
+            },
+            retention_strength={"type": "number", "enum": [0.001, 0.01, 0.1, 1.0]},
+            retention_rank_growth={
+                "type": "integer",
+                "description": "1=keep rank; 2=double accepted LoRA rank with zero new B columns and preserved alpha/r. More memory/time; candidate only and all original quality gates remain mandatory.",
+                "enum": [1] + ([2] if old_rank and old_rank * 2 <= max_rank else []),
+            },
+        )
+    return schema
 
 
 def validate_parameters(values: dict, schema: dict) -> None:
@@ -383,6 +402,10 @@ def plan_duel(
                 branch_profile["training"].update(
                     init_adapter=parent["init_adapter"], teacher_adapter=parent["teacher_adapter"]
                 )
+            historical = [row for row in train if record_id(row) in mandatory]
+            branch_profile["training"]["retention_has_history"] = bool(
+                historical and branch_profile["training"]["init_adapter"]
+            )
             decision = choose_experiment(client, branch, catalog, branch_profile, shared.recent())
             selected = set(decision["selected_ids"]) | mandatory
             branch_path = output / branch
@@ -397,6 +420,9 @@ def plan_duel(
             chosen = copy.deepcopy(branch_profile)
             chosen["runtime"]["activity_branch"] = branch
             chosen["training"].update(decision["parameters"])
+            chosen["training"]["retention_reference_groups"] = sorted(
+                {row["group"] for row in historical}
+            )
             chosen["training"].update(
                 output=str(branch_path / "training"),
                 microbatch=1,

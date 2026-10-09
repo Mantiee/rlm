@@ -72,6 +72,9 @@ def calibrate(root: Path, path: Path, pool: Path) -> Path:
         require_idle_gpu()
         pilot = copy.deepcopy(source)
         pilot["training"].update(
+            retention_mode=0,
+            retention_rank_growth=1,
+            retention_reference_groups=[],
             precision=precision,
             output=str(folder / precision),
             max_steps=25,

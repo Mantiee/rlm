@@ -276,3 +276,18 @@ argument schema. It can also decline tools with a real concise answer. Task scop
 argument validation, token limits and the original input remain enforced.
 Oversized tool results are retained in SHA-256-addressed files and activity traces;
 model-visible previews explicitly mark truncation and do not certify missing facts.
+# Retention experiments v100.40
+
+`RETENTION_RESEARCH.md` distinguishes existing replay/KL/fresh regression gates
+from new bounded LoRA L2, empirical diagonal Fisher EWC, experimental delta-A
+orthogonality, A-GEM projection and exact-initial-delta rank expansion. Model
+planning can compare them; historical methods require previous verified training
+references, never audit labels. Anchors/Fisher are pinned across resume, and
+retention/capacity artifacts appear in current-run training evidence. Existing
+ancestor/public/one-use audit gates and original accepted checkpoints remain.
+
+`capacity_growth.py` implements small isolated frozen residual-column and appended
+embedding prototypes. Their old routes/IDs stay unchanged in tensor tests; this
+does not implement live Gemma layer/vocabulary surgery or prove retention on
+unseen tasks. Full NF4/FP16 training and grown-adapter native export require V100
+acceptance. The dedicated upgrade preserves setup and skips calibration sweeps.

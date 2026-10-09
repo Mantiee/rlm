@@ -12,6 +12,13 @@ from rlm.v100.breeding import base_signature, parent_exports, record_adapter, ve
 from rlm.v100.checkpointing import best_model_arguments, record_best
 from rlm.v100.common import atomic_json
 from rlm.v100.protection import assert_candidate_output, file_hash, fixed_split
+from rlm.v100.retention import (
+    AdapterRetention,
+    artifact_hashes,
+    expand_adapter,
+    options,
+    select_reference,
+)
 from rlm.v100.training_health import TrainingHealth, finite_metrics, initialize_amp
 
 
@@ -168,6 +175,9 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     if free < 28 * 2**30:
         raise ValueError("Stop inference server before training: need at least 28 GiB free VRAM")
     settings = profile["training"]
+    retention_options = options(settings)
+    if retention_options["mode"] in (2, 3, 4, 5) and not settings.get("init_adapter"):
+        raise ValueError("Historical retention modes require a pinned predecessor adapter")
     best_arguments = best_model_arguments(settings)
     seed = settings.get("seed", 42)
     if type(seed) is not int or not 0 <= seed < 2**32:
@@ -250,9 +260,11 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
                 "paper_outcomes.py",
                 "backtest_learning.py",
                 "backtesting.py",
+                "retention.py",
             )
         },
         "train_records": len(train),
+        "retention_artifacts": artifact_hashes(output),
         "eval_records": len(evaluation),
         "split_roles": sorted(
             {
@@ -317,8 +329,21 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     if settings["precision"] == "nf4":
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
     model.config.use_cache = False
+    initial_adapter = settings["init_adapter"]
+    if retention_options["growth"] > 1:
+        if not initial_adapter:
+            raise ValueError("Capacity growth requires an accepted predecessor adapter")
+        expanded = output / "expanded-initial"
+        if not resume:
+            growth_report = expand_adapter(
+                Path(initial_adapter), expanded, retention_options["growth"]
+            )
+            atomic_json(output / "capacity-growth.json", growth_report)
+        else:
+            verified_adapter(expanded)
+        initial_adapter = str(expanded)
     if settings["init_adapter"]:
-        model = PeftModel.from_pretrained(model, settings["init_adapter"], is_trainable=True)
+        model = PeftModel.from_pretrained(model, initial_adapter, is_trainable=True)
     else:
         model = get_peft_model(
             model,
@@ -355,8 +380,67 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
                 parameter.requires_grad_(False)
 
     health = TrainingHealth()
+    retention = None
+    reference_batches = []
+    if retention_options["mode"]:
+        retention = AdapterRetention(model, retention_options)
+        historical_groups = set(settings.get("retention_reference_groups", []))
+        reference = select_reference([row for row in train if row["group"] in historical_groups])
+        source_groups = [row["group"] for row in reference]
+        if retention_options["mode"] in (2, 4, 5):
+            if not settings["init_adapter"] or not reference:
+                raise ValueError(
+                    "EWC/projection needs a predecessor and historical TRAINING references"
+                )
+            reference_batches = [
+                {
+                    key: torch.tensor([value], device=next(model.parameters()).device)
+                    for key, value in encode_record(row, tokenizer, settings["max_length"]).items()
+                }
+                for row in reference
+            ]
+        if resume:
+            retention.restore(output, source_groups)
+        else:
+            if retention_options["mode"] in (2, 4):
+                print(
+                    json.dumps({"training_stage": "historical-fisher", "examples": len(reference)}),
+                    flush=True,
+                )
+                retention.estimate(model, reference_batches)
+            retention.save(output, source_groups)
+        journal.write(
+            "training",
+            "retention-reference",
+            {
+                "configuration": retention_options,
+                "fisher_samples": retention.samples,
+                "source_groups": source_groups,
+            },
+        )
+
+    if not resume:
+        manifest["retention_artifacts"] = artifact_hashes(output)
+        atomic_json(manifest_path, manifest)
 
     class Progress(TrainerCallback):
+        def on_pre_optimizer_step(self, args, state, control, **kwargs):
+            if retention is not None and retention_options["mode"] == 5:
+                # Trainer has unscaled and clipped gradients at this callback.
+                # Skip nonfinite AMP-overflow attempts; the numerical gate tracks them.
+                if all(
+                    p.grad is None or torch.isfinite(p.grad).all()
+                    for p in retention.parameters.values()
+                ):
+                    projected = retention.project(
+                        model, reference_batches[state.global_step % len(reference_batches)]
+                    )
+                    journal.write(
+                        "training",
+                        "replay-gradient-projection",
+                        {"step": state.global_step, **projected},
+                    )
+
         def on_step_end(self, args, state, control, **kwargs):
             health.step(state.global_step, trainer.accelerator.optimizer_step_was_skipped)
             atomic_json(output / "training_health.json", health.report())
@@ -452,6 +536,12 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
             result = super().compute_loss(
                 model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch
             )
+            if retention is not None and model.training:
+                penalty = retention.penalty()
+                if return_outputs:
+                    result = (result[0] + penalty, result[1])
+                else:
+                    result = result + penalty
             loss = result[0] if return_outputs else result
             if not torch.isfinite(loss.detach()).all().item():
                 journal.write("training", "nonfinite-loss", {"step": self.state.global_step})
@@ -476,7 +566,7 @@ def train_model(profile: dict, dataset_path: Path, resume: bool, root: Path | No
     print(json.dumps({"training_stage": "amp-configured", "initial_amp_scale": scale}), flush=True)
     # compute_loss uses each microbatch's mean loss, not a num_items_in_batch
     # denominator. Ask Trainer to apply gradient-accumulation scaling itself.
-    if strength or has_preferences:
+    if strength or has_preferences or retention is not None:
         trainer.model_accepts_loss_kwargs = False
     if not resume:
         print(json.dumps({"training_stage": "baseline-validation"}), flush=True)

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Update the existing mission setup only; do not rerun calibration/benchmarks.
+set -euo pipefail
+REV="${1:?Pass the pinned 40-character commit}"
+[[ "$REV" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid revision' >&2; exit 1; }
+source "$HOME/ai-v100/env.sh"
+PY="$AI_V100_ROOT/venvs/v100-continual/bin/python"
+export UV_HTTP_TIMEOUT=600 UV_HTTP_RETRIES=5
+export RETENTION_REV="$REV"
+
+"$PY" <<'PY'
+import os, subprocess, time
+from pathlib import Path
+from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.mission import status, stop
+
+root = Path(os.environ['AI_V100_ROOT'])
+for line in subprocess.check_output(['ps', '-eo', 'pid=,args='], text=True).splitlines():
+    if 'rlm.v100.cli' in line and any(' '+mode+' ' in line+' ' for mode in
+        ('train', 'mission-prepare', 'optimize-mtp', 'calibrate-training', 'test-mtp')):
+        raise RuntimeError('Exclusive experiment still runs; no files changed. '+line)
+record = status(root)
+source = Path(record['learning']['live_profile']) if record.get('learning', {}).get('live_profile') else (
+    Path(record['run']) / 'input-profile.json' if record.get('run') else None)
+if source is None or not source.exists():
+    import json
+    source = Path(json.loads((root / 'research/campaign/current.json').read_text())['profile'])
+profile = load_profile(source, root)
+folder = root / 'research/retention-setup' / str(time.time_ns())
+folder.mkdir(parents=True)
+atomic_json(folder / 'previous-profile.json', profile)
+profile.setdefault('resources', {})['retention_experiments'] = True
+atomic_json(folder / 'profile.json', profile)
+atomic_json(root / 'research/retention-setup/current.json', {'profile': str(folder / 'profile.json')})
+atomic_json(root / 'research/supervisor/pause.json', {'reason': 'operator retention upgrade'})
+if record['running']:
+    print(stop(root), flush=True)
+deadline = time.monotonic() + 180
+while status(root)['running']:
+    if time.monotonic() >= deadline:
+        raise RuntimeError('Mission still stopping; package not changed. Checkpoints retained.')
+    time.sleep(2)
+subprocess.run(['systemctl', '--user', 'stop', 'v100-mission.service'], check=False)
+print('Previous profile and checkpoints retained.', flush=True)
+PY
+
+uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
+  "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
+uv --no-config pip check --python "$PY"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10040.txt"
+
+"$PY" <<'PY'
+import json, os
+from pathlib import Path
+from rlm.v100.common import atomic_json
+from rlm.v100.self_code import prepare
+from rlm.v100.desktop import prepare as prepare_desktop
+from rlm.v100.supervisor import install
+
+root = Path(os.environ['AI_V100_ROOT'])
+prepare(root)
+if (root / 'research/desktop/manifest.json').exists():
+    prepare_desktop(root)
+path = Path(json.loads((root / 'research/retention-setup/current.json').read_text())['profile'])
+profile = json.loads(path.read_text())
+preferences_path = root / 'research/user-preferences.json'
+preferences = json.loads(preferences_path.read_text()) if preferences_path.exists() else {'directive': '', 'alerts': False}
+preferences['retention'] = {
+    'research': 'RETENTION_RESEARCH.md in the readonly own-source mount',
+    'experiments': 'Bounded replay/KL, L2, empirical diagonal Fisher EWC, delta-A orthogonality, A-GEM and standard LoRA rank growth are exposed to A/B planning. Historical modes require prior verified TRAINING references. Frozen-column/embedding growth primitives are tiny-model experiments, not serving Gemma modifications.',
+    'scope': 'Do not change the operator long-term goal. Prefer measured learning/retention/time trade-offs; never bypass ancestor, official or fresh audit gates.'
+}
+atomic_json(preferences_path, preferences)
+print(json.dumps(install(root, path), indent=2), flush=True)
+print('RETENTION EXPERIMENTS AVAILABLE. Existing setup preserved; no calibration sweep.', flush=True)
+PY
+"$AI_V100_ROOT/bin/v100-continual" mission-status
