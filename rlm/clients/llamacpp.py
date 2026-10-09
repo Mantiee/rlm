@@ -85,8 +85,28 @@ class LlamaCppClient(BaseLM):
             )
             raise
         message = result["choices"][0]["message"]
-        # Do not log request prompts or raw reasoning_content. Structured rationale in
-        # final content and observable tool choices are the reviewable decision record.
+        # Operator opt-in captures only reasoning returned by this local backend.
+        preferences_path = self.activity_root / "research/user-preferences.json"
+        capture_trace = (
+            preferences_path.exists()
+            and json.loads(preferences_path.read_text()).get("capture_local_model_trace") is True
+        )
+        trace = message.get("reasoning_content")
+        if capture_trace and isinstance(trace, str) and trace:
+            for index, offset in enumerate(range(0, len(trace), 4096)):
+                journal.write(
+                    "decisions",
+                    "local-model-reasoning",
+                    {
+                        "returned_trace": trace[offset : offset + 4096],
+                        "part": index,
+                        "model": self.model_name,
+                        "device": self.activity_context.get("device"),
+                        "returned_chars": len(trace),
+                        "unverified": True,
+                    },
+                    request_id=request_id,
+                )
         journal.write(
             "decisions",
             "model-output",

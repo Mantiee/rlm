@@ -25,7 +25,7 @@ def test_large_tool_result_is_explicitly_partial_and_full_evidence_is_preserved(
         research_tools.bounded_tool_result(tmp_path, result, 2048)
 
 
-@pytest.mark.parametrize("selection", ["small", "not-in-task", "answer"])
+@pytest.mark.parametrize("selection", ["small", "not-in-task", "answer", {"name": "small"}])
 def test_oversized_catalog_uses_small_selector_and_keeps_argument_validation(selection):
     generated = []
 

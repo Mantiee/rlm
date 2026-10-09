@@ -186,7 +186,11 @@ def json_tool_turn(
         selected = json_object(selection.get("content"), "Capability selection")
         if set(selected) == {"answer"} and isinstance(selected["answer"], str):
             return {"role": "assistant", "content": selected["answer"], "json_action": True}
-        if set(selected) != {"tool"} or selected["tool"] not in catalog:
+        if (
+            set(selected) != {"tool"}
+            or not isinstance(selected["tool"], str)
+            or selected["tool"] not in catalog
+        ):
             raise ValueError("Capability selection is outside its task scope") from None
         return json_tool_turn(
             client,

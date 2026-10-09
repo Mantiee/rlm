@@ -161,7 +161,7 @@ def test_trusted_live_renderer_runs_on_older_layout_without_actor_sections():
     program = r"""
 const nodes={};
 class Element {
- constructor(tag){this.tag=tag;this.children=[];this.style={};this.textContent=''}
+ constructor(tag){this.tag=tag;this.children=[];this.style={};this.textContent='';this.dataset={}}
  set id(value){this.identity=value;nodes[value]=this}
  get id(){return this.identity}
  append(...items){this.children.push(...items)}
@@ -169,7 +169,7 @@ class Element {
  replaceChildren(...items){this.children=items}
  setAttribute(k,v){this[k]=v}
 }
-const document={getElementById:id=>nodes[id],createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t),createTextNode:t=>t};
+const document={querySelectorAll:()=>[],getElementById:id=>nodes[id],createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t),createTextNode:t=>t};
 const location={reload(){throw Error('Unexpected reload')}};
 const setInterval=()=>{};
 const fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(sample)});
@@ -217,3 +217,66 @@ def test_capabilities_lists_only_the_current_request_tools(tmp_path):
     tools.allowed_tool_names = {"read_dashboard", "repair_dashboard"}
     names = {row["name"] for row in tools.execute("capabilities", {})["tools"]}
     assert names == tools.allowed_tool_names
+
+
+def test_token_metrics_survive_summary_and_do_not_expose_reasoning(tmp_path):
+    folder = tmp_path / "research/logs/activity/2026-10-09"
+    folder.mkdir(parents=True)
+    rows = [
+        {
+            "actor": "researcher",
+            "branch": "A",
+            "kind": "model-output",
+            "category": "decisions",
+            "payload": {"content": {"answer": "Public conclusion", "thinking": "private"}},
+        },
+        {
+            "actor": "researcher",
+            "branch": "A",
+            "kind": "inference-finished",
+            "time": "now",
+            "payload": {
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                    "reasoning": "private",
+                },
+                "seconds": 2,
+            },
+        },
+    ]
+    (folder / "timeline.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
+    events = live_status.recent_events(tmp_path)
+    agent = live_status.agent_views(events, [])[0]
+    assert agent["usage"] == {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+    assert agent["seconds"] == 2
+    assert "Public conclusion" in agent["declaration"]
+    assert "private" not in json.dumps(events)
+
+
+def test_operator_opt_in_records_returned_local_trace_and_preserves_public_output(
+    tmp_path, monkeypatch
+):
+    from rlm.clients.llamacpp import LlamaCppClient
+
+    root = tmp_path / "research"
+    root.mkdir()
+    (root / "user-preferences.json").write_text(json.dumps({"capture_local_model_trace": True}))
+    client = LlamaCppClient(model_name="owned-model", activity_root=tmp_path)
+    trace = "Test a hypothesis. " * 500
+    response = {
+        "choices": [
+            {
+                "message": {"content": "Public answer", "reasoning_content": trace},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {},
+    }
+    monkeypatch.setattr(client, "http_request", lambda endpoint, data: response)
+    assert client.request("/v1/chat/completions", {}) == response
+    events = live_status.recent_events(tmp_path)
+    agent = live_status.agent_views(events, [])[0]
+    assert agent["returned_trace"] == trace
+    assert "Public answer" in agent["declaration"]

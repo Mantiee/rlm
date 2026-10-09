@@ -1,4 +1,4 @@
-"""Local, readable execution journals. Explicit decisions, never private reasoning."""
+"""Local execution journals with explicit decisions and operator-selected local model traces."""
 
 import fcntl
 import json

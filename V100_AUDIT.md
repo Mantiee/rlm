@@ -478,3 +478,32 @@ receipt. Host styling improves panel separation and background contrast. A concr
 implementation response consisting solely of plans without tool receipts is rejected
 instead of saving the plans as progress. Arbitrary future tasks still depend on the
 available scoped tools; this does not certify universal autonomous completion.
+
+
+## v49: readable operation view and operator-selected local reasoning
+
+The host renderer places readable long/mid/short plans first, groups hardware
+resources separately, renders agents in two broad columns with expandable tasks,
+outputs, results and evidence, and expands action timeline rows to show their
+recorded arguments, output, failures, counts and timings. Latest response token
+counts retain their observation time; missing values remain unknown. The timeline
+is explicitly limited to the latest 200 events from bounded daily log tails.
+
+The operator explicitly requested local model chain-of-thought display. Upgrade
+sets capture_local_model_trace=true. LlamaCppClient records only reasoning_content
+actually returned by owned inference backends, in bounded journal chunks, using
+existing secret redaction. The viewer labels these as unverified local output.
+Defaults without this preference still omit reasoning; public outputs are separate.
+No thinking mode or token budget is enabled automatically. This is post-response
+capture, not token streaming; older omitted traces cannot be reconstructed. Devices
+and scheduling infrastructure have telemetry rather than model reasoning.
+
+The compact tool selector now validates that a selected tool name is a string
+before dictionary membership, so a model returning a dict is rejected with a
+schema error rather than an unhashable-type exception. Regression covers it.
+
+Validation: 990 passed, 65 skipped, one resource-dependent owned-worker test
+deselected; one existing PEFT warning. Node runtime exercises the trusted renderer
+on older guest layouts. Browser visual QA could not run because the local browser
+binary is unavailable. Ruff, shell syntax and diff checks passed. Hardware execution
+and LAN publication of v49 await operator installation.

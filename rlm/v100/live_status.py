@@ -7,8 +7,10 @@ from pathlib import Path
 import requests
 
 
-def public_summary(value: dict) -> str:
+def public_summary(value: dict | str) -> str:
     """Select public conclusions only; never expose reasoning/thinking token fields."""
+    if isinstance(value, str):
+        return value[:8000]
     if not isinstance(value, dict):
         return ""
     parts = []
@@ -24,16 +26,16 @@ def public_summary(value: dict) -> str:
         "report",
     ):
         if isinstance(value.get(key), (str, int, float)):
-            parts.append(f"{key}: {str(value[key])[:360]}")
-    return " | ".join(parts)[:800]
+            parts.append(f"{key}: {str(value[key])[:2000]}")
+    return " | ".join(parts)[:8000]
 
 
-def recent_events(root: Path, limit: int = 40) -> list[dict]:
+def recent_events(root: Path, limit: int = 200) -> list[dict]:
     paths = sorted((root / "research/logs/activity").glob("*/timeline.jsonl"))[-2:]
     events = []
     for path in paths:
         with path.open("rb") as stream:
-            offset = max(0, path.stat().st_size - 128 * 1024)
+            offset = max(0, path.stat().st_size - 1024 * 1024)
             stream.seek(offset)
             if offset:
                 stream.readline()
@@ -59,6 +61,20 @@ def recent_events(root: Path, limit: int = 40) -> list[dict]:
                         or public_summary(payload.get("result", {}))
                         or public_summary(payload),
                         "category": row.get("category"),
+                        "request_id": row.get("context", {}).get("request_id"),
+                        "usage": {
+                            key: value
+                            for key, value in (payload.get("usage") or {}).items()
+                            if key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                            and isinstance(value, int)
+                            and not isinstance(value, bool)
+                            and value >= 0
+                        },
+                        "seconds": payload.get("seconds"),
+                        "returned_trace": payload.get("returned_trace")
+                        if row.get("kind") == "local-model-reasoning"
+                        else None,
+                        "trace_part": payload.get("part"),
                         "source": str(path),
                         "device": payload.get("device"),
                         "model": payload.get("model"),
@@ -93,6 +109,16 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
         if event.get("device"):
             view["device"] = event["device"]
             view["model"] = event.get("model")
+        if event.get("returned_trace"):
+            if event.get("trace_part") == 0:
+                view["returned_trace"] = ""
+            view["returned_trace"] = view.get("returned_trace", "") + event["returned_trace"]
+            view["trace_request"] = event.get("request_id")
+        if event.get("usage"):
+            view["usage"] = event["usage"]
+            view["usage_at"] = event.get("time")
+        if event.get("seconds") is not None:
+            view["seconds"] = event["seconds"]
         if event.get("category") == "decisions" and event.get("summary"):
             view["declaration"] = event["summary"]
         elif event.get("summary"):
