@@ -7,6 +7,27 @@ from pathlib import Path
 import requests
 
 
+def public_summary(value: dict) -> str:
+    """Select public conclusions only; never expose reasoning/thinking token fields."""
+    if not isinstance(value, dict):
+        return ""
+    parts = []
+    for key in (
+        "answer",
+        "hypothesis",
+        "rationale",
+        "next_test",
+        "confidence",
+        "status",
+        "error",
+        "detail",
+        "report",
+    ):
+        if isinstance(value.get(key), (str, int, float)):
+            parts.append(f"{key}: {str(value[key])[:360]}")
+    return " | ".join(parts)[:800]
+
+
 def recent_events(root: Path, limit: int = 40) -> list[dict]:
     paths = sorted((root / "research/logs/activity").glob("*/timeline.jsonl"))[-2:]
     events = []
@@ -34,9 +55,62 @@ def recent_events(root: Path, limit: int = 40) -> list[dict]:
                         "kind": row.get("kind"),
                         "tool": payload.get("tool"),
                         "detail": str(payload.get("error", payload.get("status", "")))[:250],
+                        "summary": public_summary(payload.get("content", {}))
+                        or public_summary(payload.get("result", {}))
+                        or public_summary(payload),
+                        "category": row.get("category"),
+                        "source": str(path),
+                        "device": payload.get("device"),
+                        "model": payload.get("model"),
+                        "task": " | ".join(
+                            f"{key}: {str(payload.get('arguments', {}).get(key))[:200]}"
+                            for key in ("query", "url", "brief", "kind", "action")
+                            if isinstance(payload.get("arguments"), dict)
+                            and key in payload["arguments"]
+                        ),
                     }
                 )
     return events[-limit:]
+
+
+def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
+    """Observed agent activity plus labelled declarations, not inferred intentions."""
+    views = {}
+    for event in events:
+        key = (event.get("branch"), event.get("actor"))
+        view = views.setdefault(
+            key,
+            {"label": " / ".join(str(v) for v in key if v), "declaration": "", "result": ""},
+        )
+        view.update(
+            updated=event.get("time"),
+            state=event.get("kind"),
+            tool=event.get("tool"),
+            source=event.get("source"),
+        )
+        if event.get("task"):
+            view["task"] = event["task"]
+        if event.get("device"):
+            view["device"] = event["device"]
+            view["model"] = event.get("model")
+        if event.get("category") == "decisions" and event.get("summary"):
+            view["declaration"] = event["summary"]
+        elif event.get("summary"):
+            view["result"] = event["summary"]
+    result = list(views.values())[-12:]
+    for job in jobs[:16]:
+        result.append(
+            {
+                "label": f"{job['branch']} / {job['kind']} / {job['id']}",
+                "state": job["state"],
+                "task": job.get("assignment", ""),
+                "updated": job.get("updated"),
+                "result": public_summary(job.get("result") or {}),
+                "declaration": "",
+                "source": "research/state/drones.sqlite3",
+            }
+        )
+    return result
 
 
 def current_chat(root: Path, mission: dict) -> dict:
@@ -127,7 +201,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         "label": "RTX helper",
         "state": "unknown",
         "jobs": [j for j in active if j["kind"] in ("researcher", "critic", "benchmark")],
-        "detail": "Utilization and power unknown; request pacing is not a hard GPU cap",
+        "detail": "Jobs eligible for helper; actual inference device is recorded in agent events. Utilization and power unknown; request pacing is not a hard GPU cap",
         "stale": True,
     }
     from rlm.v100.common import load_profile
@@ -172,10 +246,12 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
             if remaining and not rtx["stale"]:
                 rtx["state"] = "cooldown"
     actors.append(rtx)
+    events = recent_events(root)
     return {
         "observed_at": now,
         "actors": actors,
         "goals": read(root),
-        "events": recent_events(root),
+        "events": events,
+        "agents": agent_views(events, jobs),
         "chat": chat,
     }

@@ -173,11 +173,11 @@ const document={getElementById:id=>nodes[id],createElement:t=>new Element(t),cre
 const location={reload(){throw Error('Unexpected reload')}};
 const setInterval=()=>{};
 const fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(sample)});
-const sample={collected_at:1,mission:{running:true,state:{phase:'research'}},report:{},live:{actors:[{label:'Windows CPU',state:'idle',workers:[{name:'windows-cpu',phase:'idle',reason:'ready'}]},{label:'V100',state:'measured',metrics:{utilization:91}}],goals:{long:{text:'Operator goal'}},events:[{actor:'master',kind:'inference-start'}]}};
+const sample={collected_at:1,mission:{running:true,state:{phase:'research'}},report:{},live:{agents:[{label:'A / researcher',state:'tool-start',task:'Fetch public source',declaration:'<script>Unverified hypothesis</script>',result:'status: ready',source:'timeline.jsonl'}],actors:[{label:'Windows CPU',state:'idle',workers:[{name:'windows-cpu',phase:'idle',reason:'ready'}]},{label:'V100',state:'measured',metrics:{utilization:91}}],goals:{long:{text:'Operator goal'}},events:[{actor:'master',kind:'inference-start'}]}};
 """
     for identity in dashboard_layout.REQUIRED_IDS:
         program += f"new Element('div').id={json.dumps(identity)};\n"
     program += dashboard_layout.APP_SCRIPT
-    program += "\nrender(sample);if(nodes.actors.children.length!==2||!nodes.goals.textContent.includes('Operator goal')||nodes.events.children.length!==1)throw Error('Live renderer failed');\n"
+    program += "\nrender(sample);if(nodes.actors.children.length!==2||!nodes.goals.textContent.includes('Operator goal')||nodes.events.children.length!==1||nodes['agent-grid'].children.length!==1)throw Error('Live renderer failed');\n"
     result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
     assert result.returncode == 0, result.stderr

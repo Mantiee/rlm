@@ -44,6 +44,12 @@ def submit(root: Path, message: str) -> str:
     identity = uuid.uuid4().hex
     with connect(root) as db:
         db.execute("BEGIN IMMEDIATE")
+        pending = db.execute(
+            "SELECT id FROM requests WHERE state='queued' AND message=? ORDER BY rowid LIMIT 1",
+            (message,),
+        ).fetchone()
+        if pending:
+            return pending["id"]
         if db.execute("SELECT count(*) FROM requests WHERE state='queued'").fetchone()[0] >= 32:
             raise ValueError("Chat queue has 32 pending requests; let them complete first")
         db.execute(
@@ -56,9 +62,18 @@ def submit(root: Path, message: str) -> str:
 def inspect(root: Path, identity: str) -> dict:
     with connect(root) as db:
         row = db.execute("SELECT * FROM requests WHERE id=?", (identity,)).fetchone()
+        position = (
+            db.execute(
+                "SELECT count(*) FROM requests WHERE state='queued' AND rowid<=(SELECT rowid FROM requests WHERE id=?)",
+                (identity,),
+            ).fetchone()[0]
+            if row is not None and row["state"] == "queued"
+            else None
+        )
     if row is None:
         raise ValueError("Unknown chat request")
     result = dict(row)
+    result["queue_position"] = position
     if result["response"]:
         result["response"] = json.loads(result["response"])
     active_path = root / "research/state/chat-active.json"
@@ -583,21 +598,36 @@ def alongside(root: Path, directory: Path):
             accepted_cpu.close()
 
 
-def wait_reply(root: Path, identity: str, timeout: float = 120) -> dict:
+def wait_reply(root: Path, identity: str, timeout: float = 120, progress=None) -> dict:
     deadline = time.monotonic() + timeout
+    next_update = time.monotonic()
     while time.monotonic() < deadline:
         result = inspect(root, identity)
         if result["state"] != "queued":
             return result
+        if progress is not None and time.monotonic() >= next_update:
+            progress(result)
+            next_update = time.monotonic() + 15
         time.sleep(0.5)
     return inspect(root, identity)
 
 
+def waiting_label(result: dict) -> str:
+    active = result.get("processing")
+    if active:
+        elapsed = max(0, round(time.time() - active["started"]))
+        return f"Processing: {elapsed}s elapsed | budget {active.get('time_budget_seconds', '?')}s | request {result['id']}"
+    text = f"Queued: position {result.get('queue_position', '?')} | request {result['id']}"
+    if result.get("error"):
+        text += " | last recorded issue: " + result["error"]
+    return text
+
+
 def chat(root: Path, message: str | None = None) -> None:
-    print("Czat misji. /exit kończy tylko czat. Podczas treningu lub gry polecenie może czekać.")
+    print("\nV100 MASTER CHAT\n/exit closes chat only. /status reads mission status.\n")
     while True:
         try:
-            text = message if message is not None else input("Ty> ")
+            text = message if message is not None else input("\nYOU > ")
         except (EOFError, KeyboardInterrupt):
             break
         if text.strip() == "/exit":
@@ -609,8 +639,14 @@ def chat(root: Path, message: str | None = None) -> None:
                 break
             continue
         identity = submit(root, text)
-        print("Zapisano polecenie:", identity, flush=True)
-        result = wait_reply(root, identity)
+        print("\nREQUEST:", identity, flush=True)
+        try:
+            result = wait_reply(
+                root, identity, progress=lambda row: print(waiting_label(row), flush=True)
+            )
+        except KeyboardInterrupt:
+            print("\nChat closed. Request remains queued/processing; mission continues.")
+            break
         if result["state"] == "completed":
             who = result["response"].get("responder", {})
             label = who.get("model", "controller")
@@ -618,10 +654,18 @@ def chat(root: Path, message: str | None = None) -> None:
                 label += " - zastępca, V100 zajęty"
             elif who.get("accepted_master_on_cpu"):
                 label += " - zaakceptowany master na CPU"
-            print(f"{label}>", result["response"]["answer"])
-            print("Wykonane zmiany:", json.dumps(result["response"]["applied"], ensure_ascii=False))
+            print(f"\nMASTER [{label}]\n\n{result['response']['answer']}\n")
+            applied = result["response"]["applied"]
+            print(
+                "ACTION RECEIPTS:",
+                json.dumps(applied, ensure_ascii=False) if applied else "No control changes",
+            )
         else:
-            print(json.dumps({k: result[k] for k in ("id", "state", "error")}, ensure_ascii=False))
-            print("Odczyt: v100-continual chat-status", identity)
+            print(
+                waiting_label(result)
+                if result["state"] == "queued"
+                else f"FAILED: {result.get('error')}"
+            )
+            print("Read result: v100-continual chat-status", identity)
         if message is not None:
             break

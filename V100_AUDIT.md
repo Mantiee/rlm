@@ -401,3 +401,25 @@ history isolation, host receipts, rejection before desktop execution, archive/re
 recovery, preservation of later plans and refusal to repair a running mission.
 Ruff, formatting, shell syntax and diff whitespace checks passed. Hardware/LAN
 allocation and useful execution still require the operator's deployment receipts.
+
+## v100.46 observed agent activity and readable chat
+
+The trusted live renderer adds per-agent cards for observed state, assigned task,
+inference device/model, declared conclusion or next step, last tool result, recorded
+ time and evidence file. Declarations remain explicitly unverified; no private
+reasoning/thinking fields are selected. Missing declarations stay absent. The read
+budget remains two daily tails of 128 KiB, 40 events and 16 recent jobs. Hardware
+readiness is not attributed as agent execution. Host CSS improves old saved layouts
+without replacing operator/master guest HTML. The same validated guest editor remains
+available. Browsers already open during installation need a full page refresh.
+
+Terminal chat separates user, master and action receipts, displays queue position
+or active processing elapsed time every 15 seconds, and exits cleanly on Ctrl+C
+without cancelling mission work. Identical pending messages reuse their request ID.
+These UI changes do not raise helper pacing/resource caps or prove useful allocation.
+
+Validation: 972 tests passed, 65 skipped, 1 owned-worker integration deselected and
+one PEFT configuration warning. Tests execute the trusted renderer on an old layout,
+cover pending-request deduplication, queue/processing labels, clean interruption,
+source attribution and omission of private reasoning fields. Ruff, shell syntax
+and diff whitespace checks passed. No V100/Windows/LAN execution is certified here.

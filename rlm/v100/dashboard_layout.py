@@ -19,14 +19,15 @@ PAGE = r"""<!doctype html><html lang="pl"><meta charset="utf-8">
 <section><h2>Paper A/B</h2><pre id="paper"></pre><h3>Blokady</h3><pre id="blockers"></pre></section>
 <section><h2>Raporty HTML z wykresami i pliki wyników</h2><p class="muted">Raporty są zapisanymi migawkami, mają własny czas i zakres.</p><div id="reports"></div></section>
 <section><h2>Co teraz pracuje</h2><div id="actors" class="grid"></div><h3>Cele i plany</h3><pre id="goals"></pre><h3>Ostatnie zdarzenia</h3><div id="events"></div></section>
-<section><h2>Pomocnicy, GUI i benchmark oficjalny</h2><pre id="workers"></pre></section>
-<section><h2>Aktualny log kontrolera</h2><pre id="log"></pre></section>
+<details><summary>Pomocnicy, GUI i benchmark oficjalny - dane źródłowe</summary><pre id="workers"></pre></details>
+<details><summary>Aktualny log kontrolera</summary><pre id="log"></pre></details>
 <details><summary>Dowody treningu i ostatnie błędy</summary><pre id="evidence"></pre></details>
 <script>
 const $=id=>document.getElementById(id), fmt=x=>x===null||x===undefined?'brak potwierdzonych danych':String(x), pct=x=>typeof x==='number'&&Number.isFinite(x)?(x*100).toFixed(2)+'%':'brak danych';
 const layoutVersion='__LAYOUT_SHA__';
 function card(label,value){const node=document.createElement('div');node.className='card';const title=document.createElement('small');title.textContent=label;const strong=document.createElement('strong');strong.className='value';strong.textContent=fmt(value);node.append(title,strong);$('cards').append(node)}
 function workView(data){
+agentView(data);
 for(const id of ['actors','goals','events']){if(!$(id)){const node=document.createElement(id==='goals'?'pre':'div');node.id=id;if(id==='actors')node.className='grid';$('cards').after(node)}}
 $('actors').replaceChildren();
 for(const a of data.live?.actors||[]){
@@ -38,6 +39,13 @@ for(const a of data.live?.actors||[]){
  for(const w of a.workers||[]){const p=document.createElement('p');p.textContent=[w.name,w.phase,w.reason,w.stale?'nieaktualne':''].filter(Boolean).join(' | ');node.append(p)}
  for(const j of a.jobs||[]){const p=document.createElement('p');p.textContent=[j.kind,j.branch,j.state||j.phase,j.id,j.assignment].filter(Boolean).join(' | ');node.append(p)}
  const proof=document.createElement('details'),summary=document.createElement('summary'),raw=document.createElement('pre');summary.textContent='Dane źródłowe';raw.textContent=JSON.stringify(a,null,2);proof.append(summary,raw);node.append(proof);$('actors').append(node)
+}
+function agentView(data){
+let panel=$('agent-panel');if(!panel){panel=document.createElement('section');panel.id='agent-panel';const title=document.createElement('h2');title.textContent='Agent activity - tasks, decisions and evidence';const note=document.createElement('p');note.className='muted';note.textContent='Public conclusions and observed tool results. Declarations are not proof of execution. Internal reasoning is not displayed.';const grid=document.createElement('div');grid.id='agent-grid';grid.className='grid';panel.append(title,note,grid);$('cards').after(panel)}
+let grid=$('agent-grid');grid.replaceChildren();
+for(const a of data.live?.agents||[]){const node=document.createElement('article');node.className='card agent';const heading=document.createElement('h3');heading.textContent=a.label;node.append(heading);
+for(const [label,value] of [['Observed state',a.state],['Inference device',a.device],['Model',a.model],['Assigned task',a.task],['Tool',a.tool],['Declared conclusion / next step (unverified)',a.declaration],['Last observed result',a.result],['Recorded at',typeof a.updated==='number'?new Date(a.updated*1000).toLocaleString():a.updated],['Evidence file',a.source]]){if(value){const p=document.createElement('p'),b=document.createElement('strong');b.textContent=label+': ';p.append(b,document.createTextNode(String(value)));node.append(p)}}grid.append(node)}
+if(!grid.children.length){const p=document.createElement('p');p.textContent='No recent agent evidence. No activity is inferred from device readiness.';grid.append(p)}
 }
 const plans=data.live?.goals||{};$('goals').textContent=[['long','Cel długoterminowy'],['mid','Plan średnioterminowy'],['short','Plan krótkoterminowy']].map(([key,label])=>label+': '+(plans[key]?.text||'brak planu')+(plans[key]?.needs_replanning?' (wymaga przeplanowania)':'')).join('\n\n');
 $('events').replaceChildren();for(const e of [...(data.live?.events||[])].reverse().slice(0,20)){const p=document.createElement('p');p.textContent=[e.time,e.actor,e.kind,e.tool,e.detail].filter(Boolean).join(' | ');$('events').append(p)}
@@ -61,6 +69,21 @@ APP_SCRIPT = PAGE.split("<script>", 1)[1].split("</script>", 1)[0]
 BASE_TEMPLATE = PAGE.split("<script>", 1)[0] + "</html>"
 GUEST_TEMPLATE = "/workspace/dashboard/index.html"
 REQUIRED_IDS = set(re.findall(r"\$\('([a-z]+)'\)", APP_SCRIPT)) - {"actors", "goals", "events"}
+
+HOST_STYLE = """
+:root{color-scheme:dark;--line:#2b4058;--muted:#a6b7cc}
+body{max-width:1440px;margin:auto;padding:28px;background:#0b1220;color:#e7eef9;font:15px/1.6 system-ui}
+h1{font-size:32px;letter-spacing:-1px;margin-bottom:8px}h2{font-size:21px;margin-top:0}h3{font-size:16px;overflow-wrap:anywhere}
+section,details{background:#111e30;border:1px solid var(--line);border-radius:16px;padding:22px;margin:20px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.card{background:#16263b;border:1px solid var(--line);border-radius:12px;padding:18px;margin:0;min-width:0}
+.agent{border-top:3px solid #75c5ae}.agent p{font-size:13px;overflow-wrap:anywhere}.agent strong{color:#9ac5ff}
+#agent-panel{border-color:#487087}#actors .card{border-top:3px solid #82aef9}.muted,small{color:var(--muted)}
+.value{font-size:24px}pre{background:#0c1726;border-radius:8px;padding:14px;font-size:12px;max-height:280px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+summary{cursor:pointer;color:#9ac5ff}#events p{padding:10px 14px;border-left:2px solid #487087;background:#0c1726;font-size:12px;overflow-wrap:anywhere}
+button{background:#365c87;padding:10px 18px;border-radius:8px}progress{accent-color:#75c5ae}td,th{padding:12px;border-bottom:1px solid var(--line)}
+@media(max-width:650px){body{padding:12px}.grid{grid-template-columns:1fr}section,details{padding:14px}h1{font-size:26px}}
+"""
 
 
 def validate_css(value):
@@ -136,7 +159,13 @@ def validate_template(content):
 
 
 def render_template(content, identity):
-    script = "<script>" + APP_SCRIPT.replace("__LAYOUT_SHA__", identity) + "</script>"
+    script = (
+        "<style>"
+        + HOST_STYLE
+        + "</style><script>"
+        + APP_SCRIPT.replace("__LAYOUT_SHA__", identity)
+        + "</script>"
+    )
     return re.sub(
         r"</html\s*>\s*\Z", lambda match: script + match.group(), content, count=1, flags=re.I
     )
