@@ -345,7 +345,11 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 " Use sandbox action to queue a shell script (text) inside the private Debian VM, never the host. "
                 "The guest has /workspace for persistent files and /opt/master-source as readonly own source; "
                 "it may copy source, install tools and download files within its resource budget. "
-                "The work continues independently; report the queued job ID instead of claiming it already ran."
+                "The work continues independently; report the queued job ID instead of claiming it already ran. "
+                "For requested dashboard HTML edits, use sandbox_run to read, edit and verify "
+                "/workspace/dashboard/index.html before reporting completion. Preserve required IDs. "
+                "A cat command only reads; it does not edit. GUI observation is unnecessary for HTML edits. "
+                "If vision is deferred, continue file work without waiting for an image."
             ),
         }
     ]
@@ -383,6 +387,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             "get_plan",
             "drone_status",
             "sandbox_state",
+            "sandbox_run",
             "read_master_code",
             "sandbox_gui",
             "search_memory",

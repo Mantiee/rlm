@@ -677,3 +677,31 @@ def test_natural_goal_parser_keeps_goal_words_and_denies_post_horizon_negation()
     )
     assert direct_plan("Mój główny cel totalnie inny") is None
     assert not authorizes_long("Chcę, żeby główny cel nie został zmieniony")
+
+
+def test_gui_defers_busy_vision_without_losing_screenshot(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from threading import Lock
+    from types import SimpleNamespace
+
+    from rlm.v100 import common, competition, desktop, remote_helper
+
+    @contextmanager
+    def slot(wait=True):
+        assert wait is False
+        raise TimeoutError("Helper cooling down; optional work deferred")
+        yield
+
+    monkeypatch.setattr(desktop, "screenshot", lambda root: {"image": "saved.png", "sha256": "abc"})
+    monkeypatch.setattr(common, "load_profile", lambda *args: {})
+    monkeypatch.setattr(remote_helper, "selected_helper", lambda root: tmp_path / "helper.json")
+    monkeypatch.setattr(remote_helper, "remote_profile", lambda profile: True)
+    monkeypatch.setattr(
+        competition,
+        "helper_client",
+        lambda *args: SimpleNamespace(request_lock=Lock(), workload_slot=slot),
+    )
+    result = desktop.gui(tmp_path, "observe", "", 0, 0)
+    assert result["image"] == "saved.png"
+    assert result["vision_deferred"] is True
+    assert "cooling down" in result["vision"]

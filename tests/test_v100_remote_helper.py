@@ -442,6 +442,29 @@ def test_previous_boot_deadline_is_discarded_and_wait_is_interruptible(
     assert not transport[0]
 
 
+def test_optional_helper_work_preserves_cooldown_and_releases_lock(transport, tmp_path):
+    instance = client(activity_root=str(tmp_path))
+    with instance.workload_slot() as quota:
+        instance.reserve_helper_idle(quota, 600)
+        path = quota["path"]
+    original = path.read_bytes()
+    with pytest.raises(TimeoutError, match="cooling down"):
+        with instance.workload_slot(wait=False):
+            pytest.fail("Optional vision ignored the cooldown")
+    assert path.read_bytes() == original
+    assert remote_helper.HELPER_WORKLOAD_LOCK.acquire(blocking=False)
+    remote_helper.HELPER_WORKLOAD_LOCK.release()
+    assert not transport[0]
+
+
+def test_optional_helper_work_does_not_wait_for_another_thread(transport):
+    with remote_helper.HELPER_WORKLOAD_LOCK:
+        with pytest.raises(TimeoutError, match="busy"):
+            with client().workload_slot(wait=False):
+                pytest.fail("Optional vision bypassed a busy helper")
+    assert not transport[0]
+
+
 def test_failed_helper_request_reserves_idle_without_accepting_an_answer(
     transport, tmp_path, monkeypatch
 ):

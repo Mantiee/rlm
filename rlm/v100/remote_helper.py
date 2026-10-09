@@ -175,9 +175,14 @@ class OllamaResearchClient(LlamaCppClient):
         self.tool_protocol = "json"
 
     @contextmanager
-    def workload_slot(self):
+    def workload_slot(self, wait: bool = True):
         """Serialize our helper calls and wait before work, without delaying its answer."""
-        with HELPER_WORKLOAD_LOCK, ExitStack() as scope:
+        if type(wait) is not bool:
+            raise ValueError("Helper wait must be boolean")
+        with ExitStack() as scope:
+            if not HELPER_WORKLOAD_LOCK.acquire(blocking=wait):
+                raise TimeoutError("Helper busy; optional work deferred")
+            scope.callback(HELPER_WORKLOAD_LOCK.release)
             path = None
             boot = helper_boot_id()
             pacing_root = self.activity_root or getattr(self, "pacing_root", None)
@@ -188,7 +193,10 @@ class OllamaResearchClient(LlamaCppClient):
                 path = Path(pacing_root) / "research/state" / f"helper-{name}.workload.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 lease = scope.enter_context(path.with_suffix(".lock").open("a"))
-                fcntl.flock(lease, fcntl.LOCK_EX)
+                try:
+                    fcntl.flock(lease, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+                except BlockingIOError as error:
+                    raise TimeoutError("Helper lease busy; optional work deferred") from error
                 state = json.loads(path.read_text()) if path.exists() else {}
             else:
                 state = HELPER_PACING.get(self.base_url, {})
@@ -202,6 +210,8 @@ class OllamaResearchClient(LlamaCppClient):
                 raise ValueError("Invalid persisted helper workload state")
             started = time.monotonic()
             deadline = state["not_before"] if state.get("boot_id") == boot else started
+            if not wait and started < deadline:
+                raise TimeoutError("Helper cooling down; optional work deferred")
             while time.monotonic() < deadline:
                 time.sleep(max(0, min(1, deadline - time.monotonic())))
             quota = {
