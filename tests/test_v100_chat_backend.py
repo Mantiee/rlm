@@ -195,3 +195,110 @@ def test_readonly_question_uses_conversation_route(message):
 )
 def test_explicit_work_keeps_executable_route(message):
     assert not mission_chat.conversation_question(message)
+
+
+def test_conversation_is_one_real_generation_without_template_or_tools(tmp_path):
+    calls = []
+    client = SimpleNamespace(
+        model_name="v100",
+        timeout=180,
+        template_args=lambda: {"chat_template_kwargs": {"enable_thinking": False}},
+        request=lambda endpoint, payload: calls.append((endpoint, payload))
+        or {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": "Cel pozostaje ten sam; nie ma dowodu zysku."},
+                }
+            ]
+        },
+    )
+    result = mission_chat.conversational_response(
+        tmp_path,
+        client,
+        "a co z zarabianiem",
+        {"running": True, "state": {"phase": "income-research"}},
+        {"long": {"text": "Operator goal"}},
+        {"model": "v100"},
+    )
+    assert len(calls) == 1 and calls[0][0] == "/v1/chat/completions"
+    assert calls[0][1]["max_tokens"] == 512
+    assert "tools" not in calls[0][1]
+    assert "Operator goal" in calls[0][1]["messages"][0]["content"]
+    assert result["applied"] == [] and client.timeout == 20
+
+
+def test_conversation_rejects_truncated_generation(tmp_path):
+    client = SimpleNamespace(
+        model_name="v100",
+        timeout=60,
+        template_args=lambda: {},
+        request=lambda *a: {
+            "choices": [{"finish_reason": "length", "message": {"content": "partial"}}]
+        },
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        mission_chat.conversational_response(tmp_path, client, "hej", {}, {}, {"model": "v100"})
+
+
+def test_question_fast_path_skips_cpu_start_and_research_context(tmp_path, monkeypatch):
+    accepted = profile(tmp_path)
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    monkeypatch.setattr(mission_chat, "load_profile", lambda *a: accepted)
+    monkeypatch.setattr(
+        mission, "status", lambda *a: {"running": True, "state": {}, "learning": {}}
+    )
+    calls = []
+    client = SimpleNamespace(
+        model_name="v100",
+        timeout=120,
+        sampling_args={},
+        activity_context={},
+        template_args=lambda: {},
+    )
+
+    def request(endpoint, payload=None):
+        calls.append((endpoint, client.timeout))
+        if endpoint == "/props":
+            return {"model_path": accepted["server"]["model"]}
+        return {"choices": [{"finish_reason": "stop", "message": {"content": "Odpowiedź modelu"}}]}
+
+    client.request = request
+    monkeypatch.setattr(competition, "helper_client", lambda *a: client)
+
+    def forbidden(*a, **kw):
+        pytest.fail("Question must not start a CPU model or research/tool loop")
+
+    monkeypatch.setattr(research_tools, "research_turn", forbidden)
+    manager = SimpleNamespace(get=forbidden)
+    result = mission_chat.respond(tmp_path, tmp_path, {"message": "a co z zarabianiem"}, manager)
+    assert result["answer"] == "Odpowiedź modelu"
+    assert calls == [("/props", 10), ("/v1/chat/completions", 20)]
+
+
+def test_connection_failures_stop_retrying_and_release_next_request(tmp_path, monkeypatch):
+    import requests
+
+    first = mission_chat.submit(tmp_path, "first")
+    second = mission_chat.submit(tmp_path, "second")
+    with mission_chat.connect(tmp_path) as db:
+        db.execute("UPDATE requests SET attempts=1 WHERE id=?", (first,))
+    seen = []
+
+    def respond(*args):
+        request = args[2]
+        seen.append(request["id"])
+        if request["id"] == first:
+            raise requests.ConnectionError("backend unavailable")
+        return {"answer": "next response", "actions": [], "applied": []}
+
+    monkeypatch.setattr(mission_chat, "respond", respond)
+
+    class Stop:
+        def wait(self, seconds):
+            return len(seen) >= 2
+
+    mission_chat.service_loop(tmp_path, tmp_path, Stop())
+    assert mission_chat.inspect(tmp_path, first)["state"] == "failed"
+    assert mission_chat.inspect(tmp_path, second)["state"] == "completed"
+    assert seen == [first, second]

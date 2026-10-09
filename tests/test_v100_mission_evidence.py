@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from rlm.v100 import agent, competition, mission, mission_chat, mission_evidence, research_tools
+from rlm.v100 import competition, mission, mission_chat, mission_evidence, research_tools
 from rlm.v100.common import atomic_json
 
 
@@ -147,23 +147,33 @@ def test_ordinary_chat_gets_host_evidence_before_model_can_guess(tmp_path, monke
     monkeypatch.setattr(
         mission_chat, "load_profile", lambda *args: {"runtime": {}, "server": {"model": str(model)}}
     )
+    seen = []
+
+    def reply(endpoint, payload=None):
+        if endpoint == "/props":
+            return {"model_path": str(model)}
+        seen.extend(payload["messages"])
+        return {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": "Counters unavailable; no training claim."},
+                }
+            ]
+        }
+
     client = SimpleNamespace(
-        request=lambda *args: {"model_path": str(model)},
+        request=reply,
+        template_args=lambda: {},
         model_name="v100",
         timeout=120,
         sampling_args={"max_tokens": 2048},
         activity_context={},
     )
     monkeypatch.setattr(competition, "helper_client", lambda *args: client)
-    seen = []
-
-    def reply(client, messages, **kwargs):
-        seen.extend(messages)
-        return {"content": '{"answer":"Counters unavailable; no training claim.","actions":[]}'}
-
-    monkeypatch.setattr(agent, "native_turn", reply)
     result = mission_chat.respond(tmp_path, run, {"message": "Czy trenujesz?"})
-    evidence = json.loads(seen[-1]["content"])["mission_evidence"]
-    assert evidence["optimizer_updates_observed"] is None
-    assert "Never invent a grader error cause" in seen[0]["content"]
+    evidence = json.loads(seen[0]["content"].split("Verified current facts: ", 1)[1])
+    assert evidence["learning"]["completed_cycles"] == 0
+    assert evidence["phase"] == "baseline-before-weight-updates"
+    assert "Missing optimizer/profit counters are unknown" in seen[0]["content"]
     assert result["actions"] == [] and result["applied"] == []

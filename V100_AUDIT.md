@@ -647,3 +647,26 @@ Validation: 1018 passed, 65 skipped, one resource-dependent worker integration
 deselected, one existing PEFT warning. Ruff and upgrade shell checks pass. The
 transaction test executes four refreshes and checks actual object identity for
 reader/text nodes, expanded state and page/card/text scroll offsets.
+
+## v56: direct conversational transport and finite connection retries
+
+Ordinary questions now make one chat-completions generation after a bounded
+accepted-model identity probe. They skip apply-template/tokenize requests, full
+research evidence/context assembly and cold-starting a large CPU chat model.
+The compact prompt contains the recorded goal and current mission state; absent
+profit/training counters remain unknown. Incomplete output is rejected, not
+reported as a model answer. Generation uses a 20-second socket timeout and a
+40-second total deadline. Explicit work keeps its executable tool path and
+separate 60-second transport budget.
+
+Connection failures retry at most once before becoming terminal and releasing
+the next queued request. The console waits up to 200 seconds to cover the existing
+180-second work budget instead of leaving a still-processing request after 120.
+This does not increase the backend work budget. A busy/offline server can still
+fail explicitly; these tests do not certify operation on the user's hardware.
+
+Validation: 1022 passed, 65 skipped, one resource-dependent worker integration
+deselected; one existing PEFT warning. Ruff, diff and upgrade shell checks pass.
+Tests cover the actual question route (one generation, bounded identity check,
+no CPU cold start/tool loop), incomplete output rejection and queue advancement
+after terminal connection failures.

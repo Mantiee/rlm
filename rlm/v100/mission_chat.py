@@ -243,6 +243,56 @@ def conversation_question(message: str) -> bool:
     )
 
 
+def conversational_response(
+    root: Path, client, message: str, mission: dict, plans: dict, responder: dict
+) -> dict:
+    """One actual model request with bounded factual context and no tool routing."""
+    goal = (plans.get("long") or {}).get("text", "No recorded goal")
+    facts = {
+        "mission_running": mission.get("running"),
+        "phase": mission.get("state", {}).get("phase"),
+        "learning": mission.get("learning"),
+        "goal": goal[:3000],
+    }
+    client.timeout = min(client.timeout, 20)
+    client.request_deadline = min(
+        getattr(client, "request_deadline", time.monotonic() + 40), time.monotonic() + 40
+    )
+    reply = client.request(
+        "/v1/chat/completions",
+        {
+            "model": client.model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are Synta. Answer the user's question directly in Polish, briefly. This is read-only chat: do not claim to execute work or update plans. Only the supplied status is verified. Missing optimizer/profit counters are unknown. Explain how the recorded goal relates to the question, without changing it or promising profit. State missing evidence honestly. Verified current facts: "
+                    + json.dumps(facts, ensure_ascii=False),
+                },
+                {"role": "user", "content": message},
+            ],
+            "max_tokens": 512,
+            "temperature": 0.0,
+            "stream": False,
+            **client.template_args(),
+        },
+    )
+    choice = reply["choices"][0]
+    answer = choice["message"].get("content")
+    if (
+        choice.get("finish_reason") not in ("stop", "eos")
+        or not isinstance(answer, str)
+        or not answer.strip()
+    ):
+        raise ValueError("Conversational model response incomplete; no invented answer accepted")
+    return {
+        "answer": answer.strip(),
+        "actions": [],
+        "applied": [],
+        "responder": responder,
+        "scope": "Single model generation; read-only question, no tool execution or control changes",
+    }
+
+
 def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
@@ -255,6 +305,14 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    quick_question = conversation_question(message) or message.casefold() in (
+        "hej",
+        "cześć",
+        "czesc",
+        "hello",
+        "hi",
+        "odpowiedz",
+    )
     if re.search(
         r"\b(?:co potrafisz|co umiesz|twoje możliwości|twoje mozliwosci|what can you do)\b",
         message.casefold(),
@@ -388,6 +446,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     client.activity_actor = "chat"
     # The endpoint is reused for candidate evaluation. Chat waits rather than
     # talking to an unaccepted candidate or opening another GPU server.
+    client.request_deadline = request.get("deadline", time.monotonic() + 180)
+    generation_timeout = min(getattr(client, "timeout", 120), 60)
+    client.timeout = min(generation_timeout, 10)
     delegated = False
     cpu_master = False
     cpu_detail = None
@@ -398,9 +459,14 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     except (requests.RequestException, OSError):
         if not profile.get("resources", {}).get("interactive_lab"):
             raise
-        if accepted_cpu is not None and profile.get("resources", {}).get("accepted_cpu_chat"):
+        if (
+            accepted_cpu is not None
+            and not quick_question
+            and profile.get("resources", {}).get("accepted_cpu_chat")
+        ):
             try:
                 client = accepted_cpu.get(profile)
+                generation_timeout = min(client.timeout, 60)
                 cpu_master = True
             except (ValueError, OSError, RuntimeError, requests.RequestException) as error:
                 cpu_detail = str(error)[:300]
@@ -417,13 +483,16 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                     "Master busy; no independent remote chat helper"
                 ) from None
             client = helper_client(helper, root)
+            client.request_deadline = request.get("deadline", time.monotonic() + 180)
+            generation_timeout = min(client.timeout, 60)
+            client.timeout = min(generation_timeout, 20)
             client.identity()
             client.sampling_args["max_tokens"] = 2048
             client.enable_thinking = False
             client.activity_actor = "chat-delegate"
             delegated = True
     client.request_deadline = request.get("deadline", time.monotonic() + 180)
-    client.timeout = min(client.timeout, 60)
+    client.timeout = generation_timeout
     client.enable_thinking = False
     client.sampling_args = dict(client.sampling_args)
     client.sampling_args["max_tokens"] = min(2048, client.sampling_args.get("max_tokens", 2048))
@@ -431,9 +500,22 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     from rlm.v100 import chat_resources
 
     resource_request = chat_resources.instruction(message)
-    question_only = conversation_question(message) and not resource_request
+    question_only = quick_question and not resource_request
     if question_only:
-        client.sampling_args["max_tokens"] = min(768, client.sampling_args["max_tokens"])
+        return conversational_response(
+            root,
+            client,
+            message,
+            mission,
+            read_plans(root),
+            {
+                "model": client.model_name,
+                "delegated_while_master_busy": delegated,
+                "accepted_master_on_cpu": cpu_master,
+                "accepted_model_sha256": accepted_cpu.sha256 if cpu_master else None,
+                "cpu_admission_detail": cpu_detail,
+            },
+        )
     with connect(root) as db:
         history = db.execute(
             "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 3"
@@ -667,7 +749,11 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
                 "decisions", "user-command-completed", {"id": request["id"], **response}
             )
         except (requests.ConnectionError, requests.Timeout) as error:
-            expired = time.monotonic() >= request["deadline"] or isinstance(error, requests.Timeout)
+            expired = (
+                time.monotonic() >= request["deadline"]
+                or isinstance(error, requests.Timeout)
+                or request["attempts"] >= 1
+            )
             with connect(root) as db:
                 db.execute(
                     "UPDATE requests SET state=?,attempts=attempts+1,error=?,updated=? WHERE id=? AND state='queued'",
@@ -678,6 +764,16 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
                         request["id"],
                     ),
                 )
+            ActivityLog(root, "controller", "chat").write(
+                "errors",
+                "user-command-failed" if expired else "user-command-retry",
+                {
+                    "id": request["id"],
+                    "error": str(error)[:500],
+                    "attempts": request["attempts"] + 1,
+                    "terminal": expired,
+                },
+            )
         except Exception as error:
             with connect(root) as db:
                 db.execute(
@@ -710,7 +806,7 @@ def alongside(root: Path, directory: Path):
             accepted_cpu.close()
 
 
-def wait_reply(root: Path, identity: str, timeout: float = 120, progress=None) -> dict:
+def wait_reply(root: Path, identity: str, timeout: float = 200, progress=None) -> dict:
     deadline = time.monotonic() + timeout
     next_update = time.monotonic()
     while time.monotonic() < deadline:
