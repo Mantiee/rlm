@@ -108,6 +108,7 @@ def test_remote_and_master_overlap_and_empty_book_skips_trade_generation(tmp_pat
     )
 
     def research(client, branch, job, observations, root):
+        assert len(job["brief"]) <= 400, "Internal assignment exceeds research_task admission"
         if branch == "A":
             if client.endpoint == "local":
                 master_started.set()

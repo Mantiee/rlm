@@ -125,7 +125,7 @@ def test_desktop_cloud_init_pins_guest_key_and_preserves_source_mount():
     )
     assert config["ssh_pwauth"] is False
     assert config["users"][0]["ssh_authorized_keys"] == ["ssh-ed25519 CLIENT"]
-    assert config["apt"]["https_proxy"] == "http://10.0.2.100:3128"
+    assert config["apt"]["https_proxy"] == "http://127.0.0.1:3128"
     fstab = next(row for row in config["write_files"] if row["path"] == "/etc/fstab")
     assert fstab["append"] and "ro,nofail" in fstab["content"]
     assert not any("password" in row for row in config["users"])

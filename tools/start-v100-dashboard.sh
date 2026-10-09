@@ -49,8 +49,8 @@ if not isinstance(preferences, dict):
 preferences['dashboard'] = {
     'url': 'http://192.168.0.68:8765',
     'editable_guest_file': '/workspace/dashboard/index.html',
-    'edit_action': 'sandbox',
-    'instructions': 'The operator authorizes dashboard HTML/CSS edits from chat. Use a sandbox action to read/edit this file inside the private VM. Keep all existing component IDs. Do not add scripts, external resources or change the data API. The host validates and publishes the layout automatically; receipts are in research/dashboard/layout-status.json. A queued edit is not proof of publication.',
+    'edit_action': 'write_dashboard',
+    'instructions': 'The operator authorizes dashboard HTML/CSS edits from chat. Use read_dashboard, write_dashboard and dashboard_status to edit this file and verify publication. Keep all existing component IDs. Do not add scripts, external resources or change the data API. The host validates and publishes the layout automatically; receipts are in research/dashboard/layout-status.json. A queued edit is not proof of publication.',
     'data_refresh_seconds': 20,
     'scope': 'Presentation permission only. Long-term goal, training gates, weights and financial records are unchanged. Endpoint is configured, not proof of reachability.'
 }

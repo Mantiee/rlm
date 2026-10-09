@@ -33,6 +33,21 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "dashboard_status",
+        "Verify the guest HTML and exact host publication hash. A model declaration is not publication.",
+        {},
+    ),
+    tool_schema(
+        "read_dashboard",
+        "Read the editable passive dashboard HTML. Live bindings are supplied by the host; no scripts or event handlers.",
+        {},
+    ),
+    tool_schema(
+        "write_dashboard",
+        "Validate and atomically save passive dashboard HTML/CSS inside the private guest; preserves backup. Keep required IDs. Use dashboard_status to verify publication.",
+        {"html": {"type": "string", "maxLength": 11000}},
+    ),
+    tool_schema(
         "goal_learning_status",
         "Read precommitted goal-linked forecasts and observed scores; scores are not causal/profit proof.",
         {},
@@ -604,6 +619,14 @@ class ResearchTools:
                 "text": content[offset : offset + 6000],
                 "remaining": max(0, len(content) - offset - 6000),
             }
+        if name in ("dashboard_status", "read_dashboard") and not arguments:
+            from rlm.v100.dashboard_editor import status
+
+            return status(self.root, include_html=name == "read_dashboard")
+        if name == "write_dashboard" and set(arguments) == {"html"}:
+            from rlm.v100.dashboard_editor import write
+
+            return write(self.root, arguments["html"])
         if name == "sandbox_state" and not arguments:
             path = self.root / "research/desktop/status.json"
             return (

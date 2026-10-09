@@ -362,9 +362,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 "The guest has /workspace for persistent files and /opt/master-source as readonly own source; "
                 "it may copy source, install tools and download files within its resource budget. "
                 "The work continues independently; report the queued job ID instead of claiming it already ran. "
-                "For requested dashboard HTML edits, use sandbox_run to read, edit and verify "
+                "For requested dashboard HTML edits, prefer read_dashboard and write_dashboard to read, edit and verify "
                 "/workspace/dashboard/index.html before reporting completion. Preserve required IDs. "
-                "A cat command only reads; it does not edit. GUI observation is unnecessary for HTML edits. "
+                "No scripts, event handlers or external resources: the host supplies live rendering. "
+                "Use dashboard_status before claiming publication. A cat command only reads; it does not edit. GUI observation is unnecessary for HTML edits. "
                 "If vision is deferred, continue file work without waiting for an image."
             ),
         }
@@ -390,11 +391,25 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             ),
         }
     )
+    dashboard_request = any(
+        word in message.casefold() for word in ("dashboard", "raport html", "pulpit html")
+    )
+    dashboard_before = {}
+    if dashboard_request:
+        from rlm.v100.dashboard_editor import status as dashboard_status
+
+        dashboard_before = dashboard_status(root)
     if profile.get("resources", {}).get("interactive_lab"):
         from rlm.v100.research_tools import research_turn
 
         client.research_owner = "A"
         client.research_tool_names = {
+            "propose_compute_trial",
+            "compute_trial_status",
+            "cancel_compute_trial",
+            "dashboard_status",
+            "read_dashboard",
+            "write_dashboard",
             "goal_learning_status",
             "observe_goal_source",
             "predict_goal_pattern",
@@ -423,6 +438,24 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     if set(result) != {"answer", "actions"} or not isinstance(result["answer"], str):
         raise ValueError("Invalid chat response")
     result["applied"] = apply_actions(root, result["actions"], message)
+    if dashboard_request:
+        from rlm.v100.dashboard_editor import status as dashboard_status
+
+        receipt = dashboard_status(root)
+        result["dashboard"] = receipt
+        if not receipt["valid"]:
+            result["answer"] = "Zmiana dashboardu nie została zaakceptowana: " + receipt["error"]
+        elif not receipt["published"]:
+            result["answer"] = (
+                "HTML jest poprawny, ale host nie potwierdził jeszcze jego publikacji."
+            )
+        elif receipt["guest_sha256"] == dashboard_before.get("guest_sha256") and any(
+            word in message.casefold()
+            for word in ("dod", "zmien", "zmień", "edyt", "uaktual", "zwizual")
+        ):
+            result["answer"] = (
+                "Nie potwierdzono zmiany HTML podczas tej prośby. Host nadal pokazuje poprzedni poprawny układ."
+            )
     result["responder"] = {
         "model": client.model_name,
         "delegated_while_master_busy": delegated,

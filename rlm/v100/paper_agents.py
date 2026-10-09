@@ -172,11 +172,10 @@ def paper_round(
             ]
             if income_research:
                 jobs[0]["brief"] = (
-                    "Choose useful research for the fastest, largest lawful repeatable net income: "
-                    "a chronological price/event backtest using backtest_prices, another zero-deposit income opportunity, or a learning/tool "
-                    "upgrade. Compare time, resources, costs and independently testable evidence. "
-                    "You may propose isolated CPU submodels within the fixed pilot budget. "
-                    "Seek goal-linked patterns beyond fixed assets. Read get_plan, archive signals with observe_goal_source and precommit measurable outcomes with predict_goal_pattern; failed predictions count too. No real sale, spending or guaranteed-profit claim."
+                    "Read get_plan. Seek useful lawful net-income or self-upgrade hypotheses in any domain. "
+                    "Compare time, costs, resources and reproducible evidence. Use chronological backtests "
+                    "or observe_goal_source and predict_goal_pattern for future outcomes. Failed forecasts count. "
+                    "Delegate useful source/CPU work. No real sale, spending or guaranteed-profit claim."
                 )
                 jobs[1]["brief"] = (
                     "Critique the income or self-upgrade hypothesis: legality, costs, time to "
@@ -224,6 +223,9 @@ def paper_round(
                     "cancel_drone",
                     "run_research_python",
                     "propose_colab_trial",
+                    "propose_compute_trial",
+                    "compute_trial_status",
+                    "cancel_compute_trial",
                     "discover_spot_markets",
                     "register_paper_spot",
                     "calculate",

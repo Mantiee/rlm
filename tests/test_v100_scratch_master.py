@@ -9,6 +9,7 @@ from rlm.v100 import (
     architectures,
     competition,
     fresh_audit,
+    researchers,
     scratch_master,
     serving,
 )
@@ -60,7 +61,7 @@ def test_scratch_registry_relocation_binds_source_budget_and_weights(tmp_path):
 
 def test_scratch_client_uses_isolated_transport_and_preserves_finish(tmp_path, monkeypatch):
     _, chosen, _ = candidate(tmp_path)
-    monkeypatch.setattr("rlm.v100.researchers.available_ram_gib", lambda: 32)
+    monkeypatch.setattr(researchers, "available_ram_gib", lambda: 32)
     calls = []
 
     def isolated(output, run, inputs, budget, mode):
@@ -85,7 +86,7 @@ def test_scratch_client_uses_isolated_transport_and_preserves_finish(tmp_path, m
 
 def test_scratch_never_silently_falls_back_when_sandbox_missing(tmp_path, monkeypatch):
     _, chosen, _ = candidate(tmp_path)
-    monkeypatch.setattr("rlm.v100.researchers.available_ram_gib", lambda: 32)
+    monkeypatch.setattr(researchers, "available_ram_gib", lambda: 32)
 
     def unavailable(*args):
         raise FileNotFoundError("bubblewrap unavailable")

@@ -87,7 +87,7 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
 def inspect(root: Path) -> list[dict]:
     with connect(root) as db:
         rows = db.execute(
-            "SELECT id,branch,kind,interval,state,updated,result FROM jobs ORDER BY updated DESC LIMIT 32"
+            "SELECT id,branch,kind,interval,state,updated,result,substr(payload,1,300) AS assignment FROM jobs ORDER BY updated DESC LIMIT 32"
         ).fetchall()
     return [
         dict(row) | {"result": json.loads(row["result"]) if row["result"] else None} for row in rows
@@ -226,7 +226,7 @@ def service(root: Path, stop: threading.Event) -> None:
         goal_future = None
         goal_due = 0
         while not stop.is_set():
-            from rlm.v100.goal_learning import tick as goal_tick
+            from rlm.v100.background_observer import tick as goal_tick
 
             if goal_future is not None and goal_future.done():
                 try:

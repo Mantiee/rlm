@@ -299,12 +299,18 @@ def trial(root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], 
             root, parent, Path(candidate["server"]["model"]), evidence / "fresh-audit"
         )
         fresh_audit.parent_report(root, parent, audit)
+        from rlm.v100 import architecture_goal_gate
+
+        goal_suite = architecture_goal_gate.prepare(root, parent, pool, evidence)
         with managed_server(serving, root, evidence / "server.log"):
             quality = evaluate_suite(
                 helper_client(candidate), candidate, suite, evidence / "quality.json"
             )
             judgments = [compare_reports(g, quality) for g in gates]
             eligible = complete(quality) and all(g["passed"] for g in judgments)
+            eligible &= architecture_goal_gate.evaluate(
+                root, candidate, goal_suite, evidence, parent
+            )
             public = None
             if parent.get("resources", {}).get("public_benchmarks"):
                 from rlm.v100.public_benchmarks import compare, evaluate
@@ -326,6 +332,7 @@ def trial(root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], 
         proposal.update(
             state="completed",
             eligible=eligible,
+            goal_gate=str(evidence) if goal_suite is not None else None,
             expert_id=expert_id if eligible else None,
             fresh_audit=str(audit),
             public_quality=str(evidence / "public-quality.json") if public else None,

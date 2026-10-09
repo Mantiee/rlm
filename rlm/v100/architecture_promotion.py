@@ -49,6 +49,11 @@ def activate(root: Path, parent: dict, result: dict, gates: list[dict]) -> tuple
     expert = registry.get(result["expert_id"])
     candidate = copy.deepcopy(expert["profile"])
     quality = expert["quality_reports"]["candidate"]
+    if result.get("goal_gate"):
+        from rlm.v100.architecture_goal_gate import verify
+
+        if not verify(root, Path(result["goal_gate"]), parent, candidate)["passed"]:
+            raise ValueError("Architecture failed its goal-linked development gate")
     if (
         not complete(quality)
         or quality["model_sha256"] != file_hash(Path(candidate["server"]["model"]))

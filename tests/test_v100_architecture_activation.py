@@ -115,3 +115,13 @@ def test_retained_architecture_gate_hash_checked_after_restart(tmp_path, monkeyp
     path.write_text(json.dumps({"reports": []}))
     with pytest.raises(ValueError, match="ancestor"):
         lineages.read(candidate)
+
+
+def test_architecture_activation_rechecks_goal_evidence(tmp_path, monkeypatch):
+    from rlm.v100 import architecture_goal_gate
+
+    parent, result, gates, _ = ready(tmp_path, monkeypatch)
+    result["goal_gate"] = str(tmp_path / "goal-proof")
+    monkeypatch.setattr(architecture_goal_gate, "verify", lambda *args: {"passed": False})
+    with pytest.raises(ValueError, match="goal-linked"):
+        architecture_promotion.activate(tmp_path, parent, result, gates)

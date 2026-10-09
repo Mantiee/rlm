@@ -1,3 +1,58 @@
+## v100.44 integration and observed limits
+
+This revision connects the existing capabilities; it does not certify live hardware,
+accepted model updates, profit, or universal prevention of forgetting.
+
+- The host supplies a trusted live renderer with separate master, V100, Debian CPU,
+  resident drone, RTX helper and Windows CPU cards, actual assignments, operator
+  long/mid/short plans and a bounded event timeline. Board utilization is not per-model
+  utilization. Stale worker/chat receipts are explicitly marked. RTX cooldown and
+  loaded model are observed separately from board utilization, which remains unknown.
+- `dashboard_layout.py` is the shared HTML/CSS contract. `read_dashboard`,
+  `write_dashboard`, and `dashboard_status` expose bounded, backed-up guest edits.
+  The chat host verifies the exact guest/publication hash and overrides unsupported
+  success claims. A write is not publication. Trusted refreshing stays outside the
+  model-editable HTML. Old valid layouts gain live cards automatically; the upgrade
+  backs up and repairs an invalid script-containing layout.
+- The installed dashboard tool and package now come from the same pinned revision.
+  The upgrade preserves goals, accepted weights, checkpoints, guest disk and valid
+  custom layouts. It does not repeat training calibration.
+- `background_observer.py` refreshes registered paper quotes/primary fee evidence
+  independently of GPU evaluation and GUI readiness, with visible errors and backoff.
+  A failed goal-observation endpoint does not suppress quote refresh. It retains
+  instrument selection, fee provenance and paper risk checks; it submits no orders.
+- The private VM lifecycle owns and restarts the loopback-only SSH reverse tunnel
+  to the existing public HTTP broker. Existing guest APT/browser proxy configuration
+  is updated. Only the tunnel child created by this lifecycle is stopped. A manual
+  old tunnel may already hold its port; this is logged rather than killed.
+- Goal-linked development panels now cover alternate foundation and scratch master
+  trials as well as LoRA updates. Where enough independent resolved observations
+  exist, parent/candidate weights must pass the exact panel and beat its best constant
+  predictor. Activation rechecks the proof and the current operator goal. Insufficient
+  labels mean no goal-specific improvement is certified. Protected/fresh/public gates
+  remain mandatory where configured; development panels are not untouched audits.
+- Master and resident research agents can propose owned CPU compute trials through
+  their actual tool allowlists. Idle workers are capacity, not proof of execution.
+  Their constrained proof-domain trials are experimental; a useful goal-linked
+  hypothesis still needs matching independent evidence before master promotion.
+- Internal income/self-upgrade research assignments fit the enforced 400-character
+  admission limit. The prior over-budget assignment no longer aborts every round.
+
+Operational acceptance remains on the user's devices: guest networking/GUI after a
+restart, VRAM fit, model numerical health, real worker execution and accepted update
+counters. The optional resource/kernel tests requiring unavailable local process or
+GPU facilities are not represented as passed hardware checks.
+
+The requested always-on free managed Colab worker farm is not implemented. Google's
+current FAQ explicitly disallows distributed workers on free managed runtimes.
+The existing interactive notebook and authenticated operator-owned compute paths
+remain available. No account/session rotation or quota bypass is added.
+
+Sources checked 2026-10-09:
+- https://research.google.com/colaboratory/faq.html
+- https://docs.nvidia.com/deploy/mps/latest/when-to-use-mps.html
+- Retention literature and implemented experiment limits: RETENTION_RESEARCH.md.
+
 # V100 mission audit v100.39
 
 The optional `tools/start-v100-dashboard.sh` installs a separate read-only LAN
@@ -302,3 +357,11 @@ plans guide researchers and curricula. Token admission defers oversized records.
 LoRA A/B candidates receive an additional goal-linked development gate when enough current-goal
 validation data exists. It is not an untouched financial audit or causal/profit proof.
 See GOAL_PATTERN_LEARNING.md for tool schemas, artifact locations and limits.
+
+Validation for v100.44: full repository tests completed with 956 passed, 65 skipped,
+1 deselected, and 1 PEFT configuration warning. The deselected owned-worker process
+integration requires process/RAM introspection unavailable in this environment.
+The JavaScript live renderer was executed against an older layout with missing live
+sections. Ruff, formatting, diff whitespace checks and both installer shell syntax
+checks passed. No V100/RTX hardware, LAN, Windows process or guest boot is certified
+by those results.

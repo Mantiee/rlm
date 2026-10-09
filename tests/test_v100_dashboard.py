@@ -106,7 +106,10 @@ def test_dashboard_report_timeout_is_visible_and_does_not_hide_live_mission(tmp_
     assert state.data["mission"]["running"] is True
     assert state.data["report"] == {}
     assert state.data["gpu"] == {}
-    assert len(state.data["errors"]) == 2
+    assert (
+        sum("timed out" in error or "TimeoutExpired" in error for error in state.data["errors"])
+        == 2
+    )
 
 
 @pytest.mark.parametrize(
@@ -163,10 +166,10 @@ def test_master_oversized_layout_is_not_published():
 
 
 def test_guest_layout_seed_preserves_master_edits_and_bounds_transfer(tmp_path, monkeypatch):
-    from rlm.v100 import desktop
+    from rlm.v100 import dashboard_layout, desktop
 
     path = tmp_path / "guest/dashboard/index.html"
-    monkeypatch.setattr(dashboard, "GUEST_TEMPLATE", str(path))
+    monkeypatch.setattr(dashboard_layout, "GUEST_TEMPLATE", str(path))
 
     def guest_run(root, script, **kwargs):
         assert len(script) <= 16000

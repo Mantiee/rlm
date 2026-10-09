@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10043.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10044.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -80,3 +80,23 @@ print(json.dumps(install(root, path), indent=2), flush=True)
 print('RETENTION AND GOAL-LINKED FORECAST LEARNING AVAILABLE. Existing setup preserved; no calibration sweep.', flush=True)
 PY
 "$AI_V100_ROOT/bin/v100-continual" mission-status
+# Install the viewer from the SAME revision, retaining guest edits and publication receipts.
+VIEWER_SETUP="$AI_V100_ROOT/bin/update-dashboard-$REV.sh"
+curl -fL --retry 3 "https://raw.githubusercontent.com/Mantiee/rlm/$REV/tools/start-v100-dashboard.sh" -o "$VIEWER_SETUP"
+bash "$VIEWER_SETUP" "$REV"
+"$PY" <<'PY'
+import os, time
+from pathlib import Path
+from rlm.v100.dashboard_editor import repair, status
+root = Path(os.environ['AI_V100_ROOT'])
+for attempt in range(6):
+    try:
+        print('DASHBOARD LAYOUT:', repair(root), flush=True)
+        print('PUBLICATION RECEIPT:', status(root), flush=True)
+        break
+    except (OSError, ValueError, RuntimeError) as error:
+        if attempt == 5:
+            print('Dashboard guest edit deferred:', str(error), flush=True)
+        else:
+            time.sleep(5)
+PY

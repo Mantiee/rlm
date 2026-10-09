@@ -164,7 +164,7 @@ def download_image(folder: Path) -> Path:
 
 
 def cloud_config(public_key: str, host_private: str, host_public: str) -> dict:
-    proxy = "http://10.0.2.100:3128"
+    proxy = "http://127.0.0.1:3128"
     unit = """[Unit]
 After=network.target
 [Service]
@@ -215,8 +215,8 @@ WantedBy=multi-user.target
                         "policies": {
                             "Proxy": {
                                 "Mode": "manual",
-                                "HTTPProxy": "10.0.2.100:3128",
-                                "SSLProxy": "10.0.2.100:3128",
+                                "HTTPProxy": "127.0.0.1:3128",
+                                "SSLProxy": "127.0.0.1:3128",
                                 "Passthrough": "localhost,127.0.0.1",
                             }
                         }
@@ -408,6 +408,7 @@ def launch_command(root: Path, manifest: dict) -> list[str]:
 
 
 def service(root: Path, stop: threading.Event) -> None:
+    from rlm.v100 import desktop_proxy
     from rlm.v100.public_proxy import PublicProxy
 
     folder = root / "research/desktop"
@@ -434,15 +435,27 @@ def service(root: Path, stop: threading.Event) -> None:
                         stderr=subprocess.STDOUT,
                         start_new_session=True,
                     )
+                    tunnel = None
+                    tunnel_due = 0.0
                     try:
                         os.sched_setaffinity(process.pid, sorted(os.sched_getaffinity(0))[-2:])
                         health_at, guest_health = 0.0, {"ready": False, "state": "booting"}
                         while process.poll() is None and not stop.wait(5):
+                            if time.monotonic() >= tunnel_due and (
+                                tunnel is None or tunnel.poll() is not None
+                            ):
+                                tunnel = subprocess.Popen(
+                                    desktop_proxy.command(root),
+                                    stdout=log,
+                                    stderr=subprocess.STDOUT,
+                                )
+                                tunnel_due = time.monotonic() + 30
                             pressure = (
                                 psutil.virtual_memory().available < 3 * 2**30
                                 or shutil.disk_usage(root).free < 10 * 2**30
                             )
                             if not pressure and time.monotonic() >= health_at:
+                                desktop_proxy.configure_guest(root)
                                 guest_health = health(root)
                                 health_at = time.monotonic() + 30
                             atomic_json(
@@ -464,6 +477,7 @@ def service(root: Path, stop: threading.Event) -> None:
                             if pressure:
                                 break
                     finally:
+                        desktop_proxy.close(tunnel)
                         try:
                             os.killpg(process.pid, signal.SIGTERM)
                             process.wait(timeout=15)
