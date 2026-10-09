@@ -232,6 +232,17 @@ def schema(allow_long_goal: bool = False) -> dict:
     }
 
 
+def conversation_question(message: str) -> bool:
+    """Read-only questions take one generation; explicit work retains tools."""
+    value = message.casefold().strip()
+    return bool(re.match(r"(?:a\s+)?(?:co|czy|jak|dlaczego|kiedy|what|why)\b", value)) and not bool(
+        re.search(
+            r"\b(?:zrób|zrob|napraw|popraw|dodaj|edyt|zmień|zmien|uruchom|sprawdź|sprawdz|zbadaj|zaimplement|chcę|chce|możesz|mozesz)\w*",
+            value,
+        )
+    )
+
+
 def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
@@ -420,6 +431,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     from rlm.v100 import chat_resources
 
     resource_request = chat_resources.instruction(message)
+    question_only = conversation_question(message) and not resource_request
+    if question_only:
+        client.sampling_args["max_tokens"] = min(768, client.sampling_args["max_tokens"])
     with connect(root) as db:
         history = db.execute(
             "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 3"
@@ -463,7 +477,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             ),
         }
     ]
-    for old in reversed([] if resource_request else history):
+    for old in reversed([] if resource_request else (history[:1] if question_only else history)):
         messages += [
             {"role": "user", "content": old["message"][:1500]},
             {"role": "assistant", "content": json.loads(old["response"])["answer"][:1500]},
@@ -501,7 +515,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         from rlm.v100.dashboard_editor import status as dashboard_status
 
         dashboard_before = dashboard_status(root)
-    if profile.get("resources", {}).get("interactive_lab"):
+    if profile.get("resources", {}).get("interactive_lab") and not question_only:
         from rlm.v100.research_tools import research_turn
 
         client.research_owner = "A"
@@ -546,6 +560,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 response_format={"type": "json_object", "schema": schema(allow_long_goal)},
             )["content"]
         )
+    if question_only and result.get("actions"):
+        raise ValueError("Read-only chat question cannot execute unsolicited actions")
     if set(result) != {"answer", "actions"} or not isinstance(result["answer"], str):
         raise ValueError("Invalid chat response")
     if resource_request:

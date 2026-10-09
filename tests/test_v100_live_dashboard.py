@@ -181,6 +181,7 @@ const sample={collected_at:1,mission:{running:true,state:{phase:'research'}},rep
     program += "\nrender(sample);if(nodes.actors.children.length!==2||!nodes.goals.textContent.includes('Operator goal')||nodes.events.children.length!==1||nodes['agent-grid'].children.length!==1)throw Error('Live renderer failed');\n"
     program += """
 const textNode={nodeType:3,nodeName:'#text',nodeValue:'previous'};const reader={nodeType:1,nodeName:'PRE',childNodes:[textNode],scrollTop:77};const freshReader={nodeType:1,nodeName:'PRE',childNodes:[{nodeType:3,nodeName:'#text',nodeValue:'updated'}]};updateNode(reader,freshReader);if(reader.childNodes[0]!==textNode||textNode.nodeValue!=='updated'||reader.scrollTop!==77)throw Error('Reading node replaced');
+latestInference={events:[{time:'2026-10-09T15:30:00Z'}],agents:[{label:'Live reader',stream_output:'fresh answer'}]};render(sample);if(!nodes['agent-grid'].children[0].children[0].children[0].textContent.includes('Live reader'))throw Error('Stale snapshot replaced live output');
 const old={dataset:{key:'reader'},open:false};let disclosures=[old];document.querySelectorAll=()=>disclosures;rememberDisclosures();
 const next={dataset:{key:'reader'},open:true};disclosures=[next];restoreDisclosures();if(next.open)throw Error('User-closed detail reopened');
 next.open=true;rememberDisclosures();const newer={dataset:{key:'reader'},open:false};disclosures=[newer];restoreDisclosures();if(!newer.open)throw Error('User-open detail lost');
@@ -286,3 +287,54 @@ def test_operator_opt_in_records_returned_local_trace_and_preserves_public_outpu
     agent = live_status.agent_views(events, [])[0]
     assert agent["returned_trace"] == trace
     assert "Public answer" in agent["declaration"]
+
+
+def test_transaction_retains_reading_container_and_scroll_across_updates():
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        pytest.skip("Node unavailable")
+    program = r"""
+class Text {
+ constructor(value){this.nodeType=3;this.nodeName='#text';this.nodeValue=value;this.parentNode=null}
+ cloneNode(){return new Text(this.nodeValue)}
+ remove(){if(this.parentNode){const p=this.parentNode;p.childNodes.splice(p.childNodes.indexOf(this),1);this.parentNode=null}}
+ replaceWith(n){const p=this.parentNode;p.insertBefore(n,this);this.remove()}
+}
+class Element extends Text {
+ constructor(tag){super('');this.nodeType=1;this.nodeName=tag.toUpperCase();this.childNodes=[];this.dataset={};this.style={};this.attrs={};this.scrollTop=0;this.scrollLeft=0}
+ get children(){return this.childNodes.filter(n=>n.nodeType===1)}
+ get attributes(){return Object.entries(this.attrs).map(([name,value])=>({name,value}))}
+ get textContent(){return this.childNodes.map(n=>n.nodeType===3?n.nodeValue:n.textContent).join('')}
+ set textContent(v){this.replaceChildren(new Text(String(v)))}
+ append(...items){for(const n of items)this.insertBefore(typeof n==='string'?new Text(n):n,null)}
+ insertBefore(n,before){n.remove();const i=before?this.childNodes.indexOf(before):this.childNodes.length;this.childNodes.splice(i,0,n);n.parentNode=this}
+ replaceChildren(...items){for(const n of [...this.childNodes])n.remove();this.append(...items)}
+ after(n){const p=this.parentNode;p.insertBefore(n,p.childNodes[p.childNodes.indexOf(this)+1]||null)}
+ setAttribute(k,v){this.attrs[k]=String(v)}
+ getAttribute(k){return this.attrs[k]??null}
+ hasAttribute(k){return k in this.attrs}
+ removeAttribute(k){delete this.attrs[k]}
+ querySelectorAll(selector){const all=[];function visit(n){for(const c of n.children||[]){all.push(c);visit(c)}}visit(this);return all.filter(n=>selector[0]==='#'?n.id===selector.slice(1):selector==='pre'?n.nodeName==='PRE':selector==='[data-scroll-key]'?n.dataset.scrollKey:selector==='details[data-key]'?n.nodeName==='DETAILS'&&n.dataset.key:false)}
+ querySelector(s){return this.querySelectorAll(s)[0]||null}
+ cloneNode(deep){const n=new Element(this.nodeName);n.id=this.id;n.dataset={...this.dataset};n.attrs={...this.attrs};n.style={...this.style};n.open=this.open;if(deep)n.append(...this.childNodes.map(c=>c.cloneNode(true)));return n}
+}
+const body=new Element('body');const document={body,getElementById:id=>body.querySelector('#'+id),querySelectorAll:s=>body.querySelectorAll(s),createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t),createTextNode:t=>new Text(t)};
+const window={scrollX:0,scrollY:400,scrollTo(x,y){this.scrollX=x;this.scrollY=y}};
+const location={reload(){throw Error('Unexpected reload')}};const setInterval=()=>{};const fetch=()=>new Promise(()=>{});
+"""
+    for identity in dashboard_layout.REQUIRED_IDS:
+        program += f"{{const n=new Element('div');n.id={json.dumps(identity)};body.append(n)}}\n"
+    program += dashboard_layout.APP_SCRIPT
+    program += r"""
+const readingCard=new Element('article');readingCard.dataset.scrollKey='gpu';readingCard.scrollTop=140;
+const detail=new Element('details');detail.dataset.key='gpu-proof';detail.open=true;
+const summary=new Element('summary');summary.textContent='Evidence';const pre=new Element('pre');pre.id='probe';pre.textContent='old output';pre.scrollTop=73;
+detail.append(summary,pre);readingCard.append(detail);body.append(readingCard);const originalText=pre.childNodes[0];
+for(let i=0;i<4;i++)stablePaint(()=>{$('probe').textContent='new output '+i});
+if(document.getElementById('probe')!==pre||pre.childNodes[0]!==originalText||pre.textContent!=='new output 3')throw Error('Reader DOM identity lost');
+if(!detail.open||readingCard.scrollTop!==140||pre.scrollTop!==73||window.scrollY!==400)throw Error('Reading position lost');
+"""
+    result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
+    assert result.returncode == 0, result.stderr

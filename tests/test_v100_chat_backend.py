@@ -180,3 +180,18 @@ def test_capability_question_needs_no_inference_or_profile(tmp_path, monkeypatch
     assert result["responder"]["model"] == "controller-capabilities"
     assert result["actions"] == []
     assert "nie gwarantuję zysku" in result["answer"]
+
+
+@pytest.mark.parametrize(
+    "message", ["a co z zarabianiem", "co robisz z wynikami", "jak działa ML?"]
+)
+def test_readonly_question_uses_conversation_route(message):
+    assert mission_chat.conversation_question(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["napraw dashboard", "czy możesz uruchomić test", "co zrobić? zaimplementuj test", "zmien cel"],
+)
+def test_explicit_work_keeps_executable_route(message):
+    assert not mission_chat.conversation_question(message)

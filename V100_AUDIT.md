@@ -625,3 +625,25 @@ the existing game guard and 50 percent target. Windows runtime validation remain
 required. Dashboard keyed details and their existing text nodes are retained and
 updated in place, including nested text scroll and open/closed state. This replaces
 reconstruction of reading nodes, not just restoration of their open flags.
+
+## v55: transactional dashboard refresh and one-turn conversational questions
+
+All periodic dashboard render paths prepare a detached view and reconcile keyed
+existing DOM nodes. Reading containers, nested text nodes, open state, scroll and
+handlers remain attached in the published view. The previous page-anchor scroll
+adjustment is removed. Older full telemetry cannot overwrite fresher inference
+output. Node tests cover repeated updates retaining the same reader and text
+objects and all scroll offsets; a browser executable is unavailable here.
+
+Read-only conversational questions use one bounded generation instead of three
+research tool-routing rounds. Explicit work requests retain executable tools;
+unsolicited actions from a conversational reply are rejected. This reduces avoidable
+work without claiming that an unavailable or saturated backend always answers.
+The supplied GPU image shows loading-context and 4 MiB, which is not evidence of
+a persistent CUDA failure. Hardware logs and completion after model load are
+required to establish the actual inference/training state.
+
+Validation: 1018 passed, 65 skipped, one resource-dependent worker integration
+deselected, one existing PEFT warning. Ruff and upgrade shell checks pass. The
+transaction test executes four refreshes and checks actual object identity for
+reader/text nodes, expanded state and page/card/text scroll offsets.
