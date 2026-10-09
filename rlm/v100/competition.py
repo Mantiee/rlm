@@ -5,12 +5,14 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
+import psutil
 import requests
 
 from rlm.clients.llamacpp import LlamaCppClient
@@ -48,8 +50,33 @@ def require_idle_gpu() -> None:
         )
 
 
+def guard_cpu_process(
+    process, resources: dict, stop: threading.Event, cancel: threading.Event | None = None
+) -> None:
+    """Retire only this owned CPU process when resources or mission lifetime end."""
+    while not stop.wait(1) and process.poll() is None:
+        try:
+            rss = psutil.Process(process.pid).memory_info().rss / 2**30
+        except psutil.NoSuchProcess:
+            return
+        if (
+            (cancel is not None and cancel.is_set())
+            or available_ram_gib() < resources["min_free_ram_gib"]
+            or rss > resources["max_rss_gib"]
+        ):
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            return
+
+
 @contextmanager
-def managed_server(profile_path: Path, root: Path, log_path: Path):
+def managed_server(
+    profile_path: Path, root: Path, log_path: Path, cancel: threading.Event | None = None
+):
     profile = load_profile(profile_path, root)
     from rlm.v100.remote_helper import remote_profile
     from rlm.v100.scratch_master import is_scratch, verify
@@ -106,6 +133,15 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
             stderr=subprocess.STDOUT,
             env=environment,
         )
+        stop_guard = threading.Event()
+        guard = None
+        if cpu and profile.get("resources", {}).get("cpu_guard"):
+            guard = threading.Thread(
+                target=guard_cpu_process,
+                args=(process, profile["resources"], stop_guard, cancel),
+                daemon=True,
+            )
+            guard.start()
         try:
             if cpu:
                 os.setpriority(os.PRIO_PROCESS, process.pid, 10)
@@ -113,6 +149,8 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
             with requests.Session() as session:
                 session.trust_env = False
                 while True:
+                    if cancel is not None and cancel.is_set():
+                        raise RuntimeError("Managed server startup cancelled by mission shutdown")
                     if process.poll() is not None:
                         raise RuntimeError(f"Managed server exited; inspect {log_path}")
                     if time.monotonic() >= deadline:
@@ -129,6 +167,9 @@ def managed_server(profile_path: Path, root: Path, log_path: Path):
                     time.sleep(0.25)
             yield profile
         finally:
+            stop_guard.set()
+            if guard is not None:
+                guard.join(timeout=12)
             if process.poll() is None:
                 process.terminate()
                 try:

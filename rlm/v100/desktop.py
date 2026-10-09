@@ -14,6 +14,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import psutil
 import requests
@@ -23,6 +24,54 @@ from rlm.v100.common import atomic_json
 IMAGE = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2"
 SSH_PORT = 12229
 PROXY_PORT = 12230
+
+
+def refresh_source(root: Path, value: dict) -> dict:
+    """Replace only the stopped guest's readonly source ISO; keep its work disk."""
+    from rlm.v100.code_lab import snapshot_source
+    from rlm.v100.protection import file_hash
+
+    folder = root / "research/desktop"
+    source = json.loads((root / "research/self-code-source.json").read_text())
+    iso = folder / "source.iso"
+    if value.get("source_revision") == source["revision"] and value.get("source_iso_sha256"):
+        if file_hash(iso) != value["source_iso_sha256"]:
+            raise ValueError("Readonly desktop source ISO changed")
+        return value
+    state = folder / "status.json"
+    if state.exists():
+        previous = json.loads(state.read_text())
+        if previous.get("running") and psutil.pid_exists(previous.get("pid", -1)):
+            raise ValueError("Stop the owned guest before refreshing its source ISO")
+    if shutil.disk_usage(folder).free < 2 * 2**30:
+        raise ValueError("Source ISO refresh needs 2 GiB free disk")
+    with TemporaryDirectory(prefix="source-refresh-", dir=folder) as temporary:
+        work = Path(temporary)
+        copied = work / "source"
+        snapshot_source(Path(source["source"]), copied)
+        (copied / "V100_SOURCE_REVISION").write_text(source["revision"] + "\n")
+        replacement = work / "source.iso"
+        subprocess.run(
+            binary(value["runtime"], "xorriso")
+            + [
+                "-as",
+                "mkisofs",
+                "-volid",
+                "V100CODE",
+                "-joliet",
+                "-rock",
+                "-o",
+                str(replacement),
+                str(copied),
+            ],
+            check=True,
+            timeout=120,
+        )
+        sha256 = file_hash(replacement)
+        replacement.replace(iso)
+    value = {**value, "source_revision": source["revision"], "source_iso_sha256": sha256}
+    atomic_json(folder / "manifest.json", value)
+    return value
 
 
 def private_tools(root: Path) -> dict:
@@ -189,12 +238,12 @@ def prepare(root: Path) -> dict:
 
     if status(root)["running"]:
         raise ValueError("Prepare desktop while mission is stopped")
-    if shutil.disk_usage(root).free < 60 * 2**30:
-        raise ValueError("Desktop preparation needs 60 GiB free disk")
     folder = root / "research/desktop"
     manifest = folder / "manifest.json"
     if manifest.exists():
-        return json.loads(manifest.read_text())
+        return refresh_source(root, json.loads(manifest.read_text()))
+    if shutil.disk_usage(root).free < 60 * 2**30:
+        raise ValueError("Desktop preparation needs 60 GiB free disk")
     folder.mkdir(parents=True, exist_ok=True)
     os.chmod(folder, 0o700)
     runtime = private_tools(root)
@@ -227,6 +276,9 @@ def prepare(root: Path) -> dict:
         target = copied / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((source / name).read_bytes())
+    (copied / "V100_SOURCE_REVISION").write_text(
+        json.loads((root / "research/self-code-source.json").read_text())["revision"] + "\n"
+    )
     for name, label, directory in (
         ("seed.iso", "cidata", seed),
         ("source.iso", "V100CODE", copied),
@@ -264,6 +316,9 @@ def prepare(root: Path) -> dict:
         ],
         "scope": "Guest root only, readonly code ISO, public HTTP(S), no host files/credentials/GPU passthrough",
     }
+    from rlm.v100.protection import file_hash
+
+    value["source_iso_sha256"] = file_hash(folder / "source.iso")
     atomic_json(manifest, value)
     return value
 
@@ -534,14 +589,33 @@ def health(root: Path) -> dict:
     try:
         result = run(
             root,
-            "test -f /var/lib/cloud/instance/boot-finished && "
-            "test -d /workspace && test -d /opt/master-source/rlm && "
-            "systemctl is-active --quiet research-desktop.service && "
-            "DISPLAY=:0 xdotool getdisplaygeometry && printf '\\nGUEST_READY\\n'",
+            "ready=1\n"
+            'probe() { name=$1; shift; if "$@"; then printf \'CHECK_%s=ok\\n\' "$name"; '
+            "else printf 'CHECK_%s=failed\\n' \"$name\"; ready=0; fi; }\n"
+            "probe cloud_init test -f /var/lib/cloud/instance/boot-finished\n"
+            "probe workspace test -d /workspace\n"
+            "probe source test -d /opt/master-source/rlm\n"
+            "probe gui_service systemctl is-active --quiet research-desktop.service\n"
+            "probe display env DISPLAY=:0 xdotool getdisplaygeometry\n"
+            "if [ -f /opt/master-source/V100_SOURCE_REVISION ]; then "
+            "printf 'SOURCE_REVISION='; cat /opt/master-source/V100_SOURCE_REVISION; fi\n"
+            "if [ \"$ready\" = 1 ]; then printf 'GUEST_READY\\n'; else "
+            "cloud-init status 2>&1; tail -c 2000 /var/log/cloud-init-output.log 2>/dev/null; "
+            "journalctl -u research-desktop.service -n 8 --no-pager 2>/dev/null; exit 1; fi",
             seconds=5,
-            output_limit=1000,
+            output_limit=4000,
         )
         ready = result["exit_code"] == 0 and "GUEST_READY" in result["stdout"]
+        revision = next(
+            iter(re.findall(r"^SOURCE_REVISION=([0-9a-f]{40})$", result["stdout"], re.MULTILINE)),
+            None,
+        )
+        manifest = root / "research/desktop/manifest.json"
+        expected = (
+            json.loads(manifest.read_text()).get("source_revision") if manifest.exists() else None
+        )
+        if expected and revision != expected:
+            ready = False
         return {
             "ready": ready,
             "state": "SSH, cloud-init, source mount and GUI ready"
@@ -549,6 +623,12 @@ def health(root: Path) -> dict:
             else "SSH/installation/GUI not ready",
             "exit_code": result["exit_code"],
             "detail": result["stderr"][:300],
+            "checks": dict(
+                re.findall(r"^CHECK_(\w+)=(ok|failed)$", result["stdout"], re.MULTILINE)
+            ),
+            "loaded_source_revision": revision,
+            "expected_source_revision": expected,
+            "diagnostic": result["stdout"][-3000:],
             "checked_at": time.time(),
         }
     except (ValueError, OSError, subprocess.SubprocessError) as error:

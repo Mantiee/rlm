@@ -34,7 +34,7 @@ def audit(root: Path) -> dict:
         "audited_paper_outcomes": evidence["available_audited_paper_outcomes"],
         "research_policy": settings(root),
         "user_controls": {
-            "chat": "persistent queue; accepted V100 while available, explicitly labeled RTX delegate during exclusive training",
+            "chat": "persistent queue; accepted V100, RAM-admitted identical accepted weights on CPU during GPU training, then explicit RTX delegate",
             "long_term_goal": "clear current operator natural-language request or /goal or /cel; no autonomous model changes",
             "short_mid_plans": "versioned plans, model or operator can revise",
             "directives": "next R&D request",
@@ -51,6 +51,7 @@ def audit(root: Path) -> dict:
         "hybrid_memory_prepared": (root / "research/mission-semantic.json").exists(),
         "own_code_prepared": (root / "research/self-code-source.json").exists(),
         "desktop_prepared": (root / "research/desktop/manifest.json").exists(),
+        "accepted_cpu_chat_enabled": profile.get("resources", {}).get("accepted_cpu_chat", False),
         "public_benchmarks_prepared": (root / "research/public-benchmarks/current.json").exists(),
         "resident_workers": evidence["drones"],
         "implemented": "LoRA SFT and outcome-derived DPO preferences, optimizer checkpoints, replay/KL, fixed/public plus one-use fresh gates, new verified curriculum tool, bounded reward shadow head, automatic library-supported or isolated custom full-weight master architecture activation/rollback, owned distributed CPU training workers, source drones and sandbox/guest browser code candidates",
@@ -90,7 +91,7 @@ def audit(root: Path) -> dict:
         "not_implemented": [
             "profit-maximizing policy RL",
             "hard per-helper GPU utilization or power cap on Windows WDDM",
-            "accepted-master chat inference during exclusive master training on the single V100; RTX delegation is used instead",
+            "simultaneous GPU training and GPU accepted-master chat on the single V100; concurrent accepted-master CPU chat is RAM-admitted",
             "autonomous distributed free managed Colab workers",
             "automatic certification of sports/equities provider fees, account rights and settlement semantics",
             "automatic account creation or bypassing browser authentication/quotas",

@@ -51,6 +51,10 @@ def choose_profile(root: Path) -> Path:
     if live and Path(live).exists():
         # Serving checkpoints take precedence over newly generated speed-test profiles.
         return Path(live)
+    if previous.get("run"):
+        input_profile = Path(previous["run"]) / "input-profile.json"
+        if input_profile.is_file():
+            return input_profile
     for path in (root / "research/logs").glob("mtp-ab-*/validated-profile.json"):
         if valid(load_profile(path, root)):
             candidates.append(path)
@@ -165,6 +169,7 @@ def prepare(
         resident_drones=True,
         independent_branch_serving=True,
         interactive_lab=True,
+        accepted_cpu_chat=True,
         public_benchmarks=bool(current(root)),
         mission_max_context=131072,
     )

@@ -1,6 +1,6 @@
 """Persistent user chat/control queue serviced alongside the owned mission.
 
-No second model is loaded. During exclusive training, requests remain queued.
+Accepted weights can be served on CPU during exclusive GPU training when RAM permits.
 User directives steer R&D. Only the local user's explicit natural-language request or /goal changes the long-term goal.
 """
 
@@ -206,7 +206,7 @@ def schema(allow_long_goal: bool = False) -> dict:
     }
 
 
-def respond(root: Path, directory: Path, request: dict) -> dict:
+def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
     from rlm.v100.mission import status
@@ -283,6 +283,8 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
     # The endpoint is reused for candidate evaluation. Chat waits rather than
     # talking to an unaccepted candidate or opening another GPU server.
     delegated = False
+    cpu_master = False
+    cpu_detail = None
     try:
         actual = client.request("/props")
         if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
@@ -290,19 +292,30 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
     except (requests.RequestException, OSError):
         if not profile.get("resources", {}).get("interactive_lab"):
             raise
-        from rlm.v100.remote_helper import remote_profile, selected_helper
+        if accepted_cpu is not None and profile.get("resources", {}).get("accepted_cpu_chat"):
+            try:
+                client = accepted_cpu.get(profile)
+                cpu_master = True
+            except (ValueError, OSError, RuntimeError, requests.RequestException) as error:
+                cpu_detail = str(error)[:300]
+                atomic_json(
+                    directory / "accepted-cpu-chat-status.json",
+                    {"available": False, "detail": cpu_detail},
+                )
+        if not cpu_master:
+            from rlm.v100.remote_helper import remote_profile, selected_helper
 
-        helper = load_profile(selected_helper(root), root)
-        if not remote_profile(helper):
-            raise requests.ConnectionError(
-                "Master busy; no independent remote chat helper"
-            ) from None
-        client = helper_client(helper, root)
-        client.identity()
-        client.sampling_args["max_tokens"] = 2048
-        client.enable_thinking = False
-        client.activity_actor = "chat-delegate"
-        delegated = True
+            helper = load_profile(selected_helper(root), root)
+            if not remote_profile(helper):
+                raise requests.ConnectionError(
+                    "Master busy; no independent remote chat helper"
+                ) from None
+            client = helper_client(helper, root)
+            client.identity()
+            client.sampling_args["max_tokens"] = 2048
+            client.enable_thinking = False
+            client.activity_actor = "chat-delegate"
+            delegated = True
     with connect(root) as db:
         history = db.execute(
             "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 3"
@@ -386,15 +399,31 @@ def respond(root: Path, directory: Path, request: dict) -> dict:
     if set(result) != {"answer", "actions"} or not isinstance(result["answer"], str):
         raise ValueError("Invalid chat response")
     result["applied"] = apply_actions(root, result["actions"], message)
-    result["responder"] = {"model": client.model_name, "delegated_while_master_busy": delegated}
+    result["responder"] = {
+        "model": client.model_name,
+        "delegated_while_master_busy": delegated,
+        "accepted_master_on_cpu": cpu_master,
+        "accepted_model_sha256": accepted_cpu.sha256 if cpu_master else None,
+        "cpu_admission_detail": cpu_detail,
+    }
     result["scope"] = (
-        "Weights change only through independently tested training; chat shares the inference queue"
+        "Weights change only through independently tested training; CPU chat uses accepted weights, never a training candidate"
     )
     return result
 
 
-def service(root: Path, directory: Path, stop: threading.Event) -> None:
+def service(root: Path, directory: Path, stop: threading.Event, accepted_cpu=None) -> None:
+    try:
+        service_loop(root, directory, stop, accepted_cpu)
+    finally:
+        if accepted_cpu is not None:
+            accepted_cpu.close()
+
+
+def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cpu=None) -> None:
     while not stop.wait(1):
+        if accepted_cpu is not None:
+            accepted_cpu.maintain()
         with connect(root) as db:
             row = db.execute(
                 "SELECT * FROM requests WHERE state='queued' AND updated<? ORDER BY rowid LIMIT 1",
@@ -404,7 +433,11 @@ def service(root: Path, directory: Path, stop: threading.Event) -> None:
             continue
         request = dict(row)
         try:
-            response = respond(root, directory, request)
+            response = (
+                respond(root, directory, request, accepted_cpu)
+                if accepted_cpu is not None
+                else respond(root, directory, request)
+            )
             with connect(root) as db:
                 db.execute(
                     "UPDATE requests SET state='completed',response=?,error=NULL,updated=? WHERE id=?",
@@ -432,14 +465,21 @@ def service(root: Path, directory: Path, stop: threading.Event) -> None:
 
 @contextmanager
 def alongside(root: Path, directory: Path):
+    from rlm.v100.chat_backend import AcceptedCPUChat
+
     stop = threading.Event()
-    thread = threading.Thread(target=service, args=(root, directory, stop), daemon=True)
+    accepted_cpu = AcceptedCPUChat(root, directory, stop)
+    thread = threading.Thread(
+        target=service, args=(root, directory, stop, accepted_cpu), daemon=True
+    )
     thread.start()
     try:
         yield
     finally:
         stop.set()
         thread.join(timeout=1)
+        if not thread.is_alive():
+            accepted_cpu.close()
 
 
 def wait_reply(root: Path, identity: str, timeout: float = 120) -> dict:
@@ -474,7 +514,9 @@ def chat(root: Path, message: str | None = None) -> None:
             who = result["response"].get("responder", {})
             label = who.get("model", "controller")
             if who.get("delegated_while_master_busy"):
-                label += " — zastępca, V100 zajęty"
+                label += " - zastępca, V100 zajęty"
+            elif who.get("accepted_master_on_cpu"):
+                label += " - zaakceptowany master na CPU"
             print(f"{label}>", result["response"]["answer"])
             print("Wykonane zmiany:", json.dumps(result["response"]["applied"], ensure_ascii=False))
         else:

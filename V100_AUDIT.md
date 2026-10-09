@@ -1,4 +1,4 @@
-# V100 mission audit v100.38
+# V100 mission audit v100.39
 
 This inventory separates source implementation from configuration, execution and
 demonstrated improvement. Passing controller tests does not certify GPU stability,
@@ -12,7 +12,7 @@ every requested feature is complete or optimal.
 | Autonomous self-upgrade loop | `mission.py`, `continuous.py`, `supervisor.py` | Accepted updates and numerical health, not loop count alone |
 | Operator-owned long-term objective | `goals.py`, `chat_goals.py`, `planning.py` | Only a clear current operator request can change it; upgrades preserve old goals |
 | Short/mid-term plans from ordinary chat | `mission_chat.py`, `planning.py` | Versioned host receipts; a written plan does not mean its experiment ran |
-| Chat while research continues | Persistent queue, accepted master and explicit RTX delegate | One V100 slot shares inference; exclusive training prevents accepted-master chat temporarily |
+| Chat while research continues | Persistent queue, accepted native master on GPU or RAM-admitted CPU, explicit RTX delegate | CPU copy uses the same accepted weights, is slower and may be deferred by host RAM pressure |
 | Factual status in chat | `mission_evidence.py`, supplied automatically and as a research tool | Report paths, successful optimizer counters and accepted versions are distinct; missing counters mean unknown |
 | Long context, Flash Attention, KV | Native configuration and fit checks | Device execution and long-input accuracy; free VRAM alone does not establish speed |
 | Adaptive thinking/output | Validated `research_policy.py` budgets | Research only; fixed evaluations retain comparable settings |
@@ -36,6 +36,36 @@ every requested feature is complete or optimal.
 | Historical/event-timed backtests | Chronological splits, events, cash/buy-hold and cost stress | Historical availability/leakage; past sample performance does not prove future income |
 | Learn from profitable/losing outcomes | Audited paper accounting, causal DPO, shadow reward head | Resolved valid outcomes required; not unbiased profit-maximizing policy RL |
 | Net results and local alerts | Audited paper reports and labeled rejected/accepted proposals | No real orders or demonstrated income edge inferred from signals |
+
+## v100.39 additions
+
+`chat_backend.py` can serve the identical accepted native GGUF on a separate
+CPU-only loopback endpoint while the V100 performs an exclusive training or
+candidate-evaluation job. It never adopts the model found on the candidate endpoint.
+The model digest and native launch receipt are checked, including every cached
+reuse. Two low-priority threads, an 8192-token context, 1024 output tokens and
+no draft GPU model bound this fallback. Admission requires at least 16 GiB
+available host RAM, or a larger weight-size-dependent estimate. An owned-process
+watchdog retires it below 4 GiB available RAM, above its RSS budget, or on mission
+shutdown. Idle copies close after 180 seconds. A labelled RTX delegate remains
+the fallback if CPU admission fails; otherwise requests stay queued during outages.
+This adds concurrency through CPU serving, not simultaneous training/inference on
+the single GPU or a guarantee of low chat latency. Actual device fit/speed remains
+an on-device check. `accepted-cpu-chat-status.json` and chat responder receipts
+identify the backend and accepted model digest.
+
+Stopped campaign setup refreshes the guest's readonly code ISO to the newly
+pinned own-source revision instead of retaining the original v32 code indefinitely.
+It preserves the writable guest disk, refuses a live-guest replacement, checks the
+ISO digest and leaves the old ISO untouched if building the replacement fails.
+GUI health now reports separate cloud-init, workspace, source, service and display
+checks, bounded guest installation/service logs, and loaded versus expected source
+revision. A stale source mount cannot report full readiness. This diagnoses startup
+failures; it does not certify that this user's VM has completed installation.
+
+Campaign upgrades preserve the previous mission input profile even before its
+first completed learning cycle. Validated learning checkpoints still take priority.
+The user-owned goals and prior accepted weights are not reset by this addition.
 
 ## v100.38 additions
 
