@@ -365,9 +365,12 @@ def run_candidate(
     suite: Path,
     budget: dict | None = None,
     init_weights: Path | None = None,
+    morph_growth: bool = False,
 ) -> dict:
     from rlm.v100.training import load_records
 
+    if type(morph_growth) is not bool or (morph_growth and init_weights is None):
+        raise ValueError("Invalid morphology initialization")
     budget = copy.deepcopy(budget or DEFAULT_BUDGET)
     validate_budget(budget)
     output = candidate_path(root, candidate_id)
@@ -418,6 +421,7 @@ def run_candidate(
             if init_weights is not None:
                 if init_weights.is_symlink() or not init_weights.is_file():
                     raise ValueError("Continuation weights must be an ordinary frozen file")
+                configuration["morph_growth"] = morph_growth
                 configuration["init_weights"] = str(init_weights.resolve())
                 configuration["init_weights_sha256"] = file_hash(init_weights)
                 mounts = [(init_weights.resolve(), False)]

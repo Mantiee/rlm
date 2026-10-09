@@ -403,6 +403,24 @@ TOOLS = [
         {"candidate_id": {"type": "string"}},
     ),
     tool_schema(
+        "morph_model",
+        "Propose a goal-linked structural candidate. Compatible parent growth appends identity-initialized residual layers and freezes old weights. Other shapes train independently. Choose a pilot with test_submodel OR a full-budget proposal with propose_scratch_master on a fresh candidate; activation needs measured goal improvement and all quality gates.",
+        {
+            "candidate_id": {"type": "string"},
+            "architecture": {"type": "string", "enum": ["gru", "transformer"]},
+            "width": {"type": "integer"},
+            "layers": {"type": "integer"},
+            "heads": {"type": "integer"},
+            "residual_layers": {"type": "integer"},
+            "bottleneck": {"type": "integer"},
+            "parent_candidate_id": {"type": "string"},
+            "hypothesis": {"type": "string"},
+        },
+    ),
+    tool_schema(
+        "morph_model_status", "Inspect structural proposals and their actual trial reports.", {}
+    ),
+    tool_schema(
         "create_submodel",
         "Create isolated Python architecture code: build(config) returns a causal torch.nn.Module, input integer byte tokens [B,T], output logits [B,T,257]. No execution on the host. Full weights can learn in a small CPU pilot.",
         {
@@ -855,6 +873,14 @@ class ResearchTools:
                 return book.choose(self.branch, **arguments)
             finally:
                 book.close()
+        if name == "morph_model":
+            from rlm.v100.morphology import propose
+
+            return propose(self.root, self.branch, **arguments)
+        if name == "morph_model_status" and not arguments:
+            from rlm.v100.morphology import status
+
+            return status(self.root)
         if name == "create_submodel":
             from rlm.v100.architectures import create_candidate
 
@@ -911,7 +937,17 @@ class ResearchTools:
                     "Submodel trial deferred: need 12 GiB available RAM alongside the main learner"
                 )
             pool, suite = prepared_inputs(self.root)
-            report = run_candidate(self.root, arguments["candidate_id"], pool, suite)
+            from rlm.v100.morphology import initialization
+
+            initial, growth = initialization(self.root, arguments["candidate_id"])
+            report = run_candidate(
+                self.root,
+                arguments["candidate_id"],
+                pool,
+                suite,
+                init_weights=initial,
+                morph_growth=growth,
+            )
             return {
                 key: report[key]
                 for key in ("candidate_id", "owner", "passed_cases", "training_seconds", "status")

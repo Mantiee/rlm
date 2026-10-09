@@ -49,10 +49,14 @@ def activate(root: Path, parent: dict, result: dict, gates: list[dict]) -> tuple
     expert = registry.get(result["expert_id"])
     candidate = copy.deepcopy(expert["profile"])
     quality = expert["quality_reports"]["candidate"]
+    requires_goal = candidate.get("resources", {}).get("require_goal_improvement", False)
+    if requires_goal and not result.get("goal_gate"):
+        raise ValueError("Morphology activation needs measured goal improvement")
     if result.get("goal_gate"):
         from rlm.v100.architecture_goal_gate import verify
 
-        if not verify(root, Path(result["goal_gate"]), parent, candidate)["passed"]:
+        proof = verify(root, Path(result["goal_gate"]), parent, candidate)
+        if not proof["passed"] or (requires_goal and not proof.get("improvements")):
             raise ValueError("Architecture failed its goal-linked development gate")
     if (
         not complete(quality)

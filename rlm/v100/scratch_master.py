@@ -252,6 +252,10 @@ def profile_for(root: Path, parent: dict, candidate_id: str, budget: dict) -> di
         },
         token_unit="UTF-8 bytes; not directly comparable to native BPE throughput",
     )
+    from rlm.v100.morphology import read_shape
+
+    if read_shape(folder / "source/model.py") is not None:
+        resources["require_goal_improvement"] = True
     verify(candidate)
     return candidate
 
@@ -279,8 +283,17 @@ def trial(root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], 
             raise ValueError(
                 "Scratch budget cannot preserve the parent's context/output conditions"
             )
+        from rlm.v100 import architecture_goal_gate
+        from rlm.v100.morphology import initialization, read_shape
+
+        morph = read_shape(folder / "source/model.py") is not None
+        goal_suite = architecture_goal_gate.prepare(root, parent, pool, evidence) if morph else None
+        if morph and goal_suite is None:
+            raise ValueError(
+                "Morphology master needs verified held-out goal outcomes before training"
+            )
         if not (folder / "trial").exists():
-            initial = None
+            initial, growth = initialization(root, proposal["candidate_id"])
             if (
                 is_scratch(parent)
                 and file_hash(folder / "source/model.py")
@@ -288,7 +301,10 @@ def trial(root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], 
             ):
                 verify(parent)
                 initial = Path(parent["server"]["model"])
-            run_candidate(root, proposal["candidate_id"], pool, suite, budget, initial)
+                growth = False
+            run_candidate(
+                root, proposal["candidate_id"], pool, suite, budget, initial, morph_growth=growth
+            )
         stored = json.loads((folder / "trial/budget.json").read_text())
         if stored != budget:
             raise ValueError("Trained scratch budget differs from its frozen proposal")
@@ -299,9 +315,8 @@ def trial(root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], 
             root, parent, Path(candidate["server"]["model"]), evidence / "fresh-audit"
         )
         fresh_audit.parent_report(root, parent, audit)
-        from rlm.v100 import architecture_goal_gate
-
-        goal_suite = architecture_goal_gate.prepare(root, parent, pool, evidence)
+        if not morph:
+            goal_suite = architecture_goal_gate.prepare(root, parent, pool, evidence)
         with managed_server(serving, root, evidence / "server.log"):
             quality = evaluate_suite(
                 helper_client(candidate), candidate, suite, evidence / "quality.json"
@@ -311,6 +326,9 @@ def trial(root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], 
             eligible &= architecture_goal_gate.evaluate(
                 root, candidate, goal_suite, evidence, parent
             )
+            if morph:
+                goal_proof = architecture_goal_gate.verify(root, evidence, parent, candidate)
+                eligible &= bool(goal_proof.get("improvements"))
             public = None
             if parent.get("resources", {}).get("public_benchmarks"):
                 from rlm.v100.public_benchmarks import compare, evaluate

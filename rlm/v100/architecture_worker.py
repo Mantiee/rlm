@@ -55,17 +55,24 @@ def main() -> None:
     if not 1 <= parameters <= config["max_parameters"]:
         raise ValueError("Architecture exceeds its parameter budget")
     model.to(device)
-    if config.get("init_weights"):
+    if mode == "train" and config.get("init_weights"):
         initial = Path(config["init_weights"])
         if hashlib.sha256(initial.read_bytes()).hexdigest() != config["init_weights_sha256"]:
             raise ValueError("Scratch continuation weights changed")
-        model.load_state_dict(load_file(str(initial)), strict=True)
+        state = load_file(str(initial))
+        if config.get("morph_growth"):
+            model.load_parent_state(state)
+        else:
+            model.load_state_dict(state, strict=True)
     # All parameters of this new network may learn; the Gemma parent is absent.
-    model.requires_grad_(True)
+    if not config.get("morph_growth"):
+        model.requires_grad_(True)
     if mode == "train":
         records = json.loads(Path(data_path).read_text())
         examples = [encoded(row, config["context_window"]) for row in records]
-        optimizer = torch.optim.AdamW(model.parameters(), lr=config["learning_rate"])
+        optimizer = torch.optim.AdamW(
+            [p for p in model.parameters() if p.requires_grad], lr=config["learning_rate"]
+        )
         scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda", init_scale=128)
         validation = []
         if config.get("validation_file"):

@@ -1,4 +1,4 @@
-# Synta: requirement and verification audit, v57
+# Synta: requirement and verification audit, v58
 
 This audits the visible conversation. "Implemented" means code exists and the
 listed checks pass, not that it has run successfully on the operator's computers.
@@ -55,3 +55,11 @@ Verification result: full test suite 1028 passed, 65 skipped, no deselections;
 ruff and upgrade shell checks pass. Windows startup policy has static contract
 checks, not a Windows runtime execution. Real CPU child-training/tensor-validation
 integration is included with simulated resource readings.
+
+## v58 structural evolution
+
+`morphology.py` and named research tools add bounded typed GRU/Transformer shape
+proposals and compatible identity-initialized residual growth. Existing queued
+master trials execute them in isolation. Activation additionally requires verified
+goal outcomes and strict measured task improvement. Native GGUF architecture is
+not reshaped in place. See `SYNTA_MORPHOLOGY.md` for the executable contract.
