@@ -148,7 +148,7 @@ def status(root: Path) -> dict:
 
 
 def commission(root: Path) -> dict:
-    """One bounded periodic RTX assignment, independent of GPU training phases."""
+    """One bounded collection/dossier assignment using the already serving master."""
     from rlm.v100.drones import cancel, schedule
 
     goal = load_goal(root)
@@ -165,20 +165,22 @@ def commission(root: Path) -> dict:
         return {"state": "blocked", "reason": "Income research disabled by operator"}
     path = root / "research/income-opportunities/dispatch.json"
     previous = json.loads(path.read_text()) if path.exists() else {}
-    if previous.get("goal_id") != goal["id"] and previous.get("receipt", {}).get("id"):
+    upgraded = previous.get("work_kind") != "income"
+    if (previous.get("goal_id") != goal["id"] or upgraded) and previous.get("receipt", {}).get(
+        "id"
+    ):
         cancel(root, previous["receipt"]["id"])
-    if previous.get("goal_id") == goal["id"] and time.time() < previous.get("next_poll", 0):
+    if (
+        not upgraded
+        and previous.get("goal_id") == goal["id"]
+        and time.time() < previous.get("next_poll", 0)
+    ):
         return previous
-    payload = (
-        "Goal " + goal["id"] + ": Read income_opportunities. Find a different lawful zero-deposit "
-        "mechanism outside markets. Archive primary terms with observe_goal_source; "
-        "register_income_opportunity with demand, net estimates, labor, eligibility, first-income delay "
-        "and a falsifiable test. No UI, accounts, outreach, spending or profit claims."
-    )
     try:
-        receipt = schedule(root, "A", "researcher", payload, 600)
+        receipt = schedule(root, "A", "income", goal["id"], 600)
         value = {
             "state": "scheduled",
+            "work_kind": "income",
             "goal_id": goal["id"],
             "receipt": receipt,
             "next_poll": time.time() + 600,

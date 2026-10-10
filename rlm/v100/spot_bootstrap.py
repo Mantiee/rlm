@@ -32,11 +32,20 @@ def fee_bps(body: str) -> str:
             r"Poziom\s*1\s*Ponad\s*0\s*USD\s*(?:<\s*5\s*mln\s*USD\s*)?NIE DOTYCZY\s*",
         ),
     ]
-    matches = [(start, end, row) for start, end, row in layouts if start in text and end in text]
+    # Product boundaries are case-insensitive, never substituted by instant-buy
+    # or rebate tables. Locale/rate changes still require a recognizable row.
+    matches = [
+        (start, end, row)
+        for start, end, row in layouts
+        if start.casefold() in text.casefold() and end.casefold() in text.casefold()
+    ]
     if len(matches) != 1:
         raise ValueError("Could not identify the spot-crypto fee table")
     start, end, row = matches[0]
-    sections = [part.split(end, 1)[0] for part in text.split(start)[1:]]
+    sections = [
+        re.split(re.escape(end), part, maxsplit=1, flags=re.I)[0]
+        for part in re.split(re.escape(start), text, flags=re.I)[1:]
+    ]
     section = " ".join(part for part in sections if re.search(row, part))
     rows = re.findall(row + r"(\d+(?:[.,]\d+)?)\s*%\s*(\d+(?:[.,]\d+)?)\s*%", section)
     if len(rows) != 1 or any(
@@ -117,6 +126,10 @@ def prepare(root: Path, refresh: bool = False, pair_codes: list[str] | None = No
         owned = [
             symbol_for(code) for code in pair_codes if symbol_for(code) in state["instruments"]
         ]
+        # Prices remain observable even when the fee page changes. Expired fees
+        # still block paper fills; quote refresh never certifies a fee profile.
+        if registered:
+            poll_crypto(book)
         if len(owned) == len(pair_codes) and all(
             datetime.fromisoformat(
                 state["fee_profiles"][state["instruments"][s]["fee_profile"]]["valid_until"]
@@ -124,7 +137,6 @@ def prepare(root: Path, refresh: bool = False, pair_codes: list[str] | None = No
             > datetime.now(UTC) + timedelta(hours=1)
             for s in owned
         ):
-            poll_crypto(book)
             return {
                 "status": "existing paper spot configuration retained",
                 "weights_changed": False,
@@ -132,7 +144,29 @@ def prepare(root: Path, refresh: bool = False, pair_codes: list[str] | None = No
         url, body = download_page(FEES_URL, max_bytes=2 * 2**20)
         if url != FEES_URL:
             raise ValueError("Unexpected fee-source redirect")
-        taker = fee_bps(body)
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        snapshot = root / "research/paper/sources" / (digest + ".html")
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        if not snapshot.exists():
+            snapshot.write_text(body)
+        fee_receipt = {
+            "source_url": url,
+            "source_sha256": digest,
+            "snapshot": str(snapshot),
+            "updated": time.time(),
+        }
+        try:
+            taker = fee_bps(body)
+        except ValueError as error:
+            atomic_json(
+                root / "research/paper/fee-source-status.json",
+                {**fee_receipt, "state": "blocked", "error": str(error)},
+            )
+            raise ValueError(f"{error}; archived source {digest}") from error
+        atomic_json(
+            root / "research/paper/fee-source-status.json",
+            {**fee_receipt, "state": "parsed", "taker_fee_bps": taker},
+        )
         pairs_url = PAIRS_URL.split("?", 1)[0] + "?pair=" + ",".join(pair_codes)
         rules, rule_hash, observed = public_json(root, pairs_url)
         if (
@@ -142,11 +176,6 @@ def prepare(root: Path, refresh: bool = False, pair_codes: list[str] | None = No
             or {item.get("altname") for item in rules["result"].values()} != set(pair_codes)
         ):
             raise ValueError("Kraken instrument rules unavailable")
-        digest = hashlib.sha256(body.encode()).hexdigest()
-        snapshot = root / "research/paper/sources" / (digest + ".html")
-        snapshot.parent.mkdir(parents=True, exist_ok=True)
-        if not snapshot.exists():
-            snapshot.write_text(body)
         identity = "kraken-tier1-" + str(time.time_ns())
         evidence = {"source_url": FEES_URL, "source_sha256": digest, "available_at": observed}
         profile = {

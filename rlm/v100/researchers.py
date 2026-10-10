@@ -30,6 +30,7 @@ def compact_result(result: dict) -> dict:
             "model",
             "status",
             "exercise_checks",
+            "research_quality",
         )
         if key in result
     }
@@ -156,7 +157,8 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
                 "kind": event["kind"],
                 "excerpt": json.dumps(compact_result(event["payload"]), ensure_ascii=False)[:600],
             }
-            for event in shared.recent(4)
+            for event in shared.recent(12)
+            if event["payload"].get("research_quality", {}).get("eligible_for_review", True)
         ]
     finally:
         shared.close()
@@ -210,7 +212,12 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
         queue.close()
     result["exercise_checks"] = checks
     result["research_trace"] = message.get("research_trace", [])
-    result.update(status="unverified hypothesis", role=job["role"], model=client.model_name)
+    from rlm.v100.research_contract import assessment
+
+    result["research_quality"] = assessment(root, result)
+    result.update(
+        status=result["research_quality"]["state"], role=job["role"], model=client.model_name
+    )
     from rlm.v100.mission_memory import archive
 
     archive(
@@ -230,6 +237,13 @@ def review_research(client, branch: str, results: list[dict], root: Path) -> dic
     client.research_owner = branch
     if not results or len(results) > 4:
         raise ValueError("Review needs 1-4 worker results")
+    eligible = [
+        index
+        for index, row in enumerate(results)
+        if row.get("research_quality", {}).get("eligible_for_review", True)
+    ]
+    if not eligible:
+        return {"useful_indices": [], "conclusion": "All results rejected by test/duplicate audit"}
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -238,7 +252,7 @@ def review_research(client, branch: str, results: list[dict], root: Path) -> dic
             "useful_indices": {
                 "type": "array",
                 "uniqueItems": True,
-                "items": {"type": "integer", "enum": list(range(len(results)))},
+                "items": {"type": "integer", "enum": eligible},
             },
             "conclusion": {"type": "string", "maxLength": 1600},
         },
@@ -267,7 +281,7 @@ def review_research(client, branch: str, results: list[dict], root: Path) -> dic
     indices = decision["useful_indices"]
     if (
         not isinstance(indices, list)
-        or not all(type(index) is int and 0 <= index < len(results) for index in indices)
+        or not all(type(index) is int and index in eligible for index in indices)
         or len(set(indices)) != len(indices)
     ):
         raise ValueError("Invalid retained worker indices")

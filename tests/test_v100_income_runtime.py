@@ -104,7 +104,7 @@ def test_income_job_is_bounded_periodic_deduplicated_and_goal_attributed(tmp_pat
 
     jobs = inspect(tmp_path)
     assert len(jobs) == 1 and jobs[0]["interval"] == 600
-    assert "outside markets" in jobs[0]["assignment"]
+    assert jobs[0]["kind"] == "income" and jobs[0]["assignment"] == goal["id"]
     atomic_json(run / "input-profile.json", {"resources": {"paper_research_enabled": False}})
     assert income_opportunities.commission(tmp_path)["state"] == "blocked"
 

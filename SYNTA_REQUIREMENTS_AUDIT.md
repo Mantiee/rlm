@@ -1,4 +1,4 @@
-# Synta: requirement and verification audit, v60
+# Synta: requirement and verification audit, v61
 
 This audits the visible conversation. "Implemented" means code exists and the
 listed checks pass, not that it has run successfully on the operator's computers.
@@ -49,9 +49,9 @@ The financial goal is not replaced by arithmetic, dashboard maintenance or a
 small forecast task. Arithmetic is an auxiliary experiment. Failed trading tests,
 losses and rejected updates remain evidence. No result here establishes income.
 
-Source-size snapshot: 46130 physical lines in 190 tracked/new Python, PowerShell and shell files under `rlm/v100`, `tools` and `tests`. Includes comments/tests, excludes temporary files.
+Historical v60 source-size snapshot: 46130 physical lines in 190 tracked/new Python, PowerShell and shell files under `rlm/v100`, `tools` and `tests`. Includes comments/tests, excludes temporary files.
 
-Verification result: full test suite 1028 passed, 65 skipped, no deselections;
+Verification result (v61): full test suite 1086 passed, 65 skipped, no deselections;
 ruff and upgrade shell checks pass. Windows startup policy has static contract
 checks, not a Windows runtime execution. Real CPU child-training/tensor-validation
 integration is included with simulated resource readings.
@@ -84,3 +84,19 @@ Validation includes a real child HTTP server standing in for the native binary,
 actual SQLite/host source archives with mocked network, concurrent fetch-counter
 updates, invalid/stale evidence rejection and explicit unknown payment. It does
 not test V100 CUDA, profitability, actual demand or the operator's Windows run.
+
+## v61 acceptance boundary
+
+The uploaded int/benchmark fault, mismatched income tests, advisory repeats,
+previous-attempt errors displayed as current, token-dominated timeline and
+visible-reader anchoring have regression tests. Native serving was observed by
+the operator in v60; v61 protected V100 routing is tested with simulated transport.
+Windows RTX remains disabled by explicit operator choice. The CPU mailbox is
+retained; a fresh worker heartbeat and executed job are still required for an
+actual remote-training claim. No income has been independently verified.
+
+Concrete execution is a public source receipt plus a prepared feasibility dossier
+and registered proposal when analysis succeeds. A blocked source/analysis has
+its own receipt. This is not autonomous financial execution, a profitable strategy,
+a security scan, a sale or universal task learning. See SYNTA_RECOVERY.md for
+exact modules and runtime artifact paths.

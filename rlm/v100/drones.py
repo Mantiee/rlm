@@ -43,6 +43,7 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
         "desktop",
         "benchmark",
         "compute-audit",
+        "income",
     ):
         raise ValueError("Choose A/B and source/python/researcher/critic/desktop")
     if kind == "compute-audit" and (
@@ -50,6 +51,11 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
         or not (root / "research/compute-jobs" / payload / "state.json").is_file()
     ):
         raise ValueError("Compute audit requires a registered host job")
+    if kind == "income":
+        from rlm.v100.goals import load_goal
+
+        if payload != (load_goal(root) or {}).get("id"):
+            raise ValueError("Income work requires the current host goal ID")
     maximum = 12000 if kind in ("python", "desktop") else 1500 if kind == "source" else 400
     if not isinstance(payload, str) or not 1 <= len(payload) <= maximum:
         raise ValueError("Drone payload exceeds its budget")
@@ -95,7 +101,7 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
 def inspect(root: Path) -> list[dict]:
     with connect(root) as db:
         rows = db.execute(
-            "SELECT id,branch,kind,interval,state,updated,result,substr(payload,1,300) AS assignment FROM jobs ORDER BY updated DESC LIMIT 32"
+            "SELECT id,branch,kind,interval,state,due,updated,result,substr(payload,1,300) AS assignment FROM jobs ORDER BY updated DESC LIMIT 32"
         ).fetchall()
     return [
         dict(row) | {"result": json.loads(row["result"]) if row["result"] else None} for row in rows
@@ -114,6 +120,10 @@ def cancel(root: Path, identity: str) -> dict:
 
 
 def execute(root: Path, job: dict) -> dict:
+    if job["kind"] == "income":
+        from rlm.v100.income_work import execute as income_execute
+
+        return income_execute(root, job)
     if job["kind"] == "compute-audit":
         from rlm.v100.distributed_compute import validate_locally
 
@@ -149,17 +159,23 @@ def execute(root: Path, job: dict) -> dict:
         )
     from rlm.v100.competition import helper_client
     from rlm.v100.goals import load_goal
+    from rlm.v100.mission_chat import preferences
     from rlm.v100.remote_helper import remote_profile, selected_helper
     from rlm.v100.researchers import research_task
 
-    profile = load_profile(selected_helper(root), root)
-    if not remote_profile(profile):
-        raise ValueError(
-            "Resident LLM drones require the external RTX; no extra local model is loaded"
-        )
-    profile["runtime"]["max_timeout"] = min(120, profile["runtime"]["max_timeout"])
-    client = helper_client(profile, root, job["branch"])
-    client.identity()
+    if preferences(root).get("remote_helper_enabled", True) is False:
+        from rlm.v100.income_work import accepted_master
+
+        client = accepted_master(root, job["branch"])
+    else:
+        profile = load_profile(selected_helper(root), root)
+        if not remote_profile(profile):
+            raise ValueError(
+                "Resident research requires an explicitly selected remote or accepted master"
+            )
+        profile["runtime"]["max_timeout"] = min(120, profile["runtime"]["max_timeout"])
+        client = helper_client(profile, root, job["branch"])
+        client.identity()
     client.activity_actor = "resident-" + job["kind"]
     client.research_tool_names = {
         "income_opportunities",
@@ -297,9 +313,9 @@ def service(root: Path, stop: threading.Event) -> None:
                     (time.time(),),
                 ).fetchall()
                 for row in jobs:
-                    llm = row["kind"] in ("researcher", "critic", "benchmark")
+                    llm = row["kind"] in ("researcher", "critic", "benchmark", "income")
                     used = sum(
-                        (kind in ("researcher", "critic", "benchmark")) == llm
+                        (kind in ("researcher", "critic", "benchmark", "income")) == llm
                         for _, kind in active.values()
                     )
                     if used >= (1 if llm else 2):
@@ -317,7 +333,8 @@ def service(root: Path, stop: threading.Event) -> None:
                     "running": True,
                     "active": list(active),
                     "cpu_slots": 2,
-                    "rtx_slots": 1,
+                    "rtx_slots": 0 if gpu_disabled(root) else 1,
+                    "local_model_slots": 1 if gpu_disabled(root) else 0,
                 },
             )
             stop.wait(2)
@@ -334,6 +351,11 @@ def alongside(root: Path):
     # are explicitly retried, with their prior results retained in activity logs.
     with connect(root) as db:
         db.execute("UPDATE jobs SET state='queued',due=? WHERE state='running'", (time.time(),))
+        if gpu_disabled(root):
+            db.execute(
+                "UPDATE jobs SET state='cancelled',updated=? WHERE kind='benchmark' AND state IN ('running','queued')",
+                (time.time(),),
+            )
     for branch, role in (("A", "researcher"), ("B", "critic")):
         seed(
             root,
@@ -342,7 +364,7 @@ def alongside(root: Path):
             "Read get_plan. Follow user directions or seek goal-relevant patterns in any domain. Use observe_goal_source, predict_goal_pattern and goal_learning_status to test fresh hypotheses. Learn from failed predictions too. Avoid repeated ideas, invented labels, causal or profit claims. Schedule useful source/CPU work and self-upgrades.",
             900,
         )
-    if (root / "research/public-benchmarks/current.json").exists():
+    if not gpu_disabled(root) and (root / "research/public-benchmarks/current.json").exists():
         seed(root, "B", "benchmark", "Pinned public panel for RTX helper", 86400)
     log = root / "research/logs/resident-drones.log"
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -415,6 +437,12 @@ def seed(root: Path, branch: str, kind: str, payload: str, interval: int) -> Non
             "default-drone-deferred",
             {"kind": kind, "reason": "Persistent queue full; existing jobs continue"},
         )
+
+
+def gpu_disabled(root: Path) -> bool:
+    from rlm.v100.mission_chat import preferences
+
+    return preferences(root).get("remote_helper_enabled", True) is False
 
 
 if __name__ == "__main__":

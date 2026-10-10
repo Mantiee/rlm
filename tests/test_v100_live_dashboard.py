@@ -335,6 +335,10 @@ detail.append(summary,pre);readingCard.append(detail);body.append(readingCard);c
 for(let i=0;i<4;i++)stablePaint(()=>{$('probe').textContent='new output '+i});
 if(document.getElementById('probe')!==pre||pre.childNodes[0]!==originalText||pre.textContent!=='new output 3')throw Error('Reader DOM identity lost');
 if(!detail.open||readingCard.scrollTop!==140||pre.scrollTop!==73||window.scrollY!==400)throw Error('Reading position lost');
+let readerTop=100;detail.isConnected=true;detail.getBoundingClientRect=()=>({top:readerTop,bottom:readerTop+200});window.innerHeight=800;
+const originalQuery=document.querySelectorAll;document.querySelectorAll=s=>s==='details[data-key][open]'?[detail]:s==='[id], [data-scroll-key]'?[readingCard,pre]:originalQuery(s);
+stablePaint(()=>{readerTop=160;$('probe').textContent='updated while a new event was inserted above'});
+if(window.scrollY!==460||readingCard.scrollTop!==140||pre.scrollTop!==73)throw Error('Visible reading anchor moved');
 """
     result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
     assert result.returncode == 0, result.stderr

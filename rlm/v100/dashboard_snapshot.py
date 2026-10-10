@@ -18,6 +18,8 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
         ("desktop", "research/desktop/status.json"),
         ("income_opportunities", "research/income-opportunities/status.json"),
         ("income_dispatch", "research/income-opportunities/dispatch.json"),
+        ("income_work", "research/income-work/status.json"),
+        ("research_quality", "research/research-quality/latest.json"),
         ("source_acquisition", "research/source-acquisition/status.json"),
     ):
         path = root / filename
@@ -40,6 +42,9 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
                 result.pop("income_dispatch", None)
             if result.get("source_acquisition", {}).get("goal_id") != goal["id"]:
                 result.pop("source_acquisition", None)
+            for name in ("income_work", "research_quality"):
+                if result.get(name, {}).get("goal_id") != goal["id"]:
+                    result.pop(name, None)
             result["plans"] = read(root)
             evidence = dict(result.get("mission_evidence", {}))
             evidence.setdefault("run", mission.get("run"))

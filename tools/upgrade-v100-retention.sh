@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10060.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10061.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -58,6 +58,7 @@ from rlm.v100.desktop import prepare as prepare_desktop
 from rlm.v100.supervisor import install
 from rlm.v100.chat_resources import repair_completed
 from rlm.v100.planning import realign_income_plans
+from rlm.v100.research_contract import repair_history
 
 root = Path(os.environ['AI_V100_ROOT'])
 # Operator explicitly requested a 50 percent helper wall-time target.
@@ -83,6 +84,10 @@ preferences['system_name'] = 'Synta'
 preferences['capture_local_model_trace'] = True
 preferences['stream_local_model_trace'] = True
 preferences['automatic_goal_compute'] = True
+# Operator stopped the Windows GPU after a black-screen hang. Never reconnect
+# or restart it implicitly; Windows CPU mailbox remains available.
+preferences['remote_helper_enabled'] = False
+preferences['remote_helper_reason'] = 'Windows GPU disabled by operator after black-screen hang; use accepted V100 and bounded CPU work'
 preferences['retention'] = {
     'research': 'RETENTION_RESEARCH.md in the readonly own-source mount',
     'experiments': 'Bounded replay/KL, L2, empirical diagonal Fisher EWC, delta-A orthogonality, A-GEM, combined EWC+orthogonality+projection and standard LoRA rank growth are exposed to A/B planning. Historical modes require prior verified TRAINING references. Frozen-column/embedding growth primitives are tiny-model experiments, not serving Gemma modifications.',
@@ -99,6 +104,8 @@ preferences['income_research'] = {
     'scope': 'No real orders, sales, outreach, accounts, spending or automatic payment claims.'
 }
 atomic_json(preferences_path, preferences)
+print('RESEARCH NOTE AUDIT:', json.dumps(repair_history(root), ensure_ascii=False), flush=True)
+print('Windows RTX requests disabled. Accepted V100 and Windows CPU remain available.', flush=True)
 print('CHAT RESOURCE RECOVERY:', json.dumps(repair_completed(root), ensure_ascii=False), flush=True)
 print(json.dumps(install(root, path), indent=2), flush=True)
 print('RETENTION AND GOAL-LINKED FORECAST LEARNING AVAILABLE. Existing setup preserved; no calibration sweep.', flush=True)

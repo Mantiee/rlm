@@ -237,6 +237,15 @@ def waiting_researcher(
         with managed_server(profile_path, root, log_path) as actual:
             yield actual
         return
+    from rlm.v100.mission_chat import preferences
+
+    if preferences(root).get("remote_helper_enabled", True) is False:
+        if fallback is None:
+            raise RuntimeError(
+                "Remote GPU disabled by operator; no accepted serving master supplied"
+            )
+        yield fallback
+        return
     active_path = root / "research/mission/active.json"
     status_path, original_state = None, None
     if active_path.exists():
@@ -328,6 +337,13 @@ def helper_client(
     from rlm.v100.remote_helper import OllamaResearchClient, remote_profile
 
     remote = remote_profile(profile)
+    if remote and root is not None:
+        from rlm.v100.mission_chat import preferences
+
+        if preferences(root).get("remote_helper_enabled", True) is False:
+            raise RuntimeError(
+                "Remote GPU disabled by operator; use the accepted V100 master or CPU jobs"
+            )
     from rlm.v100.scratch_master import ScratchClient, is_scratch
 
     scratch = is_scratch(profile)

@@ -120,7 +120,24 @@ def recent_events(root: Path, limit: int = 200) -> list[dict]:
                         ),
                     }
                 )
-    return events[-limit:]
+    # Token deltas must not push actual tool calls/errors out of the timeline.
+    meaningful = [
+        event
+        for event in events
+        if event["kind"] not in ("inference-delta", "local-model-reasoning")
+    ][-limit:]
+    deltas = [
+        event for event in events if event["kind"] in ("inference-delta", "local-model-reasoning")
+    ][-limit:]
+    return sorted(meaningful + deltas, key=lambda event: str(event.get("time", "")))
+
+
+def action_events(events: list[dict]) -> list[dict]:
+    return [
+        event
+        for event in events
+        if event.get("kind") not in ("inference-delta", "local-model-reasoning")
+    ][-200:]
 
 
 def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
@@ -142,6 +159,17 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
         )
         if event.get("kind") == "inference-start":
             view["stream_output"], view["stream_reasoning"], view["returned_trace"] = "", "", ""
+            for name in (
+                "declaration",
+                "result",
+                "task",
+                "evidence_ref",
+                "evidence_at",
+                "usage",
+                "usage_at",
+                "seconds",
+            ):
+                view.pop(name, None)
         if event.get("evidence_ref"):
             view["evidence_ref"] = event["evidence_ref"]
             view["evidence_at"] = event.get("time")
@@ -189,7 +217,12 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
                 else job["state"],
                 "task": job.get("assignment", ""),
                 "updated": job.get("updated"),
-                "result": public_summary(job.get("result") or {}),
+                "result": public_summary(job.get("result") or {})
+                if job["state"] in ("completed", "failed")
+                else "",
+                "previous_result": public_summary(job.get("result") or {})
+                if job["state"] in ("queued", "running")
+                else "",
                 "declaration": "",
                 "source": "research/state/drones.sqlite3",
                 "event_id": job["id"],
@@ -238,6 +271,10 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
     chat = current_chat(root, mission)
     external = report.get("external_compute", {}) or {}
     workers = external.get("workers", [])
+    workers = [
+        {**worker, "stale": worker.get("stale", True) or now - worker.get("updated", 0) > 300}
+        for worker in workers
+    ]
     actors = [
         {
             "id": "master",
@@ -262,7 +299,11 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
             "state": "measured",
             "metrics": cpu,
             "detail": "Entire host telemetry",
-            "jobs": [j for j in active if j["kind"] not in ("researcher", "critic", "benchmark")],
+            "jobs": [
+                j
+                for j in active
+                if j["kind"] not in ("researcher", "critic", "benchmark", "income")
+            ],
             "stale": False,
         },
         {
@@ -294,9 +335,22 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
     }
     from rlm.v100.common import load_profile
     from rlm.v100.competition import helper_client
+    from rlm.v100.mission_chat import preferences
     from rlm.v100.remote_helper import remote_profile, selected_helper
 
+    enabled = preferences(root).get("remote_helper_enabled", True) is not False
+    if not enabled:
+        rtx.update(
+            state="disabled by operator",
+            stale=False,
+            jobs=[],
+            detail="No Windows GPU requests. Model research uses the accepted V100; CPU mailbox stays enabled.",
+        )
+        actors[1]["jobs"] = [j for j in active if j["kind"] in ("researcher", "critic", "income")]
+
     try:
+        if not enabled:
+            raise RuntimeError("Operator disabled helper probes")
         profile = load_profile(selected_helper(root), root)
         if not remote_profile(profile):
             raise ValueError("Remote helper is not configured")
@@ -315,7 +369,8 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
             ],
         )
     except (ValueError, OSError, RuntimeError, requests.RequestException) as error:
-        rtx["detail"] += "; " + str(error)[:150]
+        if enabled:
+            rtx["detail"] += "; " + str(error)[:150]
     if "client" in locals():
         import hashlib
 
@@ -339,7 +394,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         "observed_at": now,
         "actors": actors,
         "goals": read(root),
-        "events": events,
+        "events": action_events(events),
         "agents": agent_views(events, jobs),
         "chat": chat,
     }

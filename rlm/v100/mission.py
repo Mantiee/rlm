@@ -370,6 +370,13 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                             )
                             print("Reused pinned official baseline:", cached_public, flush=True)
                         else:
+                            from rlm.v100.public_benchmarks import resume_baseline
+
+                            resumed = resume_baseline(root, serving, public_path)
+                            if resumed:
+                                print(
+                                    "Resumed exact matching official baseline:", resumed, flush=True
+                                )
                             public_evaluate(root, serving, public_path)
                         serving["resources"]["public_baseline"] = str(public_path)
                         serving["resources"]["public_baseline_sha256"] = file_hash(public_path)

@@ -78,6 +78,7 @@ def report(root: Path) -> dict:
             {"branch": event["branch"], **compact_result(event["payload"])}
             for event in shared.recent(30)
             if event["kind"] == "worker-result"
+            and event["payload"].get("research_quality", {}).get("eligible_for_review", True)
         ][-6:]
     finally:
         shared.close()
@@ -135,10 +136,24 @@ def report(root: Path) -> dict:
         ("supervisor", root / "research/supervisor/status.json"),
         ("income_opportunities", root / "research/income-opportunities/status.json"),
         ("income_dispatch", root / "research/income-opportunities/dispatch.json"),
+        ("income_work", root / "research/income-work/status.json"),
+        ("research_quality", root / "research/research-quality/latest.json"),
         ("source_acquisition", root / "research/source-acquisition/status.json"),
         ("official_benchmark", root / "research/public-benchmarks/progress.json"),
     ):
         value[name] = json.loads(path.read_text()) if path.exists() else {"state": "not started"}
+    from rlm.v100.goals import load_goal
+
+    current_goal = (load_goal(root) or {}).get("id")
+    for name in (
+        "income_opportunities",
+        "income_dispatch",
+        "income_work",
+        "research_quality",
+        "source_acquisition",
+    ):
+        if value[name].get("goal_id") != current_goal:
+            value[name] = {"state": "not started for current goal", "goal_id": current_goal}
     live_path = learning.get("live_profile")
     active_profile = (
         json.loads(Path(live_path).read_text()) if live_path and Path(live_path).exists() else {}
@@ -165,6 +180,8 @@ def report(root: Path) -> dict:
         "Official benchmark: " + json.dumps(value["official_benchmark"]),
         "Resident workers: " + json.dumps(value["drones"]),
         "External compute: " + json.dumps(value["external_compute"]),
+        "Income work: " + json.dumps(value["income_work"]),
+        "Research quality: " + json.dumps(value["research_quality"]),
         "Active architecture: " + str(value["active_foundation_expert"] or "original"),
         "Private desktop: " + json.dumps(value["desktop"]),
     ]
@@ -182,7 +199,7 @@ def report(root: Path) -> dict:
     for idea in ideas:
         lines.extend(
             [
-                f"\n{idea['branch']} / {idea.get('model', 'unknown')} [unverified hypothesis]",
+                f"\n{idea['branch']} / {idea.get('model', 'unknown')} [{idea.get('status', 'unverified hypothesis')}]",
                 "Idea: " + idea.get("hypothesis", ""),
                 "Next test: " + idea.get("suggested_test", ""),
             ]

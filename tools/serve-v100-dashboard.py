@@ -337,12 +337,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "application/json; charset=utf-8",
                 )
             elif route == "/api/live-inference":
-                from rlm.v100.live_status import agent_views, recent_events
+                from rlm.v100.live_status import action_events, agent_views, recent_events
 
                 events = recent_events(self.server.state.root)
                 body, mime = (
                     json.dumps(
-                        {"events": events, "agents": agent_views(events, [])}, ensure_ascii=False
+                        {"events": action_events(events), "agents": agent_views(events, [])},
+                        ensure_ascii=False,
                     ).encode(),
                     "application/json; charset=utf-8",
                 )

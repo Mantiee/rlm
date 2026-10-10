@@ -203,7 +203,7 @@ def summary(rows: list[dict]) -> dict:
         by_category.setdefault(row["category"], []).append(row["score"])
     means = {category: statistics.mean(scores) for category, scores in by_category.items()}
     return {
-        "cases": len(rows),
+        "case_count": len(rows),
         "category_means": means,
         "panel_macro_mean": statistics.mean(means.values()) if means else None,
     }
@@ -256,9 +256,78 @@ def write_progress(root: Path, output: Path, report: dict, total: int, state: st
     atomic_json(root / "research/public-benchmarks/progress.json", value)
 
 
+def resume_baseline(root: Path, profile: dict, output: Path) -> Path | None:
+    """Carry the newest matching original baseline forward, never select by score."""
+    snapshot = current(root)
+    if snapshot is None or output.exists() or output.with_suffix(".partial.json").exists():
+        return None
+    manifest = json.loads((snapshot / "manifest.json").read_text())
+    if (
+        file_hash(snapshot / "questions.json") != manifest["questions_sha256"]
+        or file_hash(snapshot / "references.json") != manifest["references_sha256"]
+    ):
+        raise ValueError("Pinned public benchmark inputs changed")
+    expected = {
+        "snapshot_sha256": file_hash(snapshot / "manifest.json"),
+        "model_sha256": file_hash(Path(profile["server"]["model"])),
+        "generation": generation_conditions(profile),
+    }
+    questions = json.loads((snapshot / "questions.json").read_text())
+    keys = [question_key(row) for row in questions]
+    sources = [
+        *root.glob("research/mission/run-*/public-baseline.json"),
+        *root.glob("research/mission/run-*/public-baseline.partial.json"),
+    ]
+    for source in sorted(sources, key=lambda path: path.stat().st_mtime_ns, reverse=True)[:128]:
+        if source.parent.resolve() == output.parent.resolve() or source.stat().st_size > 5 * 2**20:
+            continue
+        report = json.loads(source.read_text())
+        if report.get("identity") != expected:
+            continue
+        rows = report.get("cases", [])
+        if (
+            not isinstance(rows, list)
+            or not rows
+            or any(not isinstance(row, dict) for row in rows)
+            or [row.get("key") for row in rows] != keys[: len(rows)]
+            or len(rows) > len(keys)
+        ):
+            continue
+        if any(
+            row.get("category") != question["category"]
+            or type(row.get("score")) not in (int, float)
+            or not math.isfinite(row["score"])
+            or not 0 <= row["score"] <= 1
+            for row, question in zip(rows, questions, strict=False)
+        ):
+            continue
+        complete = report.get("complete") is True and len(rows) == len(keys)
+        destination = output if complete else output.with_suffix(".partial.json")
+        atomic_json(destination, report)
+        atomic_json(
+            output.with_suffix(".resume.json"),
+            {
+                "source": str(source),
+                "source_sha256": file_hash(source),
+                "completed": len(rows),
+                "total": len(keys),
+                "complete": complete,
+                "scope": "Newest exact matching original baseline; retained failures; no selection by score",
+            },
+        )
+        return source
+    return None
+
+
 def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = None) -> dict:
     from rlm.v100.competition import helper_client
     from rlm.v100.remote_helper import remote_profile
+
+    if remote_profile(profile):
+        from rlm.v100.mission_chat import preferences
+
+        if preferences(root).get("remote_helper_enabled", True) is False:
+            raise RuntimeError("Remote GPU benchmark disabled by operator")
 
     snapshot = snapshot or current(root)
     if snapshot is None:
@@ -285,6 +354,17 @@ def evaluate(root: Path, profile: dict, output: Path, snapshot: Path | None = No
         result = json.loads(output.read_text())
         if result["identity"] != identity:
             raise ValueError("Existing official report has different conditions")
+        if not isinstance(result.get("cases"), list):
+            raise ValueError(
+                "Official report lost its case rows; retain original and resume a matching partial"
+            )
+        write_progress(
+            root,
+            output,
+            result,
+            len(json.loads((snapshot / "questions.json").read_text())),
+            "finished",
+        )
         return result
     report = (
         json.loads(partial.read_text())

@@ -695,6 +695,13 @@ def gui(root: Path, action: str, text: str, x: int, y: int) -> dict:
     result = screenshot(root)
     if "image" not in result:
         return result
+    from rlm.v100.mission_chat import preferences
+
+    if preferences(root).get("remote_helper_enabled", True) is False:
+        return {
+            **result,
+            "vision": "Windows GPU disabled by operator; image saved, no visual interpretation claimed",
+        }
     from rlm.v100.common import load_profile
     from rlm.v100.competition import helper_client
     from rlm.v100.remote_helper import remote_profile, selected_helper

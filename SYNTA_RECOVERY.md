@@ -71,3 +71,47 @@ execution and measured progress must be checked after installation on Debian.
 No payment ledger is connected. Nothing here guarantees an undiscovered edge,
 fast large income, validated strategy, automatic sale or universal continual
 learning. Prepared useful work, actual outcomes and payment remain distinct.
+
+## v61: demonstrated benchmark, research and dashboard faults
+
+- Official benchmark finalization previously overwrote `cases` with a count,
+  causing `'int' object is not iterable`. Counts now use `case_count`; all case
+  rows, including zero scores, remain intact. A restart resumes the newest
+  matching original baseline prefix after checking model, generation, immutable
+  snapshot and row identities. It never chooses a run by score or skips gates.
+- The operator explicitly stopped Windows RTX after a black-screen hang. This
+  update records that preference, cancels its periodic benchmark and sends
+  resident model research to the protected accepted V100 already serving. GUI
+  observations and dashboard probes do not contact the disabled helper. Windows
+  CPU jobs retain their existing two-thread / four-GiB child configuration.
+  No Windows GPU process, board clock, power limit or task is started here.
+- Bounded primary-terms collection runs independently of the master training
+  phase every ten minutes, rotating starting sources across human research,
+  usability and explicitly authorized software-bounty programs. It archives an
+  actual source even when model analysis is unavailable. A protected V100 then
+  prepares a source-linked feasibility dossier with eligibility, labor, costs,
+  delay, blockers and a mechanism-specific test. Sources are starting points,
+  not recommendations or a closed discovery list. Human participation is not
+  automated; no account, application, scan, submission or payment occurs.
+- Known microtask/affiliate hypotheses tested with BTC prices are rejected before
+  review. Exact repeated notes without a new recorded operation are marked as
+  repeated advisory. These conservative lexical/receipt checks are not semantic
+  proofs. Old findings are annotated with a backup; original texts are retained.
+- Token deltas no longer displace tool calls/results/errors from the action
+  timeline. Historical actor cards are collapsed; queued/running job cards put
+  old attempts in a separate disclosure, never the current result. New requests
+  clear their actor's old error, evidence and token usage. An unchanged journal
+  filename is not treated as shared source evidence.
+- Updates preserve inner reader scroll and anchor the visible expanded detail
+  when new content is inserted above it. Tests execute the renderer in a Node
+  DOM fixture; actual browser acceptance remains a hardware check.
+- Existing crypto prices are refreshed before fee parsing. A fee-layout failure
+  archives the exact source and blocker instead of suppressing price observation.
+  Product boundaries accept case changes. Unknown or ambiguous fees still block
+  paper fills, and published fee assumptions remain distinct from account rights.
+
+Inspect `research/income-work/status.json`, its source-linked dossiers,
+`research/research-quality/latest.json`, public benchmark resume receipts and
+`research/paper/fee-source-status.json` for measured execution. Feasibility
+estimates are neither real income nor training labels. Actual master training
+and promotion still need independently verified outcomes and all quality gates.
