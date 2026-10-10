@@ -16,6 +16,19 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+NAVIGATION = b"""<nav id="synta-remote-navigation" aria-label="Synta navigation" style="display:flex;flex-wrap:wrap;gap:12px;margin:0 0 20px;padding:8px;border:1px solid #536b88;border-radius:10px;background:#101725;font:16px system-ui"><a href="/" style="display:flex;align-items:center;min-height:44px;padding:0 16px;color:#9bcaff">Dashboard</a><a href="/chat" style="display:flex;align-items:center;min-height:44px;padding:0 16px;color:#9bcaff">Master chat</a></nav>"""
+
+
+def dashboard_navigation(body: bytes) -> bytes:
+    """Add gateway-owned navigation without modifying the renderer or its script."""
+    if b'id="synta-remote-navigation"' in body:
+        return body
+    opening = re.search(rb"""<body\b(?:[^>"']|"[^"]*"|'[^']*')*>""", body, re.IGNORECASE)
+    if opening is None:
+        raise ValueError("Dashboard HTML has no body element for remote navigation")
+    return body[: opening.end()] + NAVIGATION + body[opening.end() :]
+
+
 CHAT_SCRIPT = r"""
 const rows=new Map();let busy=false,csrf='';
 async function api(path,options={}){const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),8000);try{const r=await fetch(path,{cache:'no-store',signal:abort.signal,...options});if(!r.ok)throw Error('HTTP '+r.status);return await r.json()}finally{clearTimeout(timer)}}
@@ -28,7 +41,9 @@ refresh();setInterval(refresh,3000);
 CHAT_PAGE = (
     """<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synta remote chat</title><style>
 body{background:#101725;color:#e1e9f6;font:16px system-ui;margin:0;padding:20px;max-width:960px;margin:auto}a{color:#9bcaff}nav{display:flex;gap:22px}article{background:#1a2538;border:1px solid #33475f;border-radius:12px;margin:16px 0;padding:16px}h3{font-size:12px;overflow-wrap:anywhere;color:#9cb0c9}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.6}textarea{box-sizing:border-box;width:100%;min-height:120px;background:#1a2538;color:#fff;padding:14px;font:inherit;border:1px solid #536b88;border-radius:8px}button{padding:12px 26px;background:#78b4ff;border:0;border-radius:8px;font:inherit;cursor:pointer}summary{cursor:pointer;color:#a6cfff}#composer{position:sticky;bottom:0;background:#101725;padding:12px 0}#status{color:#afc7e5}
-</style><nav><a href="/">Dashboard</a><a href="/chat">Master chat</a></nav><h1>Synta master chat</h1><p>Authenticated owner commands use the same mission queue. Replies and execution receipts stay available after you leave.</p><p id="status">Connecting</p><main id="history"></main><section id="composer"><textarea id="message" maxlength="8000" placeholder="Message to Synta, /status, /goal ..."></textarea><button id="send">Send</button></section><script>"""
+</style>"""
+    + NAVIGATION.decode()
+    + """<h1>Synta master chat</h1><p>Authenticated owner commands use the same mission queue. Replies and execution receipts stay available after you leave.</p><p id="status">Connecting</p><main id="history"></main><section id="composer"><textarea id="message" maxlength="8000" placeholder="Message to Synta, /status, /goal ..."></textarea><button id="send">Send</button></section><script>"""
     + CHAT_SCRIPT
     + "</script></html>"
 )
@@ -181,11 +196,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     if len(body) > 8 * 2**20:
                         raise ValueError("Dashboard response exceeds 8 MiB")
                     if route == "/":
-                        body = body.replace(
-                            b"<body>",
-                            b'<body><nav><a href="/chat">Open Synta master chat</a></nav>',
-                            1,
-                        )
+                        body = dashboard_navigation(body)
                     self.reply(
                         body,
                         response.headers.get("Content-Type", "application/octet-stream"),

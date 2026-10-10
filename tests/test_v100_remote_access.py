@@ -1,6 +1,7 @@
 import json
 import threading
 from contextlib import contextmanager
+from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -52,6 +53,7 @@ def test_owner_chat_csrf_exact_origin_queue_and_persistent_reply(tmp_path):
     with gateway(tmp_path) as (server, base):
         code, headers, body = request(base, "/chat")
         assert code == 200 and b"Awaiting saved result" in body
+        assert remote_access.NAVIGATION in body
         assert "script-src 'sha256-" in headers["Content-Security-Policy"]
         assert server.server_address[0] == "127.0.0.1"
         _, _, body = request(base, "/api/chat")
@@ -88,6 +90,52 @@ def test_owner_chat_csrf_exact_origin_queue_and_persistent_reply(tmp_path):
         assert json.loads(body)["response"] == reply
         _, _, body = request(base, "/api/chat")
         assert json.loads(body)["requests"][0]["response"] == reply
+
+
+@pytest.mark.parametrize(
+    "opening",
+    [
+        b"<body>",
+        b'<body class="dashboard">',
+        b"<BODY class='dashboard'>",
+        b'<body data-label="a > b">',
+    ],
+)
+def test_dashboard_navigation_preserves_renderer_and_body_attributes(opening):
+    source = b"<!doctype html><html>" + opening + b"<script>render()</script></body></html>"
+    result = remote_access.dashboard_navigation(source)
+    assert opening + remote_access.NAVIGATION in result
+    assert result.replace(remote_access.NAVIGATION, b"", 1) == source
+    assert remote_access.dashboard_navigation(result) == result
+
+
+def test_dashboard_without_body_cannot_silently_omit_navigation():
+    with pytest.raises(ValueError, match="no body element"):
+        remote_access.dashboard_navigation(b"<html><p>Missing body</p></html>")
+
+
+def test_gateway_dashboard_injects_mobile_links_and_preserves_upstream_policy(
+    tmp_path, monkeypatch
+):
+    source = b'<html><body class="dashboard"><script>render()</script></body></html>'
+    policy = "default-src 'none'; script-src 'sha256-existing'; style-src 'unsafe-inline'"
+    calls = []
+
+    def upstream(req, timeout):
+        calls.append((req.full_url, timeout))
+        response = BytesIO(source)
+        response.headers = {"Content-Type": "text/html", "Content-Security-Policy": policy}
+        return response
+
+    monkeypatch.setattr(remote_access, "urlopen", upstream)
+    with gateway(tmp_path) as (_, base):
+        code, headers, body = request(base, "/")
+    assert code == 200
+    assert headers["Content-Security-Policy"] == policy
+    assert body.replace(remote_access.NAVIGATION, b"", 1) == source
+    assert b'href="/chat"' in body and b'href="/"' in body
+    assert b"min-height:44px" in body
+    assert calls == [(CONFIG["dashboard"] + "/", 5)]
 
 
 @pytest.mark.parametrize(

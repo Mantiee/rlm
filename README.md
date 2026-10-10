@@ -221,3 +221,7 @@ install `.[providers]` when using the original remote backends.
 ## V100 campaign v28
 
 Persistent goals, A/B lineages, bounded research drones, concurrent chat, private Linux desktop and pinned public benchmark gates: see [CAMPAIGN.md](CAMPAIGN.md). Optional setup stages report deferred features explicitly.
+
+For private phone access, see [SYNTA_REMOTE_ACCESS.md](SYNTA_REMOTE_ACCESS.md).
+The remote dashboard and master chat share mobile navigation; an existing v67
+gateway can receive the [v68 update](SYNTA_V68.md) without restarting the mission.
