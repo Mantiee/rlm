@@ -12,6 +12,11 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
     from rlm.v100.planning import read
 
     result = dict(report)
+    from rlm.v100.public_benchmarks import progress_for_run
+
+    benchmark = progress_for_run(root, Path(mission["run"]) if mission.get("run") else None)
+    if benchmark.get("report") or benchmark.get("historical") or "official_benchmark" in result:
+        result["official_benchmark"] = benchmark
     for key, filename in (
         ("drones", "research/drones-status.json"),
         ("external_compute", "research/compute-status.json"),

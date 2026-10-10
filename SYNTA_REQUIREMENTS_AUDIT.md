@@ -1,4 +1,4 @@
-# Synta: requirement and verification audit, v61
+# Synta: requirement and verification audit, v62
 
 This audits the visible conversation. "Implemented" means code exists and the
 listed checks pass, not that it has run successfully on the operator's computers.
@@ -100,3 +100,19 @@ and registered proposal when analysis succeeds. A blocked source/analysis has
 its own receipt. This is not autonomous financial execution, a profitable strategy,
 a security scan, a sale or universal task learning. See SYNTA_RECOVERY.md for
 exact modules and runtime artifact paths.
+
+## v62 supplied-report regressions
+
+Protected native startup defers income analysis without discarding the source;
+pending analysis resumes without counting another fetch. Missing PID, startup
+backoff, unchanged scheduling interval, bounded policy, invalid-analysis rotation,
+paper-vs-earned-income rejection, advisory-test repeats and benchmark run scoping
+have deterministic regression tests. Historical audits and notes are separated
+from current work. CPU training admission and fee-page blockers are visible.
+These are code/transport verifications, not a claim of verified income or hardware
+execution. See the v62 section of SYNTA_RECOVERY.md for exact limits.
+
+Final v62 verification: 1098 tests passed, 65 skipped, one existing PEFT warning;
+no deselections. Ruff for Python/scripts/tests excluding the unchanged notebook,
+upgrade shell syntax and diff whitespace checks pass. No Windows, CUDA or
+operator-browser runtime acceptance is asserted by this result.

@@ -55,6 +55,8 @@ def test_quality_migration_retains_text_and_backup(tmp_path):
     lab.close()
     assert row["hypothesis"] == original["hypothesis"]
     assert row["research_quality"]["state"] == "rejected test"
+    assert row["research_quality"]["historical_audit"]
+    assert not (tmp_path / "research/research-quality/latest.json").exists()
     assert research_contract.repair_history(tmp_path)["annotated"] == 0
 
 
@@ -82,7 +84,7 @@ def income_job(goal, index=0):
     return {"id": f"job-{index}", "branch": "A", "kind": "income", "payload": goal["id"]}
 
 
-def test_income_pipeline_collects_rotating_sources_even_without_inference(tmp_path, monkeypatch):
+def test_income_pipeline_resumes_same_evidence_before_collecting_next_source(tmp_path, monkeypatch):
     identity = evidence(tmp_path, monkeypatch)
     from rlm.v100.goals import load_goal
 
@@ -105,11 +107,180 @@ def test_income_pipeline_collects_rotating_sources_even_without_inference(tmp_pa
     first = drones.execute(tmp_path, income_job(goal))
     second = drones.execute(tmp_path, income_job(goal, 1))
     assert first["state"] == second["state"] == "evidence collected; analysis blocked"
-    assert len(set(urls)) == 2
-    assert second["sources_collected"] == 2 and second["actual_income_pln"] is None
+    assert len(urls) == 1
+    assert second["sources_collected"] == 1 and second["actual_income_pln"] is None
     from pathlib import Path
 
     assert Path(first["dossier"]).exists()
+
+
+def test_waiting_for_startup_preserves_source_then_registers_once(tmp_path, monkeypatch):
+    identity = evidence(tmp_path, monkeypatch)
+    from rlm.v100.goal_learning import observation
+    from rlm.v100.goals import load_goal
+
+    goal = load_goal(tmp_path)
+    monkeypatch.setattr(
+        income_work, "observe", lambda *a: {"id": identity, **observation(tmp_path, identity)}
+    )
+    monkeypatch.setattr(
+        income_work,
+        "accepted_master",
+        lambda *a: (_ for _ in ()).throw(income_work.MasterNotReady("Old PID gone")),
+    )
+    first = drones.execute(tmp_path, income_job(goal))
+    assert first["state"] == "waiting for accepted master" and first["retry_after_seconds"] == 30
+    saved = json.loads(Path(first["dossier"]).read_text())
+    assert saved["analysis_attempts"] == 0
+    monkeypatch.setattr(
+        income_work, "observe", lambda *a: pytest.fail("Existing source fetched again")
+    )
+    monkeypatch.setattr(income_work, "accepted_master", lambda *a: SimpleNamespace())
+    proposal = specification(identity)
+    proposal.pop("evidence")
+    monkeypatch.setattr(
+        income_work, "native_turn", lambda *a, **k: {"content": json.dumps(proposal)}
+    )
+    result = drones.execute(tmp_path, income_job(goal))
+    assert result["sources_collected"] == 1 and result["next_source"] == 1
+    assert result["proposals_registered"] == 1 and "error" not in result
+
+
+def test_income_retry_changes_due_without_changing_periodic_interval(tmp_path, monkeypatch):
+    goal, _ = financial_world(tmp_path)
+    receipt = drones.schedule(tmp_path, "A", "income", goal["id"], 600)
+    monkeypatch.setattr(drones.time, "time", lambda: 1000)
+    drones.finish(
+        tmp_path, receipt["id"], {"state": "waiting for accepted master", "retry_after_seconds": 30}
+    )
+    job = drones.inspect(tmp_path)[0]
+    assert job["interval"] == 600 and job["due"] == 1030 and job["state"] == "queued"
+
+
+def test_missing_protected_process_is_deferred_but_candidate_mismatch_is_not(tmp_path, monkeypatch):
+    _, run = financial_world(tmp_path)
+    atomic_json(run / "status.json", {"context_window": 8192})
+    atomic_json(run / "profile-8192.json", {})
+    monkeypatch.setattr(income_work, "load_profile", lambda *a: {})
+    monkeypatch.setattr(competition, "helper_client", lambda *a: SimpleNamespace(timeout=120))
+    from rlm.v100 import serving
+
+    monkeypatch.setattr(
+        serving,
+        "assert_served_expert",
+        lambda *a: (_ for _ in ()).throw(FileNotFoundError("/proc/515286/stat")),
+    )
+    with pytest.raises(income_work.MasterNotReady):
+        income_work.accepted_master(tmp_path, "A")
+    atomic_json(run / "server-8192.startup.json", {"stage": "verifying-artifacts"})
+    monkeypatch.setattr(
+        serving, "assert_served_expert", lambda *a: pytest.fail("Startup attempted inference")
+    )
+    with pytest.raises(income_work.MasterNotReady, match="startup"):
+        income_work.accepted_master(tmp_path, "A")
+
+
+def test_rejects_actual_labor_income_comparison_with_paper_simulation(tmp_path):
+    financial_world(tmp_path)
+    value = research_contract.assessment(
+        tmp_path,
+        note(
+            "Prolific micro-tasking yields faster net income",
+            "Compare net income from 5 hours of micro-tasking labor against 5 hours of paper-trading simulation",
+        ),
+    )
+    assert value["state"] == "rejected test" and "Simulated" in value["reason"]
+
+
+def test_paraphrased_advice_with_same_test_is_not_new_work(tmp_path):
+    financial_world(tmp_path)
+    research_contract.assessment(
+        tmp_path, note("Software bounty may pay", "Reproduce acceptance criteria")
+    )
+    value = research_contract.assessment(
+        tmp_path, note("An eligible software fix might pay", "Reproduce acceptance criteria")
+    )
+    assert value["state"] == "repeated advisory" and not value["eligible_for_review"]
+
+
+def test_bounded_resident_budget_cannot_be_expanded_by_research_policy(tmp_path):
+    from rlm.v100 import research_policy
+
+    research_policy.choose(tmp_path, "master", True, 8192, 512)
+    client = SimpleNamespace(
+        sampling_args={"max_tokens": 1024},
+        context_window=131072,
+        research_token_ceiling=1024,
+        research_thinking_allowed=False,
+    )
+    selected = research_policy.apply(client, tmp_path)
+    assert selected.sampling_args["max_tokens"] == 1024 and selected.enable_thinking is False
+
+
+def test_previous_benchmark_is_history_and_current_complete_wins_over_stale_counter(tmp_path):
+    from rlm.v100.public_benchmarks import progress_for_run
+
+    run = tmp_path / "research/mission/run-new"
+    old = {
+        "model": "original",
+        "state": "running",
+        "completed": 20,
+        "total": 20,
+        "report": str(tmp_path / "research/mission/run-old/public-baseline.json"),
+    }
+    atomic_json(tmp_path / "research/public-benchmarks/progress.json", old)
+    value = progress_for_run(tmp_path, run)
+    assert "completed" not in value and value["historical"] == old
+    atomic_json(
+        run / "public-baseline.json",
+        {"model_version": "original", "complete": True, "cases": [{"score": 0}, {"score": 1}]},
+    )
+    current = progress_for_run(tmp_path, run)
+    assert current["state"] == "finished" and current["completed"] == 2
+    assert current["report"] == str(run / "public-baseline.json")
+
+
+def test_startup_deferral_is_bounded_and_does_not_consume_analysis_attempt(tmp_path, monkeypatch):
+    identity = evidence(tmp_path, monkeypatch)
+    from rlm.v100.goal_learning import observation
+    from rlm.v100.goals import load_goal
+
+    source = {"id": identity, **observation(tmp_path, identity)}
+    monkeypatch.setattr(income_work, "observe", lambda *a: source)
+    monkeypatch.setattr(
+        income_work,
+        "accepted_master",
+        lambda *a: (_ for _ in ()).throw(income_work.MasterNotReady("Booting")),
+    )
+    job = income_job(load_goal(tmp_path))
+    for _ in range(8):
+        result = drones.execute(tmp_path, job)
+        assert 15 <= result["retry_after_seconds"] <= 600
+    assert result["retry_after_seconds"] == 600 and result["sources_collected"] == 1
+    assert json.loads(Path(result["dossier"]).read_text())["analysis_attempts"] == 0
+
+
+def test_invalid_analysis_attempts_are_limited_then_research_rotates(tmp_path, monkeypatch):
+    identity = evidence(tmp_path, monkeypatch)
+    from rlm.v100.goal_learning import observation
+    from rlm.v100.goals import load_goal
+
+    urls = []
+
+    def collect(root, url):
+        urls.append(url)
+        return {"id": identity, **observation(tmp_path, identity)}
+
+    monkeypatch.setattr(income_work, "observe", collect)
+    monkeypatch.setattr(income_work, "accepted_master", lambda *a: SimpleNamespace())
+    monkeypatch.setattr(income_work, "native_turn", lambda *a, **k: {"content": "{}"})
+    job = income_job(load_goal(tmp_path))
+    for _ in range(3):
+        result = drones.execute(tmp_path, job)
+        assert result["state"] == "evidence collected; analysis blocked"
+    assert len(urls) == 1 and "retry_after_seconds" not in result
+    drones.execute(tmp_path, job)
+    assert len(set(urls)) == 2
 
 
 def test_income_pipeline_registers_real_archived_proposal_with_host_domain(tmp_path, monkeypatch):
@@ -195,6 +366,21 @@ def test_native_researcher_checks_protected_profile_before_any_generation(tmp_pa
     )
     with pytest.raises(ValueError, match="Candidate"):
         income_work.accepted_master(tmp_path, "A")
+
+
+def test_live_server_is_not_blocked_by_stopped_initial_server(tmp_path, monkeypatch):
+    _, run = financial_world(tmp_path)
+    atomic_json(run / "status.json", {"context_window": 8192})
+    atomic_json(run / "serving-active.json", {})
+    atomic_json(run / "server-8192.startup.json", {"stage": "stopped"})
+    monkeypatch.setattr(income_work, "load_profile", lambda *a: {})
+    client = SimpleNamespace(timeout=120, sampling_args={})
+    monkeypatch.setattr(competition, "helper_client", lambda *a: client)
+    from rlm.v100 import serving
+
+    checked = []
+    monkeypatch.setattr(serving, "assert_served_expert", lambda *a: checked.append(True))
+    assert income_work.accepted_master(tmp_path, "A") is client and checked == [True]
 
 
 def benchmark_world(tmp_path, monkeypatch):

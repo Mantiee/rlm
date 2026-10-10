@@ -60,6 +60,11 @@ def apply(client, root: Path):
     result.enable_thinking = policy["thinking"]
     result.sampling_args = dict(client.sampling_args)
     result.sampling_args["max_tokens"] = min(policy["max_tokens"], result.context_window // 4)
+    ceiling = getattr(client, "research_token_ceiling", None)
+    if ceiling is not None:
+        result.sampling_args["max_tokens"] = min(result.sampling_args["max_tokens"], ceiling)
+    if getattr(client, "research_thinking_allowed", True) is False:
+        result.enable_thinking = False
     if target == "helper":
         result.helper_batch_tokens = min(policy["batch_tokens"], client.helper_batch_tokens)
         # Pacing is operator-owned, not a model-selected research budget.

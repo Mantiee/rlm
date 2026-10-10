@@ -113,6 +113,9 @@ def propose(root: Path, branch: str = "A") -> dict:
 
 def tick(root: Path) -> None:
     from rlm.v100.distributed_compute import inspect
+    from rlm.v100.goals import load_goal
+
+    goal_id = (load_goal(root) or {}).get("id")
 
     preferences = root / "research/user-preferences.json"
     if not preferences.exists() or not json.loads(preferences.read_text()).get(
@@ -128,10 +131,16 @@ def tick(root: Path) -> None:
         except BlockingIOError:
             return
         previous = json.loads(status.read_text()) if status.exists() else {}
-        if time.time() < previous.get("next_poll", 0):
+        if previous.get("goal_id") == goal_id and time.time() < previous.get("next_poll", 0):
             return
         atomic_json(
-            status, {"state": "checking", "updated": time.time(), "next_poll": time.time() + 300}
+            status,
+            {
+                "state": "checking",
+                "goal_id": goal_id,
+                "updated": time.time(),
+                "next_poll": time.time() + 300,
+            },
         )
         try:
             resources = inspect(root)
@@ -157,7 +166,10 @@ def tick(root: Path) -> None:
                     result["state"] = "no-new-data"
         except (OSError, ValueError, RuntimeError, KeyError) as error:
             result = {"state": "blocked", "reason": str(error)[:400]}
-        atomic_json(status, {**result, "updated": time.time(), "next_poll": time.time() + 300})
+        atomic_json(
+            status,
+            {**result, "goal_id": goal_id, "updated": time.time(), "next_poll": time.time() + 300},
+        )
 
 
 def verify_job(root: Path, job: dict) -> None:

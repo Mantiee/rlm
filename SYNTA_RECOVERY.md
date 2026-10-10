@@ -115,3 +115,42 @@ Inspect `research/income-work/status.json`, its source-linked dossiers,
 `research/paper/fee-source-status.json` for measured execution. Feasibility
 estimates are neither real income nor training labels. Actual master training
 and promotion still need independently verified outcomes and all quality gates.
+
+## v62: recover the supplied startup race without discarding evidence
+
+The uploaded v61 report shows an income analysis hitting `/proc/515286/stat`
+after that old server exited. Source acquisition had succeeded. This is a
+serving readiness failure, not a failed income experiment.
+
+- `income_work.accepted_master` waits for current-run startup readiness and
+  requires the protected process/model receipt before generation. Missing process,
+  receipt or endpoint becomes an explicit deferral. An identity mismatch remains
+  a rejection. No candidate or disabled Windows RTX is substituted.
+- `income_work.execute` resumes a pending dossier under the same goal for up to
+  24 hours without refetching or counting its source twice. Startup retries use
+  30-120-second backoff for six attempts, then the normal ten-minute period.
+  Analysis attempts are separately limited to three; failures stay archived.
+  Goal changes during generation block registration under the new goal.
+- `drones.finish` changes only the next due time for these income retries;
+  the configured periodic interval is retained. The waiting job releases its
+  worker slot rather than sleeping inside it.
+- `research_policy.apply` cannot expand the bounded resident client's 1024-token
+  ceiling or enable its thinking mode. Ordinary research policy remains separate.
+- The research audit rejects actual-labor income comparisons against simulated
+  paper returns, recognizes the supplied Prolific/microtask variants, and flags
+  the same advisory test under paraphrased hypotheses. Lexical checking is not
+  semantic proof. Researchers receive the last four rejected tests and their
+  reasons so they can revise them. Historical migration cannot replace the
+  latest live audit.
+- New worker notes carry the originating mission run. Prior-run and migrated
+  historical notes remain archived and are excluded from the live ideas list.
+- Cached official baselines publish finished progress for the current run.
+  Complete current-run reports take precedence over stale global counters;
+  previous-run counters are presented as history, never current computation.
+- `mission-report` includes owned CPU dispatch gates and the archived fee-source
+  blocker. Dispatch is goal-attributed and rechecks promptly after a goal change.
+  No training is forced with unverified labels or inadequate independent splits.
+
+This release does not certify fees unavailable from the actual retrieved page,
+income, demand, novelty, CUDA utilization or browser behavior on the operator's
+machines. The existing Windows CPU limit and disabled RTX preference are retained.

@@ -162,7 +162,12 @@ def test_progress_does_not_convert_hypotheses_or_failed_trials_to_profit(tmp_pat
     shared.append(
         "A",
         "worker-result",
-        {"hypothesis": "guaranteed 1000000", "suggested_test": "forward test", "model": "qwen"},
+        {
+            "hypothesis": "guaranteed 1000000",
+            "suggested_test": "forward test",
+            "model": "qwen",
+            "mission_run": str(run),
+        },
     )
     shared.close()
     report = progress.report(tmp_path)

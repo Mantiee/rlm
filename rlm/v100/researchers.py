@@ -112,6 +112,8 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
     from rlm.v100.planning import read as read_plan
 
     client = copy.copy(client)
+    mission = root / "research/mission/active.json"
+    mission_run = json.loads(mission.read_text()).get("run") if mission.exists() else None
     client.sampling_args = dict(client.sampling_args)
     if getattr(client, "enable_thinking", None) is True:
         client.sampling_args["max_tokens"] = max(4096, client.sampling_args.get("max_tokens", 512))
@@ -119,6 +121,9 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
 
     observations = [
         *observations,
+        {
+            "test_contract": "Test one mechanism per hypothesis. Simulated paper returns are not earned income and cannot establish superiority over actual labor income. Do not recycle the same suggested test with a paraphrased hypothesis. Separate cross-domain estimates from actual outcome tests."
+        },
         {"persistent_research_memory": recall(root), "user_preferences": preferences(root)},
     ]
 
@@ -151,15 +156,26 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
     }
     shared = SharedLab(root / "research/state/competition.sqlite3")
     try:
+        recent = shared.recent(12)
         history = [
             {
                 "branch": event["branch"],
                 "kind": event["kind"],
                 "excerpt": json.dumps(compact_result(event["payload"]), ensure_ascii=False)[:600],
             }
-            for event in shared.recent(12)
+            for event in recent
             if event["payload"].get("research_quality", {}).get("eligible_for_review", True)
         ]
+        rejected = [
+            {
+                "hypothesis": event["payload"].get("hypothesis", "")[:300],
+                "test": event["payload"].get("suggested_test", "")[:300],
+                "audit": event["payload"].get("research_quality", {}),
+                "scope": "Rejected/repeated advisory; not evidence of an executed experiment",
+            }
+            for event in recent
+            if not event["payload"].get("research_quality", {}).get("eligible_for_review", True)
+        ][-4:]
     finally:
         shared.close()
     message = research_turn(
@@ -181,6 +197,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
                         "assignment": job,
                         "observations": observations,
                         "public_peer_notes": history,
+                        "rejected_tests_to_revise_or_replace": rejected,
                     },
                     ensure_ascii=False,
                 ),
@@ -218,6 +235,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
     result.update(
         status=result["research_quality"]["state"], role=job["role"], model=client.model_name
     )
+    result["mission_run"] = mission_run
     from rlm.v100.mission_memory import archive
 
     archive(

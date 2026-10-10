@@ -220,6 +220,10 @@ def finish(root: Path, identity: str, value: dict) -> None:
     with connect(root) as db:
         row = db.execute("SELECT * FROM jobs WHERE id=?", (identity,)).fetchone()
         interval = row["interval"]
+        delay = interval
+        retry = value.get("retry_after_seconds")
+        if row["kind"] == "income" and interval and type(retry) is int and 15 <= retry <= 600:
+            delay = retry
         state = (
             "cancelled" if row["state"] == "cancelled" else "queued" if interval else "completed"
         )
@@ -254,12 +258,13 @@ def finish(root: Path, identity: str, value: dict) -> None:
             job_state["validation_error"] = value.get("detail", "Local validation failed")
             if retries < 3:
                 state, interval = "queued", 60
+                delay = interval
             else:
                 job_state["state"] = "validation-deferred"
             atomic_json(source, job_state)
         db.execute(
             "UPDATE jobs SET state=?,due=?,updated=?,result=? WHERE id=?",
-            (state, time.time() + interval, time.time(), json.dumps(value), identity),
+            (state, time.time() + delay, time.time(), json.dumps(value), identity),
         )
     ActivityLog(root, row["branch"], "drone").write(
         "steps", "drone-result", {"id": identity, **value}

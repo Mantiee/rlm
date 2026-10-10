@@ -55,6 +55,9 @@ def native_turn(
     )
     prompt_tokens = client.count_text(template["prompt"], parse_special=True) + 1
     max_tokens = client.sampling_args.get("max_tokens", 512)
+    host_ceiling = getattr(client, "research_token_ceiling", None)
+    if host_ceiling is not None:
+        max_tokens = min(max_tokens, host_ceiling)
     sampling = {
         key: client.sampling_args[key]
         for key in ("temperature", "seed", "top_p", "top_k")
@@ -82,6 +85,8 @@ def native_turn(
     ):
         raise ValueError("Research retry output limit must be 1-8192 tokens")
     ceiling = min(retry_output_limit or max_tokens, client.context_window - prompt_tokens)
+    if host_ceiling is not None:
+        ceiling = min(ceiling, host_ceiling)
     attempts, completion_tokens = 0, 0
     while True:
         attempts += 1

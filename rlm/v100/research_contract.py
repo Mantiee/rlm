@@ -16,19 +16,26 @@ from rlm.v100.goals import load_goal
 
 MARKET = re.compile(r"\b(btc|eth|bitcoin|crypto|kraken|candles?|backtest|trading)\b", re.I)
 NON_MARKET = re.compile(
-    r"micro.?tasks?|affiliate|paid (?:studies|surveys)|user.?testing|software bounty|freelanc|mikrozada|ankiet",
+    r"micro.?tasks?|micro.?tasking|affiliate|paid (?:studies|surveys)|user.?testing|software bounty|freelanc|mikrozada|ankiet|prolific|data label(?:ing|ling)|outside markets|content or services",
     re.I,
 )
 EXECUTED = {"register_income_opportunity", "predict_goal_pattern"}
+PAPER = re.compile(r"paper[ -]trad|paper (?:profit|simulation|p.?&.?l)|trading simulation", re.I)
 
 
-def assessment(root: Path, result: dict) -> dict:
+def assessment(root: Path, result: dict, historical: bool = False) -> dict:
     hypothesis, test = result.get("hypothesis", ""), result.get("suggested_test", "")
     reason = None
     if not hypothesis.strip() or not test.strip():
         reason = "Empty hypothesis or falsifiable test"
     elif NON_MARKET.search(hypothesis) and MARKET.search(test) and not NON_MARKET.search(test):
         reason = "Market price test cannot establish the proposed non-market income mechanism"
+    elif (
+        NON_MARKET.search(hypothesis + " " + test)
+        and PAPER.search(test)
+        and re.search(r"compar|higher|faster|versus|\bvs\b|outperform|against", test, re.I)
+    ):
+        reason = "Simulated paper returns cannot be compared as actual earned labor income"
     trace = result.get("research_trace", [])
     evidence = []
     work = []
@@ -44,15 +51,22 @@ def assessment(root: Path, result: dict) -> dict:
     goal_id = (load_goal(root) or {}).get("id", "no-goal")
     normalized = [re.sub(r"\W+", " ", text.casefold()).strip() for text in (hypothesis, test)]
     identity = hashlib.sha256(json.dumps([goal_id, *normalized]).encode()).hexdigest()
+    test_identity = hashlib.sha256(json.dumps([goal_id, normalized[1]]).encode()).hexdigest()
     directory = root / "research/research-quality"
     directory.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(directory / "ledger.sqlite3", timeout=5) as db:
         db.execute(
             "CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY, goal TEXT, count INTEGER)"
         )
+        db.execute("CREATE TABLE IF NOT EXISTS advisory_tests(id TEXT PRIMARY KEY)")
         db.execute("BEGIN IMMEDIATE")
         row = db.execute("SELECT count FROM notes WHERE id=?", (identity,)).fetchone()
-        repeated = row is not None
+        repeated_test = (
+            db.execute("SELECT 1 FROM advisory_tests WHERE id=?", (test_identity,)).fetchone()
+            is not None
+        )
+        repeated = row is not None or repeated_test
+        db.execute("INSERT OR IGNORE INTO advisory_tests VALUES(?)", (test_identity,))
         db.execute(
             "INSERT INTO notes VALUES(?,?,1) ON CONFLICT(id) DO UPDATE SET count=count+1",
             (identity, goal_id),
@@ -67,18 +81,22 @@ def assessment(root: Path, result: dict) -> dict:
             else "advisory only - no executed test"
         )
         value = {
+            "contract_version": 2,
+            "historical_audit": historical,
             "id": identity,
             "goal_id": goal_id,
             "updated": time.time(),
             "state": state,
             "reason": reason,
             "repeated": repeated,
+            "repeated_advisory_test": repeated_test,
             "evidence_ids": evidence,
             "work_receipts": work,
             "eligible_for_review": reason is None and (not repeated or bool(work)),
             "scope": "Lexical category and receipt audit only; no profit, causal or ML-label certification",
         }
-        atomic_json(directory / "latest.json", value)
+        if not historical:
+            atomic_json(directory / "latest.json", value)
     return value
 
 
@@ -98,9 +116,9 @@ def repair_history(root: Path) -> dict:
         ).fetchall()
         for sequence, encoded in rows:
             value = json.loads(encoded)
-            if value.get("research_quality"):
+            if value.get("research_quality", {}).get("contract_version") == 2:
                 continue
-            value["research_quality"] = assessment(root, value)
+            value["research_quality"] = assessment(root, value, historical=True)
             value["status"] = value["research_quality"]["state"]
             with lab.db:
                 lab.db.execute(

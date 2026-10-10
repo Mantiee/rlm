@@ -78,6 +78,8 @@ def report(root: Path) -> dict:
             {"branch": event["branch"], **compact_result(event["payload"])}
             for event in shared.recent(30)
             if event["kind"] == "worker-result"
+            and event["payload"].get("mission_run") == (str(run) if run else None)
+            and not event["payload"].get("research_quality", {}).get("historical_audit")
             and event["payload"].get("research_quality", {}).get("eligible_for_review", True)
         ][-6:]
     finally:
@@ -139,9 +141,19 @@ def report(root: Path) -> dict:
         ("income_work", root / "research/income-work/status.json"),
         ("research_quality", root / "research/research-quality/latest.json"),
         ("source_acquisition", root / "research/source-acquisition/status.json"),
-        ("official_benchmark", root / "research/public-benchmarks/progress.json"),
+        ("owned_cpu_dispatch", root / "research/goal-compute/status.json"),
+        ("paper_fee_source", root / "research/paper/fee-source-status.json"),
     ):
         value[name] = json.loads(path.read_text()) if path.exists() else {"state": "not started"}
+    from rlm.v100.public_benchmarks import progress_for_run
+
+    value["official_benchmark"] = progress_for_run(root, run)
+    baseline_reports = value["mission_evidence"].get("reports", [])
+    baseline = next(
+        (row for row in baseline_reports if isinstance(row, dict) and row.get("cases")), None
+    )
+    if baseline and value["fixed_suite_baseline"]["total"] is None:
+        value["fixed_suite_baseline"] = {"passed": baseline["passed"], "total": baseline["cases"]}
     from rlm.v100.goals import load_goal
 
     current_goal = (load_goal(root) or {}).get("id")
@@ -151,6 +163,7 @@ def report(root: Path) -> dict:
         "income_work",
         "research_quality",
         "source_acquisition",
+        "owned_cpu_dispatch",
     ):
         if value[name].get("goal_id") != current_goal:
             value[name] = {"state": "not started for current goal", "goal_id": current_goal}
@@ -180,8 +193,10 @@ def report(root: Path) -> dict:
         "Official benchmark: " + json.dumps(value["official_benchmark"]),
         "Resident workers: " + json.dumps(value["drones"]),
         "External compute: " + json.dumps(value["external_compute"]),
+        "Owned CPU training dispatch: " + json.dumps(value["owned_cpu_dispatch"]),
         "Income work: " + json.dumps(value["income_work"]),
         "Research quality: " + json.dumps(value["research_quality"]),
+        "Paper fee source: " + json.dumps(value["paper_fee_source"]),
         "Active architecture: " + str(value["active_foundation_expert"] or "original"),
         "Private desktop: " + json.dumps(value["desktop"]),
     ]

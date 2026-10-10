@@ -256,6 +256,39 @@ def write_progress(root: Path, output: Path, report: dict, total: int, state: st
     atomic_json(root / "research/public-benchmarks/progress.json", value)
 
 
+def progress_for_run(root: Path, run: Path | None) -> dict:
+    """Scope live counters to their run, retaining prior counters as history."""
+    if run is not None:
+        complete = run / "public-baseline.json"
+        if complete.exists():
+            report = json.loads(complete.read_text())
+            if report.get("complete") and isinstance(report.get("cases"), list):
+                return {
+                    "model": report.get("model_version"),
+                    "state": "finished",
+                    "completed": len(report["cases"]),
+                    "total": len(report["cases"]),
+                    "report": str(complete),
+                    "scope": "Current run completed official baseline",
+                }
+        progress = run / "public-baseline.progress.json"
+        if progress.exists():
+            value = json.loads(progress.read_text())
+            if Path(value.get("report", "")).resolve().is_relative_to(run.resolve()):
+                return {**value, "scope": "Current run official baseline progress"}
+    global_path = root / "research/public-benchmarks/progress.json"
+    if global_path.exists():
+        value = json.loads(global_path.read_text())
+        if run and Path(value.get("report", "")).resolve().is_relative_to(run.resolve()):
+            return {**value, "scope": "Current run official baseline progress"}
+        return {
+            "state": "not started for current run",
+            "historical": value,
+            "scope": "Previous-run counters are historical, not current activity",
+        }
+    return {"state": "not started for current run"}
+
+
 def resume_baseline(root: Path, profile: dict, output: Path) -> Path | None:
     """Carry the newest matching original baseline forward, never select by score."""
     snapshot = current(root)

@@ -363,7 +363,13 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     try:
                         cached_public = reusable_public(root, serving)
                         if cached_public:
-                            atomic_json(public_path, json.loads(cached_public.read_text()))
+                            from rlm.v100.public_benchmarks import write_progress
+
+                            reused = json.loads(cached_public.read_text())
+                            atomic_json(public_path, reused)
+                            write_progress(
+                                root, public_path, reused, len(reused["cases"]), "finished"
+                            )
                             atomic_json(
                                 directory / "public-baseline-reused.json",
                                 {"source": str(cached_public), "sha256": file_hash(cached_public)},

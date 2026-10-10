@@ -27,6 +27,10 @@ STARTING_SOURCES = (
 )
 
 
+class MasterNotReady(RuntimeError):
+    """Transient serving startup, shutdown or unavailable protected receipt."""
+
+
 def accepted_master(root: Path, branch: str):
     """Reuse a protected serving master, never launch a model or use a candidate."""
     from rlm.v100.competition import helper_client
@@ -36,22 +40,37 @@ def accepted_master(root: Path, branch: str):
     run = Path(active["run"]).resolve()
     if not run.is_relative_to((root / "research/mission").resolve()):
         raise ValueError("Mission escaped its owned directory")
-    state = json.loads((run / "status.json").read_text())
+    status_path = run / "status.json"
+    state = json.loads(status_path.read_text()) if status_path.exists() else {}
     paths = [run / "serving-active.json", run / "learning/live.json"]
     paths.append(run / f"profile-{state.get('context_window')}.json")
     path = next((candidate for candidate in paths if candidate.is_file()), None)
     if path is None:
-        raise RuntimeError("Accepted master profile not ready; collected evidence retained")
+        raise MasterNotReady("Accepted master profile not ready; collected evidence retained")
+    startup = run / f"server-{state.get('context_window')}.startup.json"
+    # The initial server is stopped when continuous learning starts its own
+    # protected server. Its old startup file must not block the live profile.
+    if (
+        path.name.startswith("profile-")
+        and startup.exists()
+        and json.loads(startup.read_text()).get("stage") != "ready"
+    ):
+        raise MasterNotReady("Accepted V100 serving startup not ready; evidence retained")
     profile = load_profile(path, root)
     client = helper_client(profile, root, branch)
     client.timeout = min(10, client.timeout)
     # Full protected receipt and endpoint check precedes any generation. A
     # candidate temporarily occupying the same endpoint is never used.
-    assert_served_expert(client, profile, root)
+    try:
+        assert_served_expert(client, profile, root)
+    except (FileNotFoundError, ProcessLookupError, requests.RequestException) as error:
+        raise MasterNotReady("Accepted serving process or endpoint not ready") from error
     client.timeout = 40
     client.request_deadline = time.monotonic() + 60
     client.enable_thinking = False
     client.sampling_args = dict(client.sampling_args) | {"max_tokens": 1024}
+    client.research_token_ceiling = 1024
+    client.research_thinking_allowed = False
     client.activity_actor = "income-research"
     return client
 
@@ -86,8 +105,27 @@ def execute(root: Path, job: dict) -> dict:
     path = directory / "status.json"
     previous = json.loads(path.read_text()) if path.exists() else {}
     same_goal = previous.get("goal_id") == goal["id"]
+    pending = None
+    if same_goal and previous.get("dossier"):
+        candidate = Path(previous["dossier"]).resolve()
+        if candidate.is_relative_to((directory / "dossiers").resolve()) and candidate.is_file():
+            saved = json.loads(candidate.read_text())
+            if (
+                saved.get("goal_id") == goal["id"]
+                and saved.get("analysis") is None
+                and previous.get("state")
+                in (
+                    "waiting for accepted master",
+                    "evidence collected; analysis blocked",
+                )
+                and saved.get("analysis_attempts", 0) < 3
+                and 0 <= time.time() - saved["source"]["acquired"] <= 86400
+            ):
+                pending = saved
     index = previous.get("next_source", 0) if same_goal else 0
     domain, url = STARTING_SOURCES[index % len(STARTING_SOURCES)]
+    if pending:
+        domain, url = previous["domain"], previous["url"]
     value = {
         "goal_id": goal["id"],
         "job_id": job["id"],
@@ -95,43 +133,62 @@ def execute(root: Path, job: dict) -> dict:
         "state": "collecting primary terms",
         "domain": domain,
         "url": url,
-        "next_source": index + 1,
+        "next_source": index if pending else index + 1,
         "sources_collected": previous.get("sources_collected", 0) if same_goal else 0,
         "proposals_registered": previous.get("proposals_registered", 0) if same_goal else 0,
         "actual_income_pln": None,
         "scope": "Public-terms research and preparation only; no account, application, sale, security scan or payment executed",
     }
+    if pending:
+        value["readiness_attempts"] = previous.get("readiness_attempts", 0)
     atomic_json(path, value)
     journal = ActivityLog(root, job["branch"], "income-research")
     step = journal.write(
         "tools",
         "tool-start",
-        {"tool": "observe_goal_source", "arguments": {"url": url, "field": ""}},
+        {
+            "tool": "read_income_dossier" if pending else "observe_goal_source",
+            "arguments": {"path": previous["dossier"]} if pending else {"url": url, "field": ""},
+        },
     )
     try:
-        source = observe(root, url)
+        source = pending["source"] if pending else observe(root, url)
     except (ValueError, OSError, RuntimeError, requests.RequestException) as error:
         value.update(state="source unavailable", error=str(error)[:400], updated=time.time())
         atomic_json(path, value)
         journal.write("errors", "source-unavailable", value, step_id=step)
         return {**value, "status": "failed"}
     journal.write(
-        "tools", "tool-result", {"tool": "observe_goal_source", "result": source}, step_id=step
+        "tools",
+        "tool-result",
+        {
+            "tool": "read_income_dossier" if pending else "observe_goal_source",
+            "result": source,
+            "scope": "Archived evidence reused; no new fetch" if pending else "New source fetch",
+        },
+        step_id=step,
     )
     value.update(
         state="evidence collected; analysis pending",
         evidence_id=source["id"],
-        sources_collected=value["sources_collected"] + 1,
+        sources_collected=value["sources_collected"] + (0 if pending else 1),
     )
     dossier = directory / "dossiers" / (source["id"] + ".json")
-    atomic_json(
-        dossier,
-        {"goal_id": goal["id"], "source": source, "analysis": None, "scope": value["scope"]},
-    )
+    saved = pending or {
+        "goal_id": goal["id"],
+        "source": source,
+        "analysis": None,
+        "scope": value["scope"],
+        "analysis_attempts": 0,
+    }
+    atomic_json(dossier, saved)
     value["dossier"] = str(dossier)
     atomic_json(path, value)
+    attempts_before = saved.get("analysis_attempts", 0)
     try:
         client = accepted_master(root, job["branch"])
+        saved["analysis_attempts"] = saved.get("analysis_attempts", 0) + 1
+        atomic_json(dossier, saved)
         response = native_turn(
             client,
             [
@@ -165,6 +222,8 @@ def execute(root: Path, job: dict) -> dict:
             raise ValueError(
                 "No accepted work or payment receipt; conservative income lower bound must be zero"
             )
+        if (load_goal(root) or {}).get("id") != goal["id"]:
+            raise ValueError("Goal changed during analysis; proposal retained but not registered")
         row = register(root, job["branch"], specification)
         atomic_json(
             dossier,
@@ -175,8 +234,22 @@ def execute(root: Path, job: dict) -> dict:
             candidate_id=row["id"],
             proposals_registered=value["proposals_registered"] + 1,
         )
+    except MasterNotReady as error:
+        attempts = value.get("readiness_attempts", 0) + 1
+        value.update(
+            state="waiting for accepted master",
+            error=str(error)[:400],
+            readiness_attempts=attempts,
+            retry_after_seconds=min(120, 15 * 2 ** min(attempts, 3)) if attempts <= 6 else 600,
+        )
+        journal.write("steps", "income-analysis-deferred", value)
     except (ValueError, OSError, RuntimeError, requests.RequestException) as error:
+        saved["analysis_attempts"] = max(attempts_before + 1, saved.get("analysis_attempts", 0))
+        saved["analysis_error"] = str(error)[:400]
+        atomic_json(dossier, saved)
         value.update(state="evidence collected; analysis blocked", error=str(error)[:400])
+        if saved.get("analysis_attempts", 0) < 3:
+            value["retry_after_seconds"] = 120
         journal.write("errors", "income-analysis-blocked", value)
     value["updated"] = time.time()
     atomic_json(path, value)

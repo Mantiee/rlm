@@ -64,6 +64,22 @@ def test_evaluation_default_rejects_length_without_retry():
     assert len(requests) == 1
 
 
+def test_resident_host_ceiling_blocks_initial_expansion_and_retry():
+    client, requests = reasoning_client([("length", "partial")] * 3)
+    client.research_token_ceiling = 1024
+    with pytest.raises(ValueError, match="max_tokens=1024, attempts=1"):
+        native_turn(client, [], retry_output_limit=8192)
+    assert [request["max_tokens"] for request in requests] == [1024]
+
+
+def test_resident_retry_may_grow_only_to_host_ceiling():
+    client, requests = reasoning_client([("length", "partial"), ("stop", "done")])
+    client.sampling_args["max_tokens"] = 512
+    client.research_token_ceiling = 1024
+    assert native_turn(client, [], retry_output_limit=8192)["content"] == "done"
+    assert [request["max_tokens"] for request in requests] == [512, 1024]
+
+
 def test_retry_rejects_partial_final_after_three_attempts():
     client, requests = reasoning_client([("length", "partial")] * 3)
     with pytest.raises(ValueError, match="max_tokens=8192, attempts=3"):
