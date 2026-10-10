@@ -1,6 +1,9 @@
 
 ---
 
+Synta v70 avoids repeated full artifact reads within the same process, detects changed file
+identities, and bounds native startup verification. See [SYNTA_V70.md](SYNTA_V70.md).
+
 > **V100 fork, v100.14:** the local workflow uses your own llama.cpp server, no paid API.
 > v100.14 fixes CPU research request budgets and one-slot job scheduling, trims
 > the CPU tool catalog, exposes evaluation progress, and reuses only fully matching

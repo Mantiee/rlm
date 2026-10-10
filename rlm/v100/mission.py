@@ -307,6 +307,7 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                 if free < 4:
                     raise RuntimeError("Context leaves less than 4 GiB inference headroom")
                 client = helper_client(serving, root)
+                note(directory, "verifying-serving-identity", context_window=context)
                 assert_served_expert(client, serving, root)
                 selected, selected_path = serving, path
                 note(

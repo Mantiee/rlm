@@ -176,12 +176,63 @@ def managed_server(
             # controller CLI import, registry initialization or Python launcher.
             if process.poll() is not None:
                 raise RuntimeError(f"Native server exited before verification; inspect {log_path}")
+            verification_stop = threading.Event()
+            verification_done = threading.Event()
+            verification_errors: list[Exception] = []
+            last_artifact, last_update = None, 0.0
+
+            def check_verification() -> None:
+                if verification_stop.is_set() or (cancel is not None and cancel.is_set()):
+                    raise RuntimeError("Managed server startup cancelled during verification")
+                if process.poll() is not None:
+                    raise RuntimeError(
+                        f"Native server exited during verification; inspect {log_path}"
+                    )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Artifact verification timed out; inspect {log_path}")
+
+            def hash_progress(path: Path, completed: int, total: int) -> None:
+                nonlocal last_artifact, last_update
+                check_verification()
+                now = time.monotonic()
+                if path != last_artifact or now - last_update >= 1 or completed == total:
+                    startup(
+                        "verifying-artifacts",
+                        pid=process.pid,
+                        artifact=str(path),
+                        bytes_verified=completed,
+                        bytes_total=total,
+                    )
+                    last_artifact, last_update = path, now
+
+            def verify_artifacts() -> None:
+                try:
+                    write_receipt(
+                        profile,
+                        root,
+                        pid=process.pid,
+                        check=check_verification,
+                        progress=hash_progress,
+                    )
+                except Exception as error:
+                    verification_errors.append(error)
+                finally:
+                    verification_done.set()
+
+            verifier = threading.Thread(
+                target=verify_artifacts, name="server-artifact-verification", daemon=True
+            )
+            verifier.start()
             try:
-                write_receipt(profile, root, pid=process.pid)
-            except ProcessLookupError as error:
-                raise RuntimeError(
-                    f"Native server exited during verification; inspect {log_path}"
-                ) from error
+                # A stalled filesystem read cannot hold the mission beyond this deadline.
+                # The owned verifier also checks cancellation between reads and before publication.
+                while not verification_done.wait(0.1):
+                    check_verification()
+                if verification_errors:
+                    raise verification_errors[0]
+                check_verification()
+            finally:
+                verification_stop.set()
             startup("waiting-for-health", pid=process.pid)
             if cpu:
                 os.setpriority(os.PRIO_PROCESS, process.pid, 10)

@@ -8,17 +8,71 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import threading
+from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 
 from rlm.v100.common import atomic_json
 
+HASH_CACHE: OrderedDict[tuple, str] = OrderedDict()
+HASH_CACHE_LOCK = threading.Lock()
 
-def file_hash(path: Path) -> str:
+
+def file_identity(path: Path) -> tuple[int, ...]:
+    stat = path.stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+def file_hash(
+    path: Path,
+    *,
+    check: Callable[[], None] | None = None,
+    progress: Callable[[Path, int, int], None] | None = None,
+) -> str:
+    """Reuse only hashes computed by this process for the unchanged file identity."""
+    source = path
+    path = path.resolve()
+    if check is not None:
+        check()
+    identity = file_identity(path)
+    key = (os.getpid(), path, *identity)
+    with HASH_CACHE_LOCK:
+        cached = HASH_CACHE.get(key)
+        if cached is not None:
+            HASH_CACHE.move_to_end(key)
+    if cached is not None:
+        if file_identity(source) != identity:
+            raise ValueError(f"Artifact changed during hashing: {source}")
+        if progress is not None:
+            progress(path, identity[2], identity[2])
+        return cached
     value = hashlib.sha256()
+    completed = 0
+    if progress is not None:
+        progress(path, 0, identity[2])
     with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(8 * 2**20), b""):
+        while True:
+            if check is not None:
+                check()
+            block = handle.read(8 * 2**20)
+            if not block:
+                break
             value.update(block)
-    return value.hexdigest()
+            completed += len(block)
+            if progress is not None:
+                progress(path, completed, identity[2])
+    if check is not None:
+        check()
+    if file_identity(source) != identity:
+        raise ValueError(f"Artifact changed during hashing: {path}")
+    result = value.hexdigest()
+    with HASH_CACHE_LOCK:
+        HASH_CACHE[key] = result
+        HASH_CACHE.move_to_end(key)
+        while len(HASH_CACHE) > 512:
+            HASH_CACHE.popitem(last=False)
+    return result
 
 
 def assert_candidate_output(output: Path, base: Path, adapter: Path | None, root: Path) -> None:
@@ -281,7 +335,8 @@ class ExpertRegistry:
         ]
 
 
-def execution_hash(profile: dict) -> str:
+def execution_hash(profile: dict, *, hash_file: Callable[[Path], str] | None = None) -> str:
+    hash_file = file_hash if hash_file is None else hash_file
     server = {
         key: value
         for key, value in profile["server"].items()
@@ -290,20 +345,20 @@ def execution_hash(profile: dict) -> str:
     payload = {
         "runtime": profile["runtime"],
         "server": server,
-        "binary_sha256": file_hash(Path(profile["server"]["binary"])),
-        "draft_sha256": file_hash(Path(profile["server"]["draft_model"]))
+        "binary_sha256": hash_file(Path(profile["server"]["binary"])),
+        "draft_sha256": hash_file(Path(profile["server"]["draft_model"]))
         if profile["server"]["draft_model"]
         else None,
         "native_libraries": {
-            path.name: file_hash(path)
+            path.name: hash_file(path)
             for path in sorted(Path(profile["server"]["binary"]).parent.glob("*.so*"))
             if path.is_file()
         },
     }
     if profile["runtime"].get("backend") == "isolated-architecture":
         payload["scratch"] = {
-            "source_sha256": file_hash(Path(profile["resources"]["scratch_source"])),
-            "budget_sha256": file_hash(Path(profile["resources"]["scratch_budget"])),
+            "source_sha256": hash_file(Path(profile["resources"]["scratch_source"])),
+            "budget_sha256": hash_file(Path(profile["resources"]["scratch_budget"])),
             "hashes": profile["resources"]["scratch_hashes"],
         }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

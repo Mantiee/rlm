@@ -3,11 +3,12 @@
 import json
 import os
 import socket
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
 from rlm.v100.common import atomic_json
-from rlm.v100.protection import execution_hash, file_hash
+from rlm.v100.protection import execution_hash, file_hash, file_identity
 
 
 def ensure_local_port_available(port: int) -> None:
@@ -36,27 +37,37 @@ def receipt_path(profile: dict, root: Path) -> Path:
     return root / "research/state" / f"server-{port}.json"
 
 
-def write_receipt(profile: dict, root: Path, pid: int | None = None) -> None:
+def write_receipt(
+    profile: dict,
+    root: Path,
+    pid: int | None = None,
+    *,
+    check: Callable[[], None] | None = None,
+    progress: Callable[[Path, int, int], None] | None = None,
+) -> None:
     pid = os.getpid() if pid is None else pid
     identity = process_identity(pid)
     files = {}
     for name in ("binary", "model", "draft_model"):
         if profile["server"][name]:
             path = Path(profile["server"][name])
-            stat = path.stat()
-            files[str(path)] = [stat.st_size, stat.st_mtime_ns, stat.st_ino]
+            files[str(path)] = list(file_identity(path))
     for path in Path(profile["server"]["binary"]).parent.glob("*.so*"):
         if path.is_file():
-            stat = path.stat()
-            files[str(path)] = [stat.st_size, stat.st_mtime_ns, stat.st_ino]
-    model_hash = file_hash(Path(profile["server"]["model"]))
-    native_hash = execution_hash(profile)
+            files[str(path)] = list(file_identity(path))
+
+    def hash_file(path: Path) -> str:
+        return file_hash(path, check=check, progress=progress)
+
+    model_hash = hash_file(Path(profile["server"]["model"]))
+    native_hash = execution_hash(profile, hash_file=hash_file)
     if process_identity(pid) != identity:
         raise ProcessLookupError("Native process changed during artifact verification")
     for raw, expected in files.items():
-        stat = Path(raw).stat()
-        if [stat.st_size, stat.st_mtime_ns, stat.st_ino] != expected:
+        if list(file_identity(Path(raw))) != expected:
             raise ValueError("Server artifact changed during verification")
+    if check is not None:
+        check()
     atomic_json(
         receipt_path(profile, root),
         {
@@ -98,8 +109,7 @@ def assert_served_expert(client, profile: dict, root: Path, expert: dict | None 
     ):
         raise ValueError("Protected expert is not the model launched at this endpoint")
     for raw, expected in receipt["files"].items():
-        stat = Path(raw).stat()
-        if [stat.st_size, stat.st_mtime_ns, stat.st_ino] != expected:
+        if list(file_identity(Path(raw))) != expected:
             raise ValueError("Protected server artifact changed since launch")
     if (
         Path(client.request("/props")["model_path"]).resolve()
