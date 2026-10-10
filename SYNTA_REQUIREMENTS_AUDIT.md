@@ -116,3 +116,33 @@ Final v62 verification: 1098 tests passed, 65 skipped, one existing PEFT warning
 no deselections. Ruff for Python/scripts/tests excluding the unchanged notebook,
 upgrade shell syntax and diff whitespace checks pass. No Windows, CUDA or
 operator-browser runtime acceptance is asserted by this result.
+
+## v63 rebuilt verification
+
+After interrupted publication and workspace rollback, the exact public v62 tree
+was restored and this release was rebuilt. Final rebuilt test run: 1125 passed,
+65 skipped, one existing PEFT warning, 68.64 seconds. These results supersede the
+pre-interruption v63 test count. The causal n-gram memory pilot adds real gradient,
+checkpoint and paired host-ablation regressions. All network transports are test
+fixtures; no V100/Windows/browser hardware acceptance or verified income is claimed.
+See SYNTA_RECOVERY.md and SYNTA_NGRAM_MEMORY.md for scope and admission limits.
+
+## v63 final collection and Windows limits
+
+Aggregate auditing and guest SSH synchronization no longer block the five-second
+live collector. Existing ledgers are read without writer/schema locks. Delayed
+aggregate audits remain explicitly labeled rather than masquerading as live
+financial data. Tests include a deliberately blocked collector and a concurrent
+SQLite writer.
+
+Windows now has a dedicated conservative installer with verified isolated
+process replacement, CPU pressure cancellation, idle priority, two affinity
+slots, monitored four-GiB child RSS, six-GiB host reserve and foreground
+browser/media yielding. GPU power is not changed globally; the RTX helper stays
+off after the reported hang. This uses Windows CPU for admitted jobs, not pooled
+RAM/VRAM or guaranteed GPU safety. Actual Windows execution and V100 profit or
+accepted weight updates have not been demonstrated in this workspace.
+
+Final v63 validation: 1134 passed, 65 skipped, one existing PEFT warning.
+Ruff, formatting, shell syntax and whitespace checks pass. PowerShell has
+static contract tests; this Linux workspace does not execute Windows APIs.

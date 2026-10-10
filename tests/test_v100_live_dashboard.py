@@ -127,7 +127,7 @@ def test_drone_status_exposes_bounded_actual_assignment(tmp_path, monkeypatch):
     monkeypatch.setattr(research_tools, "public_origin", lambda url: None)
     drones.schedule(tmp_path, "A", "source", "https://example.com/" + "x" * 800, 0)
     report = drones.inspect(tmp_path)
-    assert len(report[0]["assignment"]) <= 300
+    assert len(report[0]["assignment"]) == 820
     assert report[0]["state"] == "queued"
 
 

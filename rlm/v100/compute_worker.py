@@ -5,6 +5,7 @@ uses the RTX or turns a free managed Colab session into a distributed worker.
 """
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -70,14 +71,59 @@ def available() -> tuple[bool, str]:
 
     if psutil.virtual_memory().available < 6 * 2**30:
         return False, "Less than six GiB free host RAM"
-    if psutil.cpu_percent(interval=0.1) > 75:
+    if psutil.cpu_percent(interval=0.1) > 40:
         return False, "Host CPU busy"
+    if foreground_busy():
+        return False, "Foreground browser, video or game; CPU experiment paused"
     if any(
         (p.info.get("name") or "").casefold() == "league of legends.exe"
         for p in psutil.process_iter(["name"])
     ):
         return False, "Game running; CPU experiment paused"
     return True, "ready"
+
+
+def foreground_busy() -> bool:
+    """Conservatively yield to interactive media/browser apps on Windows."""
+    if sys.platform != "win32":
+        return False
+    import psutil
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetForegroundWindow.restype = ctypes.c_void_p
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    pid = ctypes.c_ulong()
+    window = user32.GetForegroundWindow()
+    if not window:
+        return False
+    user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
+    try:
+        name = psutil.Process(pid.value).name().casefold()
+    except psutil.NoSuchProcess:
+        return False
+    return name in {
+        "chrome.exe",
+        "msedge.exe",
+        "firefox.exe",
+        "brave.exe",
+        "opera.exe",
+        "vlc.exe",
+        "mpv.exe",
+        "potplayer64.exe",
+        "wmplayer.exe",
+        "moviesandtv.exe",
+        "league of legends.exe",
+        "steam.exe",
+    }
+
+
+def limit_child(pid: int) -> None:
+    import psutil
+
+    child = psutil.Process(pid)
+    if sys.platform == "win32":
+        child.nice(psutil.IDLE_PRIORITY_CLASS)
+        child.cpu_affinity(child.cpu_affinity()[-2:])
 
 
 def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
@@ -95,7 +141,12 @@ def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
         local = Path(temporary)
         (local / "job.json").write_bytes(path.read_bytes())
         environment = dict(
-            os.environ, CUDA_VISIBLE_DEVICES="", OMP_NUM_THREADS="2", MKL_NUM_THREADS="2"
+            os.environ,
+            CUDA_VISIBLE_DEVICES="",
+            OMP_NUM_THREADS="2",
+            MKL_NUM_THREADS="2",
+            OPENBLAS_NUM_THREADS="2",
+            NUMEXPR_NUM_THREADS="2",
         )
         result_path = mailbox / "results" / (path.stem + "-" + lease["nonce"])
         result_path.mkdir(parents=True, exist_ok=False)
@@ -109,6 +160,7 @@ def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
             )
             started = time.monotonic()
             try:
+                limit_child(process.pid)
                 while process.poll() is None:
                     lease_path = mailbox / "claims" / path.stem / "lease.json"
                     if read_json(lease_path)["nonce"] != lease["nonce"]:
@@ -126,7 +178,7 @@ def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
                     if rss > 4 * 2**30 or time.monotonic() - started > 150:
                         raise RuntimeError("Compute child exceeded four GiB RAM or 150 seconds")
                     ready, reason = available()
-                    if not ready and ("Game" in reason or "RAM" in reason):
+                    if not ready:
                         raise RuntimeError(reason)
                     lease["heartbeat"] = time.time()
                     atomic(lease_path, lease)
@@ -203,6 +255,10 @@ def service(mailbox: Path, worker: str, kernel: Path, once: bool = False) -> Non
                     "device": "cpu",
                     "threads": 2,
                     "ram_limit_gib": 4,
+                    "host_cpu_pause_percent": 40,
+                    "min_free_host_ram_gib": 6,
+                    "priority": "idle on Windows",
+                    "gpu_enabled": False,
                 },
             )
             task = claim(mailbox, worker) if ready else None

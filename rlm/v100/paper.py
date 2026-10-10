@@ -133,11 +133,16 @@ def winning_payout(profile: dict, effective: Decimal, odds: Decimal) -> Decimal:
 
 
 class PaperBook:
-    def __init__(self, root: Path, clock=utcnow):
+    def __init__(self, root: Path, clock=utcnow, *, read_only: bool = False):
         self.root, self.clock = root, clock
         directory = root / "research/paper"
+        path = directory / "ledger.sqlite3"
+        if read_only:
+            self.db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
+            self.db.row_factory = sqlite3.Row
+            return
         directory.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(directory / "ledger.sqlite3", timeout=30)
+        self.db = sqlite3.connect(path, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""

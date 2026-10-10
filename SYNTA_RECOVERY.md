@@ -154,3 +154,76 @@ serving readiness failure, not a failed income experiment.
 This release does not certify fees unavailable from the actual retrieved page,
 income, demand, novelty, CUDA utilization or browser behavior on the operator's
 machines. The existing Windows CPU limit and disabled RTX preference are retained.
+
+## v63 rebuilt recovery
+
+The interrupted publication did not reach the remote branch. The local workspace
+was subsequently restored from the exact public v62 tree before these fixes were
+rebuilt. Old test counts are not acceptance evidence for this rebuilt release.
+
+- Financial read-only questions use current host reports without waiting for a
+  model, modifying plans or inventing ROI. Historical losses, scoring metrics,
+  zero forward paper fills, hypotheses and verified actual income are separate.
+  An uninitialized paper ledger reports unknown fills rather than fabricated zero.
+- Explicit test-now/history requests execute a transparent BTC hourly commissioning
+  comparison with one shared source acquisition, two predetermined rules and
+  documented assumed costs. Cash, buy-and-hold, doubled costs and chronological
+  windows reject weak candidates. This is not broad autonomous strategy discovery.
+  A comparison is reused for one hour with report digest checks; source failures
+  have their own blocked receipt and no invented ROI. Actual income remains unknown.
+- Hypothetical-capital research is an archived operator policy, distinct from
+  spending/account/outreach/order authorization. Existing explicit goals remain
+  literal. Research jobs are goal-bound, deduplicated and bounded. Windows RTX
+  remains disabled and the bounded CPU mailbox is retained.
+- Native serving readiness waits have durable SQLite timing and a limit of 600
+  seconds or 20 checks. Other requests can complete during the wait. Actual model
+  generation timeouts stay terminal. A plan, inspection or queued job cannot prove
+  implementation. Receipts distinguish failures, reads, queues and publication.
+- Full admitted drone assignments replace the old 300-character SQL preview.
+  Backend finish_reason and measured tokens are separate; length marks an
+  incomplete response. Archive previews remain bounded and labelled.
+- Internal generation instructions and built-in UI labels use English. Chat follows
+  the current operator language. Archived evidence and literal goals stay verbatim.
+- Layout publication cannot reload the reading page automatically. A manual button
+  loads a new layout when the reader is ready. Existing keyed DOM and disclosure
+  preservation remain; viewport anchoring is expanded. Reload once after upgrade
+  to replace already-loaded old JavaScript.
+- The separate n-gram memory pilot is documented in SYNTA_NGRAM_MEMORY.md. It is
+  not a modified Gemma GGUF and cannot activate without measured gates.
+
+Runtime evidence is stored under research/market-research, research/backtests,
+research/income-policy-history and research/architecture-candidates. Code tests do
+not assert operator-browser, Windows/CUDA runtime acceptance or actual income.
+
+## v63: independent live refresh and conservative Windows CPU
+
+- Live file snapshots refresh every five seconds without running `mission-report`
+  in that loop. A separate serial collector performs the aggregate audit with its
+  existing 20-second bound. Delayed audits have their own state and timestamp;
+  GPU/activity/mission reads continue. Guest SSH layout polling is a third loop,
+  so its timeout cannot stop live data. Historical aggregate values stay scoped
+  to the same run and visibly stale; unavailable values are never invented.
+- Financial questions in chat read stored same-run evidence and its original
+  timestamp without launching another aggregate audit. Missing fills and
+  blockers remain unknown. Old-run counters are discarded.
+- Paper and competition reports open existing SQLite ledgers read-only with a
+  one-second lock wait. They no longer request WAL/schema writer locks just to
+  display a report. Paper hash-chain validation is retained.
+- `install-synta-low-load.ps1` replaces only the isolated owned CPU worker, retains
+  its authenticated mailbox, sets autostart, and opens a visible log console.
+  It retires the isolated RTX helper without changing board power, clocks,
+  unrelated processes, firewall rules or desktop applications.
+- Windows children get idle priority and at most two CPU affinity slots, plus
+  two-thread BLAS/Torch limits. One job runs at a time. The worker checks host
+  CPU, free RAM and foreground browser/media/game every two seconds and kills
+  its owned experiment when CPU exceeds 40%, free RAM falls below 6 GiB, or
+  foreground activity needs the computer. Child RSS is sampled against 4 GiB;
+  this is a monitored cutoff, not a Windows kernel allocation quota.
+- The earlier code noticed CPU pressure but ignored it during running jobs.
+  This is fixed and tested with an owned child cancellation receipt.
+
+Per-process duty cycles cannot bound a 3090's instantaneous board power. After
+the reported black-screen hang, this preset uses Windows CPU and leaves RTX off;
+it does not promise to diagnose hardware or prevent all crashes. The V100
+remains the main model/GPU. N-gram memory runs as a bounded experimental candidate
+with paired host-scored ablation and existing independent promotion gates.

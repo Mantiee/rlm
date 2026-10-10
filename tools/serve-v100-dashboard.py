@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -96,6 +97,7 @@ class DashboardState:
         self.mission_reader = mission_reader
         self.data = {"collected_at": time.time(), "errors": ["Pierwsze zbieranie danych trwa"]}
         self.stop = threading.Event()
+        self.report_collection = {"state": "waiting", "updated": time.time()}
         self.layout = {"guest_file": GUEST_TEMPLATE, "state": "waiting for guest template"}
         self.page = render_template(BASE_TEMPLATE, validate_template(BASE_TEMPLATE))
         saved = self.root / "research/dashboard/index.html"
@@ -167,8 +169,9 @@ class DashboardState:
         temporary.replace(folder / "layout-status.json")
         self.data = {**self.data, "layout": self.layout}
 
-    def refresh(self):
-        errors, report, gpu = [], {}, {}
+    def collect_report(self):
+        """One bounded aggregate audit, independently from live refresh and guest SSH."""
+        self.report_collection = {"state": "collecting", "updated": time.time()}
         try:
             result = subprocess.run(
                 [
@@ -187,32 +190,53 @@ class DashboardState:
             )
             if result.returncode:
                 raise RuntimeError(result.stderr[-600:] or "mission-report failed")
-            report = read_json(self.root / "research/mission/latest-report.json")
+            self.report_collection = {"state": "ready", "updated": time.time()}
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            errors.append("Raport nie został odświeżony: " + str(error)[:600])
+            self.report_collection = {
+                "state": "delayed",
+                "updated": time.time(),
+                "detail": str(error)[:600],
+                "scope": "Aggregate audit delayed; live file snapshots continue independently",
+            }
+
+    def report_loop(self):
+        while not self.stop.is_set():
+            self.collect_report()
+            self.stop.wait(30)
+
+    def layout_loop(self):
+        while not self.stop.is_set():
+            self.sync_layout()
+            self.stop.wait(30)
+
+    def refresh(self):
+        errors, report, gpu = [], {}, {}
         mission = self.mission_reader(self.root)
-        freshness = {"state": "fresh" if report else "unavailable", "source": "mission-report"}
-        if not report:
-            cached = self.data.get("report", {})
-            cache_path = self.root / "research/mission/latest-report.json"
-            if cache_path.exists():
+        freshness = {"state": "unavailable", "source": "mission-report"}
+        cache_path = self.root / "research/mission/latest-report.json"
+        if cache_path.exists():
+            try:
+                report = read_json(cache_path)
                 try:
-                    cached = read_json(cache_path)
-                except (OSError, ValueError) as error:
-                    errors.append("Cached report unavailable: " + str(error)[:200])
-            if cached.get("mission_evidence", {}).get("run") == mission.get("run") and cached:
-                report = cached
+                    age = time.time() - datetime.fromisoformat(report["updated_at"]).timestamp()
+                except (KeyError, TypeError, ValueError):
+                    age = float("inf")
                 freshness = {
-                    "state": "stale",
-                    "updated_at": cached.get("updated_at"),
-                    "source": "last verified same-run snapshot",
+                    "state": "fresh"
+                    if 0 <= age < 60 and self.report_collection["state"] != "delayed"
+                    else "stale",
+                    "updated_at": report.get("updated_at"),
+                    "source": "last verified same-run aggregate; live snapshots refreshed separately",
                 }
+            except (OSError, ValueError) as error:
+                errors.append("Cached report unavailable: " + str(error)[:200])
         if report.get("mission_evidence", {}).get("run") != mission.get("run"):
             if report:
                 errors.append(
                     "Raport dotyczy poprzedniego przebiegu; pokazano tylko bieżący status"
                 )
             report = {}
+            freshness["state"] = "unavailable"
         from rlm.v100.dashboard_snapshot import supplement
 
         report = supplement(self.root, mission, report, errors)
@@ -266,6 +290,8 @@ class DashboardState:
             "mission": mission,
             "report": report,
             "report_freshness": freshness,
+            "report_collection": dict(self.report_collection),
+            "layout": dict(self.layout),
             "gpu": gpu,
             "controller_log": log,
             "paper_reports": [p.parent.name for p in reports if REPORT_ID.fullmatch(p.parent.name)][
@@ -278,7 +304,6 @@ class DashboardState:
         while not self.stop.is_set():
             try:
                 self.refresh()
-                self.sync_layout()
             except (OSError, ValueError, RuntimeError) as error:
                 self.data = {
                     **self.data,
@@ -288,7 +313,7 @@ class DashboardState:
                         "source": "previous snapshot after collector error",
                     },
                 }
-            self.stop.wait(20)
+            self.stop.wait(5)
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -417,14 +442,19 @@ def main():
 
     state = DashboardState(args.root, status)
     with DashboardServer((args.bind, args.port), state) as server:
-        thread = threading.Thread(target=state.loop, daemon=True)
-        thread.start()
+        threads = [
+            threading.Thread(target=target, daemon=True)
+            for target in (state.loop, state.report_loop, state.layout_loop)
+        ]
+        for thread in threads:
+            thread.start()
         print(f"Synta dashboard: http://{args.bind}:{args.port} - read-only", flush=True)
         try:
             server.serve_forever()
         finally:
             state.stop.set()
-            thread.join(timeout=1)
+            for thread in threads:
+                thread.join(timeout=1)
 
 
 if __name__ == "__main__":

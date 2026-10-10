@@ -406,6 +406,10 @@ def run_candidate(
     if pool.stat().st_size > 8 * 2**20:
         raise ValueError("Architecture corpus exceeds 8 MiB pilot budget")
     train, validation = load_records(pool, root / "research/state/architecture-splits.sqlite3")
+    from rlm.v100.morphology import read_shape
+
+    shape = read_shape(output / "source/model.py")
+    memory_ablation = None
     run = output / "trial"
     with resource_lease(root, budget["device"]):
         run.mkdir(exist_ok=False)
@@ -447,6 +451,29 @@ def run_candidate(
             eval_time = phase(output, run, inputs, budget, "predict")
             if file_hash(weights) != weights_sha:
                 raise ValueError("Architecture changed weights while being evaluated")
+            if shape and shape.get("memory_kind") == "causal-hashed-ngram-v1":
+                shutil.copyfile(run / "predict.log", run / "memory-enabled.log")
+                configuration["ablate_ngram_memory"] = True
+                atomic_json(inputs / "config.json", configuration)
+                ablation_time = phase(output, run, inputs, budget, "predict")
+                if file_hash(weights) != weights_sha:
+                    raise ValueError("Architecture changed weights during memory ablation")
+                shutil.copyfile(run / "predict.log", run / "memory-disabled.log")
+                if (run / "memory-disabled.log").stat().st_size > 2 * 2**20:
+                    raise ValueError("Ablation output exceeds protocol budget")
+                ablation_predictions = [
+                    json.loads(line)
+                    for line in (run / "memory-disabled.log").read_text().splitlines()
+                    if line.startswith('{"id":')
+                ]
+                ablation_cases = score_predictions(rows, ablation_predictions)
+                memory_ablation = {
+                    "disabled_passed_cases": sum(row["passed"] for row in ablation_cases),
+                    "disabled_evaluation_seconds": ablation_time,
+                    "cases": ablation_cases,
+                    "scope": "Same trained weights with memory disabled; feature ablation only, not an independently trained capacity-matched baseline",
+                }
+                shutil.copyfile(run / "memory-enabled.log", run / "predict.log")
         if (run / "predict.log").stat().st_size > 2 * 2**20:
             raise ValueError("Architecture prediction output exceeds its protocol budget")
         predictions = [
@@ -471,6 +498,12 @@ def run_candidate(
             "status": "scored full-weight submodel pilot; main serving model was not replaced",
             "scope": "Finite development suite; sampled resource monitoring is not hardware partitioning or proof against malicious code",
         }
+        if memory_ablation is not None:
+            memory_ablation["enabled_passed_cases"] = report["passed_cases"]
+            memory_ablation["development_improvement"] = (
+                report["passed_cases"] > memory_ablation["disabled_passed_cases"]
+            )
+            report["memory_ablation"] = memory_ablation
         atomic_json(run / "quality.json", report)
         from rlm.v100.experiments import SharedLab
 

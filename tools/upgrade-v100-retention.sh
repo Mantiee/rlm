@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10062.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10063.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -58,6 +58,7 @@ from rlm.v100.desktop import prepare as prepare_desktop
 from rlm.v100.supervisor import install
 from rlm.v100.chat_resources import repair_completed
 from rlm.v100.planning import realign_income_plans
+from rlm.v100.income_policy import read as income_policy, update as update_income_policy
 from rlm.v100.research_contract import repair_history
 
 root = Path(os.environ['AI_V100_ROOT'])
@@ -71,6 +72,8 @@ if helper_path.exists():
     helper.setdefault('resources', {})['helper_duty_percent'] = 50
     atomic_json(helper_path, helper)
     print('Helper active wall-time target:', helper['resources']['helper_duty_percent'], 'percent; not a hard GPU cap')
+if not (root / 'research/income-research-policy.json').exists():
+    update_income_policy(root, 'Enable hypothetical capital research')
 print("GOAL PLAN RECOVERY:", json.dumps(realign_income_plans(root), ensure_ascii=False))
 prepare(root)
 if (root / 'research/desktop/manifest.json').exists():
@@ -81,13 +84,16 @@ preferences_path = root / 'research/user-preferences.json'
 preferences = json.loads(preferences_path.read_text()) if preferences_path.exists() else {'directive': '', 'alerts': False}
 # Explicit operator request: display reasoning returned by owned local models.
 preferences['system_name'] = 'Synta'
+preferences['internal_language'] = 'English'
+preferences['chat_language'] = 'current operator message'
 preferences['capture_local_model_trace'] = True
 preferences['stream_local_model_trace'] = True
 preferences['automatic_goal_compute'] = True
 # Operator stopped the Windows GPU after a black-screen hang. Never reconnect
 # or restart it implicitly; Windows CPU mailbox remains available.
 preferences['remote_helper_enabled'] = False
-preferences['remote_helper_reason'] = 'Windows GPU disabled by operator after black-screen hang; use accepted V100 and bounded CPU work'
+preferences['remote_helper_reason'] = 'Use low-priority Windows CPU with pressure guards; GPU peak power cannot be capped per Synta process'
+preferences['windows_compute'] = {'device': 'cpu', 'threads': 2, 'child_ram_gib': 4, 'min_free_host_ram_gib': 6, 'pause_host_cpu_percent': 40, 'priority': 'idle', 'yield_to_foreground_media': True, 'gpu_enabled': False}
 preferences['retention'] = {
     'research': 'RETENTION_RESEARCH.md in the readonly own-source mount',
     'experiments': 'Bounded replay/KL, L2, empirical diagonal Fisher EWC, delta-A orthogonality, A-GEM, combined EWC+orthogonality+projection and standard LoRA rank growth are exposed to A/B planning. Historical modes require prior verified TRAINING references. Frozen-column/embedding growth primitives are tiny-model experiments, not serving Gemma modifications.',

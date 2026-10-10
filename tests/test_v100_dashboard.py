@@ -121,14 +121,41 @@ def test_dashboard_report_timeout_is_visible_and_does_not_hide_live_mission(tmp_
 
     monkeypatch.setattr(dashboard.subprocess, "run", unavailable)
     state = dashboard.DashboardState(tmp_path, lambda root: {"running": True})
+    state.collect_report()
     state.refresh()
     assert state.data["mission"]["running"] is True
     assert state.data["report"] == {}
     assert state.data["gpu"] == {}
     assert (
         sum("timed out" in error or "TimeoutExpired" in error for error in state.data["errors"])
-        == 2
+        == 1
     )
+    assert state.data["report_collection"]["state"] == "delayed"
+
+
+def test_slow_report_does_not_block_live_snapshot_refresh(tmp_path, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+
+    def run(command, **kwargs):
+        if command[0] == "nvidia-smi":
+            return SimpleNamespace(stdout="37, 8000, 32768, 55, 80\n", returncode=0)
+        entered.set()
+        assert release.wait(3)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(dashboard.subprocess, "run", run)
+    state = dashboard.DashboardState(tmp_path, lambda root: {"running": True})
+    collector = threading.Thread(target=state.collect_report)
+    collector.start()
+    try:
+        assert entered.wait(1)
+        state.refresh()
+        assert state.data["gpu"]["utilization"] == 37
+        assert state.data["report_collection"]["state"] == "collecting"
+        assert state.data["mission"]["running"]
+    finally:
+        release.set()
+        collector.join(3)
 
 
 @pytest.mark.parametrize(
@@ -163,7 +190,7 @@ def test_master_layout_preserves_data_components_and_fixed_renderer():
 
 def test_master_invalid_edit_keeps_previous_layout_and_survives_restart(tmp_path, monkeypatch):
     state = dashboard.DashboardState(tmp_path, lambda root: {})
-    changed = dashboard.BASE_TEMPLATE.replace("V100 - postęp misji", "Mój pulpit V100")
+    changed = dashboard.BASE_TEMPLATE.replace("Synta - mission progress", "Mój pulpit V100")
     monkeypatch.setattr(dashboard, "guest_layout", lambda root: changed)
     state.sync_layout()
     accepted = state.page
@@ -200,7 +227,7 @@ def test_guest_layout_seed_preserves_master_edits_and_bounds_transfer(tmp_path, 
 
     monkeypatch.setattr(desktop, "run", guest_run)
     assert dashboard.guest_layout(tmp_path) == dashboard.BASE_TEMPLATE
-    changed = dashboard.BASE_TEMPLATE.replace("V100 - postęp misji", "Nowy wygląd")
+    changed = dashboard.BASE_TEMPLATE.replace("Synta - mission progress", "Nowy wygląd")
     path.write_text(changed)
     assert dashboard.guest_layout(tmp_path) == changed
     path.write_bytes(b"x" * 262145)

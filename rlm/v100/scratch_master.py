@@ -305,6 +305,11 @@ def trial(root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], 
             run_candidate(
                 root, proposal["candidate_id"], pool, suite, budget, initial, morph_growth=growth
             )
+        shape = read_shape(folder / "source/model.py")
+        if shape and shape.get("memory_kind"):
+            quality = json.loads((folder / "trial/quality.json").read_text())
+            if not quality.get("memory_ablation", {}).get("development_improvement"):
+                raise ValueError("N-gram memory has no measured development ablation improvement")
         stored = json.loads((folder / "trial/budget.json").read_text())
         if stored != budget:
             raise ValueError("Trained scratch budget differs from its frozen proposal")

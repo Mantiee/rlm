@@ -413,6 +413,18 @@ TOOLS = [
         {"candidate_id": {"type": "string"}},
     ),
     tool_schema(
+        "propose_ngram_memory",
+        "Create a small causal Engram-inspired memory candidate with identity-initialized output. Byte-token pilot only; no pretrained GGUF retrofit, NVMe capacity claim or Windows RTX startup. Use test_submodel, compare memory_enabled=False, then goal/retention gates before promotion.",
+        {
+            "candidate_id": {"type": "string"},
+            "width": {"type": "integer"},
+            "layers": {"type": "integer"},
+            "memory_slots": {"type": "integer"},
+            "memory_order": {"type": "integer"},
+            "hypothesis": {"type": "string"},
+        },
+    ),
+    tool_schema(
         "morph_model",
         "Propose a goal-linked structural candidate. Compatible parent growth appends identity-initialized residual layers and freezes old weights. Other shapes train independently. Choose a pilot with test_submodel OR a full-budget proposal with propose_scratch_master on a fresh candidate; activation needs measured goal improvement and all quality gates.",
         {
@@ -565,7 +577,11 @@ class ResearchTools:
             from rlm.v100.income_opportunities import status
 
             value = status(self.root)
-            return {**value, "total": len(value["candidates"]), "candidates": value["candidates"][:8]}
+            return {
+                **value,
+                "total": len(value["candidates"]),
+                "candidates": value["candidates"][:8],
+            }
         if name == "register_income_opportunity" and set(arguments) == {"specification"}:
             from rlm.v100.income_opportunities import register
 
@@ -892,6 +908,10 @@ class ResearchTools:
                 return book.choose(self.branch, **arguments)
             finally:
                 book.close()
+        if name == "propose_ngram_memory":
+            from rlm.v100.ngram_memory import propose
+
+            return propose(self.root, self.branch, **arguments)
         if name == "morph_model":
             from rlm.v100.morphology import propose
 
@@ -1104,6 +1124,12 @@ def route_research_tool(client, messages: list[dict], tools: list[dict], journal
 def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dict:
     from rlm.v100.research_policy import apply
 
+    messages = [dict(row) for row in messages]
+    for row in messages:
+        if row.get("role") == "system":
+            row["content"] += (
+                " Generated internal plans, hypotheses and tool arguments must be English. Preserve literal operator/source quotations. Negative backtest returns are historical losses, not Brier or benchmark scores. Forecasts are not executed paper fills. Zero fills do not validate a profitable strategy."
+            )
     client = apply(client, root)
     owner = getattr(client, "research_owner", "A")
     journal = ActivityLog(root, owner, getattr(client, "activity_actor", "tester"))

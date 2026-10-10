@@ -73,6 +73,9 @@ def update(root: Path, horizon: str, text: str, actor: str) -> dict:
 
 def realign_income_plans(root: Path) -> dict:
     """Explicit upgrade repair: archive stale UI-only plans, retain operator goal."""
+    from rlm.v100.income_policy import read as read_policy
+
+    capital = read_policy(root)["capital_research"]
     current = read(root)
     goal = current.get("long") or {}
     if not any(word in goal.get("text", "").lower() for word in ("income", "dochód", "zarab")):
@@ -82,6 +85,8 @@ def realign_income_plans(root: Path) -> dict:
         text = current.get(horizon, {}).get("text", "").lower()
         if (
             not text
+            or capital
+            and "zero-deposit" in text
             or any(word in text for word in ("dashboard", "css", "html", "layout"))
             or text.startswith(
                 "evaluate source-disjoint goal outcomes and lawful zero-deposit opportunities"
@@ -92,6 +97,10 @@ def realign_income_plans(root: Path) -> dict:
                 if horizon == "short"
                 else "Compare evidence-backed opportunities across domains by repeatable net income, time, uncertainty and operational feasibility. Disprove weak candidates and diversify tests. Collect independent future outcomes for task ML; use owned CPU trials and V100 candidates only when labels and gates admit them. Distinguish hypotheses, prepared deliverables, validated outcomes and actual income."
             )
+            if capital:
+                replacement = replacement.replace(
+                    "zero-deposit income", "hypothetical-capital and zero-upfront income"
+                )
             changed.append(update(root, horizon, replacement, "A"))
     return {
         "changed": changed,

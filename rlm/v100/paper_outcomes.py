@@ -10,7 +10,7 @@ from rlm.v100.paper import PaperBook, sha
 def records(root: Path) -> list[dict]:
     if not (root / "research/paper/ledger.sqlite3").exists():
         return []
-    book = PaperBook(root)
+    book = PaperBook(root, read_only=True)
     try:
         events = book.events()  # Verify the immutable hash chain before using labels.
         if not events:

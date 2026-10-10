@@ -54,7 +54,9 @@ def register(root: Path, branch: str, specification: dict) -> dict:
         raise ValueError("Labor must include research, preparation and fulfillment time")
     if specification["gross_pln_high"] < specification["gross_pln_low"]:
         raise ValueError("Gross income interval is reversed")
-    if specification["upfront_spend_pln"] != 0:
+    from rlm.v100.income_policy import read as policy
+
+    if specification["upfront_spend_pln"] != 0 and not policy(root)["capital_research"]:
         raise ValueError("Current mission admits only zero-upfront-spend experiments")
     identities = specification["evidence"]
     if not isinstance(identities, list) or not 1 <= len(identities) <= 8:
@@ -143,6 +145,9 @@ def status(root: Path) -> dict:
         "actual_income_pln": None,
         "scope": "Hypothesis comparison only. No verified revenue ledger connected; missing income is unknown, not zero.",
     }
+    from rlm.v100.income_policy import read as policy
+
+    value["research_policy"] = policy(root)
     atomic_json(directory / "status.json", value)
     return value
 
@@ -163,6 +168,9 @@ def commission(root: Path) -> dict:
     profile = json.loads((run / "input-profile.json").read_text())
     if not profile.get("resources", {}).get("paper_research_enabled"):
         return {"state": "blocked", "reason": "Income research disabled by operator"}
+    from rlm.v100.market_research import commission as commission_market
+
+    commission_market(root)
     path = root / "research/income-opportunities/dispatch.json"
     previous = json.loads(path.read_text()) if path.exists() else {}
     upgraded = previous.get("work_kind") != "income"

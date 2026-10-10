@@ -14,6 +14,34 @@ from rlm.v100.paper_reports import summarize
 from rlm.v100.researchers import compact_result
 
 
+def snapshot(root: Path) -> dict:
+    """Fast read-only facts for chat, without rerunning a financial ledger audit."""
+    from rlm.v100.dashboard_snapshot import supplement
+    from rlm.v100.mission import status
+
+    mission = status(root)
+    value, errors = {}, []
+    path = root / "research/mission/latest-report.json"
+    if path.exists():
+        if path.stat().st_size > 2 * 2**20:
+            errors.append("Aggregate snapshot exceeds 2 MiB")
+        else:
+            try:
+                saved = json.loads(path.read_text())
+                if saved.get("mission_evidence", {}).get("run") == mission.get("run"):
+                    value = saved
+            except (OSError, ValueError, AttributeError) as error:
+                errors.append("Aggregate unavailable: " + str(error)[:200])
+    value = supplement(root, mission, value, errors)
+    value["phase"] = mission.get("state", {}).get("phase", mission.get("phase"))
+    value["running"] = mission.get("running")
+    value["collection_errors"] = errors
+    value["facts_scope"] = (
+        "Stored same-run audit with its original timestamp; live phase and file receipts read independently"
+    )
+    return value
+
+
 def report(root: Path) -> dict:
     from rlm.v100.mission import status
 
@@ -51,6 +79,11 @@ def report(root: Path) -> dict:
         backtests[-1]["development_test"] = {
             key: item for key, item in previous["development_test"].items() if key != "trace"
         }
+        from rlm.v100.market_research import triage
+
+        for key in ("fetched_at", "buy_hold_baseline", "double_cost_stress", "data_window"):
+            backtests[-1][key] = previous.get(key)
+        backtests[-1]["triage"] = triage(previous)
     metrics = {}
     if run:
         paths = sorted(
@@ -66,13 +99,28 @@ def report(root: Path) -> dict:
                     handle.readline()
                 rows = [json.loads(line) for line in handle if line.endswith(b"\n")]
             metrics[str(path)] = rows[-1] if rows else None
-    book = PaperBook(root)
+    book = PaperBook(root, read_only=(root / "research/paper/ledger.sqlite3").exists())
+    initialized = True
     try:
         state = book.state()
         paper = summarize(book)
+    except ValueError as error:
+        if str(error) != "Initialize the paper lab first":
+            raise
+        initialized = False
+        state = {"instruments": {}, "fee_profiles": {}, "quotes": {}}
+        paper = {
+            "currency": "unknown",
+            "branches": {},
+            "trades": [],
+            "stale_symbols": [],
+            "expired_fee_profiles": [],
+            "personal_income_tax": "unknown",
+        }
     finally:
         book.close()
-    shared = SharedLab(root / "research/state/competition.sqlite3")
+    shared_path = root / "research/state/competition.sqlite3"
+    shared = SharedLab(shared_path, read_only=shared_path.exists())
     try:
         ideas = [
             {"branch": event["branch"], **compact_result(event["payload"])}
@@ -117,7 +165,7 @@ def report(root: Path) -> dict:
         "paper": {
             "currency": paper["currency"],
             "branches": paper["branches"],
-            "executed_fills": len(paper["trades"]),
+            "executed_fills": len(paper["trades"]) if initialized else None,
             "real_money_ready": False,
             "tax": paper["personal_income_tax"],
         },
@@ -139,6 +187,7 @@ def report(root: Path) -> dict:
         ("income_opportunities", root / "research/income-opportunities/status.json"),
         ("income_dispatch", root / "research/income-opportunities/dispatch.json"),
         ("income_work", root / "research/income-work/status.json"),
+        ("market_research", root / "research/market-research/status.json"),
         ("research_quality", root / "research/research-quality/latest.json"),
         ("source_acquisition", root / "research/source-acquisition/status.json"),
         ("owned_cpu_dispatch", root / "research/goal-compute/status.json"),

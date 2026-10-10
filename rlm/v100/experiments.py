@@ -16,14 +16,21 @@ from rlm.v100.training import load_records
 
 
 class SharedLab:
-    def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
+    def __init__(self, path: Path, *, read_only: bool = False):
+        if not read_only:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = (
+            sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
+            if read_only
+            else sqlite3.connect(path)
+        )
         self.activity_root = (
             path.parent.parent.parent
             if path.parent.name == "state" and path.parent.parent.name == "research"
             else path.parent
         )
+        if read_only:
+            return
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("""CREATE TABLE IF NOT EXISTS events(
             sequence INTEGER PRIMARY KEY, branch TEXT NOT NULL,

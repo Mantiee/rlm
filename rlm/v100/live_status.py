@@ -14,7 +14,9 @@ def public_summary(value: dict | str) -> str:
 
     value = redact(value)
     if isinstance(value, str):
-        return value[:8000]
+        return value[:8000] + (
+            " [Preview only; full recorded action is in the archive]" if len(value) > 8000 else ""
+        )
     if not isinstance(value, dict):
         return ""
     parts = []
@@ -99,6 +101,7 @@ def recent_events(root: Path, limit: int = 200) -> list[dict]:
                             and value >= 0
                         },
                         "seconds": payload.get("seconds"),
+                        "finish_reason": payload.get("finish_reason"),
                         "returned_trace": payload.get("returned_trace")
                         if row.get("kind") == "local-model-reasoning"
                         else None,
@@ -113,7 +116,7 @@ def recent_events(root: Path, limit: int = 200) -> list[dict]:
                         "device": payload.get("device"),
                         "model": payload.get("model"),
                         "task": " | ".join(
-                            f"{key}: {str(payload.get('arguments', {}).get(key))[:200]}"
+                            f"{key}: {str(payload.get('arguments', {}).get(key))}"
                             for key in ("query", "url", "brief", "kind", "action")
                             if isinstance(payload.get("arguments"), dict)
                             and key in payload["arguments"]
@@ -168,8 +171,17 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
                 "usage",
                 "usage_at",
                 "seconds",
+                "finish_reason",
+                "completeness",
             ):
                 view.pop(name, None)
+        if event.get("finish_reason"):
+            view["finish_reason"] = event["finish_reason"]
+            view["completeness"] = (
+                "Incomplete: output token limit reached"
+                if event["finish_reason"] == "length"
+                else "Backend finish reason: " + str(event["finish_reason"])
+            )
         if event.get("evidence_ref"):
             view["evidence_ref"] = event["evidence_ref"]
             view["evidence_at"] = event.get("time")
@@ -202,6 +214,8 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
             view["result"] = event["summary"]
     result = list(views.values())
     for view in result:
+        if view.get("finish_reason") == "length":
+            view["state"] = "incomplete response"
         try:
             view["historical"] = (
                 time.time() - datetime.fromisoformat(view["updated"]).timestamp() > 600

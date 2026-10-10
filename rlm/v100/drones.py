@@ -44,6 +44,7 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
         "benchmark",
         "compute-audit",
         "income",
+        "market-research",
     ):
         raise ValueError("Choose A/B and source/python/researcher/critic/desktop")
     if kind == "compute-audit" and (
@@ -51,7 +52,7 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
         or not (root / "research/compute-jobs" / payload / "state.json").is_file()
     ):
         raise ValueError("Compute audit requires a registered host job")
-    if kind == "income":
+    if kind in ("income", "market-research"):
         from rlm.v100.goals import load_goal
 
         if payload != (load_goal(root) or {}).get("id"):
@@ -101,7 +102,7 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
 def inspect(root: Path) -> list[dict]:
     with connect(root) as db:
         rows = db.execute(
-            "SELECT id,branch,kind,interval,state,due,updated,result,substr(payload,1,300) AS assignment FROM jobs ORDER BY updated DESC LIMIT 32"
+            "SELECT id,branch,kind,interval,state,due,updated,result,payload AS assignment FROM jobs ORDER BY updated DESC LIMIT 32"
         ).fetchall()
     return [
         dict(row) | {"result": json.loads(row["result"]) if row["result"] else None} for row in rows
@@ -120,6 +121,10 @@ def cancel(root: Path, identity: str) -> dict:
 
 
 def execute(root: Path, job: dict) -> dict:
+    if job["kind"] == "market-research":
+        from rlm.v100.market_research import execute as market_execute
+
+        return market_execute(root, job["payload"])
     if job["kind"] == "income":
         from rlm.v100.income_work import execute as income_execute
 

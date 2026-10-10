@@ -22,6 +22,10 @@ from rlm.v100.activity import ActivityLog, append_locked
 from rlm.v100.common import atomic_json, load_profile
 
 
+class BackendNotReady(requests.ConnectionError):
+    """Owned accepted serving endpoint is not ready before generation."""
+
+
 @contextmanager
 def connect(root: Path):
     path = root / "research/state/user-chat.sqlite3"
@@ -32,6 +36,10 @@ def connect(root: Path):
         id TEXT PRIMARY KEY, created TEXT NOT NULL, message TEXT NOT NULL,
         state TEXT NOT NULL, response TEXT, attempts INTEGER NOT NULL DEFAULT 0,
         error TEXT, updated REAL NOT NULL DEFAULT 0)""")
+    db.execute("BEGIN IMMEDIATE")
+    if "wait_started" not in {row[1] for row in db.execute("PRAGMA table_info(requests)")}:
+        db.execute("ALTER TABLE requests ADD COLUMN wait_started REAL NOT NULL DEFAULT 0")
+    db.commit()
     try:
         with db:
             yield db
@@ -235,7 +243,12 @@ def schema(allow_long_goal: bool = False) -> dict:
 def conversation_question(message: str) -> bool:
     """Read-only questions take one generation; explicit work retains tools."""
     value = message.casefold().strip()
-    return bool(re.match(r"(?:a\s+)?(?:co|czy|jak|dlaczego|kiedy|what|why)\b", value)) and not bool(
+    return bool(
+        re.match(
+            r"(?:a\s+)?(?:co|czy|jak|dlaczego|czemu|gdzie|kiedy|what|why|where|when|ej zaczniesz)\b",
+            value,
+        )
+    ) and not bool(
         re.search(
             r"\b(?:zrób|zrob|napraw|popraw|dodaj|edyt|zmień|zmien|uruchom|sprawdź|sprawdz|zbadaj|zaimplement|chcę|chce|możesz|mozesz)\w*",
             value,
@@ -265,7 +278,7 @@ def conversational_response(
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are Synta. Answer the user's question directly in Polish, briefly. This is read-only chat: do not claim to execute work or update plans. Only the supplied status is verified. Missing optimizer/profit counters are unknown. Explain how the recorded goal relates to the question, without changing it or promising profit. State missing evidence honestly. Verified current facts: "
+                    "content": "You are Synta. Answer in the language of the current user message, briefly. Internal plans and tool text use English. This is read-only chat: do not claim to execute work or update plans. Only the supplied status is verified. Missing optimizer/profit counters are unknown. Explain how the recorded goal relates to the question, without changing it or promising profit. State missing evidence honestly. Verified current facts: "
                     + json.dumps(facts, ensure_ascii=False),
                 },
                 {"role": "user", "content": message},
@@ -293,6 +306,60 @@ def conversational_response(
     }
 
 
+READ_ONLY_TOOLS = {
+    "read_dashboard",
+    "dashboard_status",
+    "read_source",
+    "read_public_page",
+    "search_memory",
+    "mission_evidence",
+    "get_plan",
+    "capabilities",
+    "drone_status",
+    "compute_resources",
+    "paper_status",
+    "paper_observed_results",
+    "goal_learning_status",
+    "income_opportunities",
+    "sandbox_state",
+    "read_master_code",
+    "read_tool_result",
+}
+
+
+def receipt_failed(row: dict) -> bool:
+    result = row.get("result")
+    return bool(
+        row.get("error")
+        or isinstance(result, dict)
+        and (
+            result.get("error")
+            or result.get("status") == "failed"
+            or result.get("exit_code") not in (None, 0)
+        )
+    )
+
+
+def execution_receipts(rows: list[dict]) -> list[dict]:
+    receipts = []
+    for row in rows:
+        result = row.get("result") or {}
+        state = (
+            "failed"
+            if receipt_failed(row)
+            else "read-only"
+            if row.get("tool") in READ_ONLY_TOOLS
+            else "operation recorded; task outcome unverified"
+        )
+        if isinstance(result, dict) and not receipt_failed(row):
+            if result.get("status") in ("queued", "already scheduled"):
+                state = "queued; not execution"
+            elif result.get("written") and not result.get("published"):
+                state = "saved; publication unconfirmed"
+        receipts.append({"tool": row.get("tool"), "state": state, "result": result})
+    return receipts
+
+
 def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
@@ -305,6 +372,25 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    from rlm.v100 import chat_facts, income_policy, market_research
+    from rlm.v100.chat_goals import authorizes_long
+
+    if (
+        not authorizes_long(message)
+        and not message.startswith(("/goal ", "/cel "))
+        and income_policy.setting(message) is not None
+    ):
+        receipt = income_policy.update(root, message)
+        return {
+            "answer": "Research policy saved. Hypothetical capital only; no spending or real orders.",
+            "actions": [],
+            "applied": [receipt],
+            "responder": {"model": "controller-research-policy"},
+        }
+    if market_research.requested(message):
+        return chat_facts.test_response(root, message)
+    if conversation_question(message) and chat_facts.requested(message):
+        return chat_facts.response(root, message)
     quick_question = conversation_question(message) or message.casefold() in (
         "hej",
         "cześć",
@@ -377,7 +463,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         r"(?:hej|czesc|cześć|hello|hi|witaj)(?:\s+(?:synta|master|v100))?[!.,\s]*", message, re.I
     ):
         return {
-            "answer": "Cześć! Jestem dostępny. Co mam sprawdzić lub wykonać?",
+            "answer": "Cześć! Jestem dostępny. Co mam sprawdzić lub wykonać?"
+            if chat_facts.language(message) == "Polish"
+            else "Hello. What should I inspect or execute?",
             "actions": [],
             "applied": [],
             "responder": {"model": "controller-chat", "delegated_while_master_busy": False},
@@ -439,7 +527,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     paths.extend(sorted(directory.glob("profile-*.json")))
     path = next((p for p in paths if p.exists()), None)
     if path is None:
-        raise requests.ConnectionError("Waiting for owned inference server")
+        raise BackendNotReady("Waiting for owned inference server")
     profile = copy.deepcopy(load_profile(path, root))
     profile["runtime"].update(enable_thinking=False, max_output_tokens=2048, max_timeout=120)
     client = helper_client(profile, root)
@@ -455,8 +543,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     try:
         actual = client.request("/props")
         if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
-            raise requests.ConnectionError("Waiting for the accepted serving model")
-    except (requests.RequestException, OSError):
+            raise BackendNotReady("Waiting for the accepted serving model")
+    except (requests.RequestException, OSError) as serving_error:
+        if not preferences(root).get("remote_helper_enabled", True):
+            raise BackendNotReady(str(serving_error)) from serving_error
         if not profile.get("resources", {}).get("interactive_lab"):
             raise
         if (
@@ -524,7 +614,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         {
             "role": "system",
             "content": (
-                "You are Synta, the operator-owned goal-directed research and learning system. Answer the authenticated local user's chat in Polish. Return answer and explicit requested actions. "
+                "You are Synta, the operator-owned goal-directed research and learning system. Answer in the current authenticated local user message language. Generated internal plans, hypotheses and tool arguments must be English; literal operator quotations remain verbatim. Return answer and explicit requested actions. "
                 "An ordinary question needs no actions. Interpret clear goal-setting requests in ordinary language; slash commands are optional. "
                 "Use goal_long ONLY if included in the response schema and ONLY when the CURRENT message explicitly asks "
                 "to set/change the main or long-term objective. Its text must be a literal substring of that message, "
@@ -602,6 +692,13 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
 
         client.research_owner = "A"
         client.research_tool_names = {
+            "read_public_page",
+            "backtest_prices",
+            "paper_status",
+            "paper_observed_results",
+            "morph_model",
+            "propose_ngram_memory",
+            "test_submodel",
             "income_opportunities",
             "register_income_opportunity",
             "capabilities",
@@ -661,7 +758,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     )
     if (
         implementation_requested
-        and not tool_receipts
+        and not any(
+            row.get("tool") not in READ_ONLY_TOOLS and not receipt_failed(row)
+            for row in tool_receipts
+        )
         and result["actions"]
         and all(action.get("kind") in ("plan_short", "plan_mid") for action in result["actions"])
     ):
@@ -669,6 +769,12 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         result["answer"] = (
             "Nie wykonano żądanej implementacji: model zwrócił tylko plan, bez potwierdzenia narzędzi. "
             "Nie zapisano go jako wykonanego zadania ani nie zmieniono planów."
+        )
+    result["execution_receipts"] = execution_receipts(tool_receipts)
+    if tool_receipts and all(receipt_failed(row) for row in tool_receipts):
+        result["actions"] = []
+        result["answer"] = "Requested work failed: " + "; ".join(
+            str(row.get("result")) for row in tool_receipts
         )
     result["tool_receipts"] = tool_receipts
     result["applied"] = apply_actions(root, result["actions"], message)
@@ -749,6 +855,25 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
                 )
             ActivityLog(root, "controller", "chat").write(
                 "decisions", "user-command-completed", {"id": request["id"], **response}
+            )
+        except BackendNotReady as error:
+            started = request.get("wait_started") or time.time()
+            expired = time.time() - started >= 600 or request["attempts"] >= 19
+            with connect(root) as db:
+                db.execute(
+                    "UPDATE requests SET state=?,wait_started=?,attempts=attempts+1,error=?,updated=? WHERE id=? AND state='queued'",
+                    (
+                        "failed" if expired else "queued",
+                        started,
+                        str(error)[:300],
+                        time.time(),
+                        request["id"],
+                    ),
+                )
+            ActivityLog(root, "controller", "chat").write(
+                "errors",
+                "serving-wait-expired" if expired else "serving-wait",
+                {"id": request["id"], "error": str(error), "started": started},
             )
         except (requests.ConnectionError, requests.Timeout) as error:
             expired = (

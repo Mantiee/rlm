@@ -24,6 +24,9 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
         ("income_opportunities", "research/income-opportunities/status.json"),
         ("income_dispatch", "research/income-opportunities/dispatch.json"),
         ("income_work", "research/income-work/status.json"),
+        ("market_research", "research/market-research/status.json"),
+        ("owned_cpu_dispatch", "research/goal-compute/status.json"),
+        ("paper_fee_source", "research/paper/fee-source-status.json"),
         ("research_quality", "research/research-quality/latest.json"),
         ("source_acquisition", "research/source-acquisition/status.json"),
     ):
@@ -47,7 +50,12 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
                 result.pop("income_dispatch", None)
             if result.get("source_acquisition", {}).get("goal_id") != goal["id"]:
                 result.pop("source_acquisition", None)
-            for name in ("income_work", "research_quality"):
+            for name in (
+                "income_work",
+                "research_quality",
+                "market_research",
+                "owned_cpu_dispatch",
+            ):
                 if result.get(name, {}).get("goal_id") != goal["id"]:
                     result.pop(name, None)
             result["plans"] = read(root)

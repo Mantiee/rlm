@@ -113,7 +113,7 @@ def simulate(
     }
 
 
-def run(root: Path, branch: str, arguments: dict) -> dict:
+def run(root: Path, branch: str, arguments: dict, *, source_snapshot: tuple | None = None) -> dict:
     from rlm.v100.research_tools import download_page
 
     if set(arguments) != {"price_url", "event_url", "rule", "fee_bps", "slippage_bps"} or arguments[
@@ -124,7 +124,9 @@ def run(root: Path, branch: str, arguments: dict) -> dict:
         value = arguments[field]
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1000:
             raise ValueError("Backtest costs must be explicit bounded assumptions")
-    price_url, body = download_page(arguments["price_url"])
+    price_url, body = (
+        source_snapshot if source_snapshot is not None else download_page(arguments["price_url"])
+    )
     now = datetime.now(UTC)
     bars = bars_from_source(price_url, body, now)
     sources = [

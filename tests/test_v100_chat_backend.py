@@ -271,7 +271,7 @@ def test_question_fast_path_skips_cpu_start_and_research_context(tmp_path, monke
 
     monkeypatch.setattr(research_tools, "research_turn", forbidden)
     manager = SimpleNamespace(get=forbidden)
-    result = mission_chat.respond(tmp_path, tmp_path, {"message": "a co z zarabianiem"}, manager)
+    result = mission_chat.respond(tmp_path, tmp_path, {"message": "jak działa ML?"}, manager)
     assert result["answer"] == "Odpowiedź modelu"
     assert calls == [("/props", 10), ("/v1/chat/completions", 20)]
 

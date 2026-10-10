@@ -52,7 +52,8 @@ try {
         }
     }
     Write-Host 'Owned CPU worker: max 2 threads / 4 GiB child RAM. RTX remains unchanged.'
-    Write-Host 'One shared job at a time. Host CPU/RAM pressure or League gameplay pauses experiments.'
+    Write-Host 'One job; idle priority and 2 CPU affinity slots on Windows. RAM is monitored every 2 s.'
+    Write-Host 'Host CPU >40%, free RAM <6 GiB or foreground browser/video/game stops the owned experiment.'
     $worker = Join-Path $source 'compute_worker.py'
     if ($Once) {
         & $python -u $worker --mailbox $Mailbox --name $WorkerName --once

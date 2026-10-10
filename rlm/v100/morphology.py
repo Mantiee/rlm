@@ -134,7 +134,7 @@ def propose(
         parent = candidate_path(root, parent_candidate_id)
         manifest = verify_candidate(parent)
         parent_shape = read_shape(parent / "source/model.py")
-        if manifest["goal"] != goal or parent_shape is None:
+        if manifest["goal"] != goal or parent_shape is None or parent_shape.get("memory_kind"):
             raise ValueError("Warm growth requires a typed predecessor for the same goal")
         if (
             any(
