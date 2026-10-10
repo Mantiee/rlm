@@ -339,6 +339,13 @@ let readerTop=100;detail.isConnected=true;detail.getBoundingClientRect=()=>({top
 const originalQuery=document.querySelectorAll;document.querySelectorAll=s=>s==='details[data-key][open]'?[detail]:s==='[id], [data-scroll-key]'?[readingCard,pre]:originalQuery(s);
 stablePaint(()=>{readerTop=160;$('probe').textContent='updated while a new event was inserted above'});
 if(window.scrollY!==460||readingCard.scrollTop!==140||pre.scrollTop!==73)throw Error('Visible reading anchor moved');
+let fieldTop=200;pre.isConnected=true;pre.getBoundingClientRect=()=>({top:fieldTop,bottom:fieldTop+200});window.innerWidth=1920;document.elementFromPoint=(x,y)=>{if(x!==960)throw Error('Anchor sampled outside centered dashboard');return pre};
+stablePaint(()=>{fieldTop=260;$('probe').textContent='field inside the same section moved down'});
+if(window.scrollY!==520)throw Error('Anchored whole section instead of visible field');
+readingCard.contains=n=>n===pre;stablePaint(()=>{fieldTop=320;$('probe').textContent='new row above inside scrolling resource panel'});
+if(readingCard.scrollTop!==200||window.scrollY!==520)throw Error('Internal scroll correction moved entire page');
+
+
 const timeline=new Element('section');timeline.id='timeline-panel';body.append(timeline);stablePaint(()=>archivePanel());
 const archive=document.getElementById('action-archive'),select=document.getElementById('archive-day');select.options=select.children;
 let archiveCalls=0;fetch=async()=>{archiveCalls++;return {ok:true,json:async()=>({days:['2026-10-10'],day:'2026-10-10',events:[{id:'proof',time:'now',kind:'tool-result',payload:{result:'actual'}}],next_cursor:200,archive_bytes:200})}};

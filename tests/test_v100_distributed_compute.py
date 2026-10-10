@@ -167,6 +167,7 @@ def test_owned_worker_executes_pinned_child_and_host_validates_weights(tmp_path,
 
     mailbox, identity = configured(tmp_path, monkeypatch)
     monkeypatch.setattr(compute_worker, "available", lambda: (True, "Test CPU host ready"))
+    monkeypatch.setattr(psutil, "cpu_percent", lambda interval: 10)
     monkeypatch.setattr(
         psutil,
         "virtual_memory",

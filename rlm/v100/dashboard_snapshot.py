@@ -45,6 +45,7 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
         ("income_dispatch", "research/income-opportunities/dispatch.json"),
         ("income_work", "research/income-work/status.json"),
         ("market_research", "research/market-research/status.json"),
+        ("backtest_audit", "research/backtests/audit-status.json"),
         ("owned_cpu_dispatch", "research/goal-compute/status.json"),
         ("paper_fee_source", "research/paper/fee-source-status.json"),
         ("research_quality", "research/research-quality/latest.json"),

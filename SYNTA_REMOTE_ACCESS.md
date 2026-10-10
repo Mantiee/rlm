@@ -11,3 +11,17 @@ Browser chat keeps actual saved request states and replies visible across reconn
 Disable the gateway with `systemctl --user disable --now synta-remote.service`. Disable only its Serve listener with `sudo tailscale serve --https=443 off`; do not reset other Tailscale services.
 
 Official references: [Serve and identity headers](https://tailscale.com/docs/features/tailscale-serve), [packages](https://pkgs.tailscale.com/stable/), [SSH access](https://tailscale.com/docs/features/tailscale-ssh).
+
+After login, rerun the pinned installer if its earlier terminal was closed. It
+skips login for an already-running Tailscale session and completes the gateway.
+To print actual connection addresses and blockers without changing services:
+
+```bash
+"$HOME/ai-v100/venvs/v100-continual/bin/python" -m rlm.v100.remote_connect --root "$HOME/ai-v100"
+```
+
+On phone/laptop, enable Tailscale under the same account and open the printed
+HTTPS `dashboard` or `chat` URL. For SSH use the printed command and existing
+Debian credentials. No LAN address or router forwarding is needed for these
+services. A configured Serve route is not proof of a successful remote browser
+session; its status is separate from the upstream HTTP check.

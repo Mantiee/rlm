@@ -68,7 +68,28 @@ $path = Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-worker.stdout.log'
 Write-Host 'SYNTA WINDOWS CPU | 2 threads | idle priority | one job | RTX disabled'
 Write-Host 'Yields at host CPU >40%, free RAM <6 GiB or foreground browser/video/game.'
 Write-Host 'Close this console to stop viewing logs; the scheduled CPU worker stays running.'
-Get-Content -LiteralPath $path -Tail 20 -Wait
+$paths = @($path, (Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-worker.stderr.log'), (Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-autostart.log'))
+$positions = @{}
+while ($true) {
+    foreach ($file in $paths) {
+        if (-not (Test-Path -LiteralPath $file)) { continue }
+        $stream = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $offset = if ($positions.ContainsKey($file)) { $positions[$file] } else { [Math]::Max(0, $stream.Length - 8192) }
+            if ($offset -gt $stream.Length) { $offset = 0 }
+            $null = $stream.Seek($offset, [IO.SeekOrigin]::Begin)
+            $count = [int][Math]::Min(65536, $stream.Length - $offset)
+            if ($count -gt 0) {
+                $buffer = New-Object byte[] $count
+                $read = $stream.Read($buffer, 0, $count)
+                Write-Host ('--- ' + [IO.Path]::GetFileName($file) + ' ---')
+                Write-Host ([Text.Encoding]::UTF8.GetString($buffer, 0, $read))
+            }
+            $positions[$file] = $stream.Position
+        } finally { $stream.Dispose() }
+    }
+    Start-Sleep -Seconds 2
+}
 '@ | Set-Content -Encoding UTF8 -LiteralPath $watcher
 Start-Process powershell.exe -ArgumentList @('-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $watcher + '"'))
 Write-Host 'Synta Windows CPU updated and console opened. Board power, clocks and other apps unchanged.'

@@ -318,6 +318,9 @@ def service(root: Path, stop: threading.Event) -> None:
                     finish(root, identity, result)
                     del active[identity]
             with connect(root) as db:
+                from rlm.v100.resource_budget import local_budget
+
+                budget = local_budget()
                 jobs = db.execute(
                     "SELECT * FROM jobs WHERE state='queued' AND due<=? ORDER BY due LIMIT 16",
                     (time.time(),),
@@ -328,7 +331,7 @@ def service(root: Path, stop: threading.Event) -> None:
                         (kind in ("researcher", "critic", "benchmark", "income")) == llm
                         for _, kind in active.values()
                     )
-                    if used >= (1 if llm else 2):
+                    if used >= (min(1, budget["cpu_slots"]) if llm else budget["cpu_slots"]):
                         continue
                     updated = db.execute(
                         "UPDATE jobs SET state='running',updated=? WHERE id=? AND state='queued'",
@@ -342,7 +345,8 @@ def service(root: Path, stop: threading.Event) -> None:
                     "updated": time.time(),
                     "running": True,
                     "active": list(active),
-                    "cpu_slots": 2,
+                    "cpu_slots": budget["cpu_slots"],
+                    "budget": budget,
                     "rtx_slots": 0 if gpu_disabled(root) else 1,
                     "local_model_slots": 1 if gpu_disabled(root) else 0,
                 },

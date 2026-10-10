@@ -108,6 +108,8 @@ def supplement(root: Path, report: dict, errors: list) -> dict:
                         "buy_hold_baseline",
                         "double_cost_stress",
                         "data_window",
+                        "source_quality",
+                        "metric_definitions",
                     )
                     if k in value
                 }
@@ -118,6 +120,9 @@ def supplement(root: Path, report: dict, errors: list) -> dict:
                     k: v for k, v in value["development_test"].items() if k != "trace"
                 }
                 row["report"] = str(path)
+                from rlm.v100.market_research import triage
+
+                row["triage"] = triage(value)
                 row["display_scope"] = (
                     "Stored historical result; not a new audit or forward paper return"
                 )

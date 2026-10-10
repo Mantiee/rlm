@@ -80,3 +80,4 @@ PY
 sudo tailscale serve --bg --https=443 http://127.0.0.1:8786
 echo 'Install Tailscale on your phone/laptop and sign in to the same account. Open the HTTPS URLs above.'
 echo 'Existing SSH authentication is unchanged. No Windows GPU, power limit or clock setting was changed.'
+"$PY" -m rlm.v100.remote_connect --root "$AI_V100_ROOT"

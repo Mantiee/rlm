@@ -261,3 +261,47 @@ the reported black-screen hang, this preset uses Windows CPU and leaves RTX off;
 it does not promise to diagnose hardware or prevent all crashes. The V100
 remains the main model/GPU. N-gram memory runs as a bounded experimental candidate
 with paired host-scored ablation and existing independent promotion gates.
+
+## v65: metric integrity, field anchoring and measured resource headroom
+
+- The legacy `Odchylenie` header is corrected to maximum drawdown. This is the
+  largest sampled equity decline from a preceding peak, not standard deviation.
+  Double-cost net return has a separate label. The simulator uses full available
+  cash and fees/slippage on each buy/sell leg, which can make frequent trading
+  expensive even with constant prices. Audit receipts include that illustration.
+- `audit_backtests` checks recent archived hashes, valid OHLCV ranges and timing,
+  reruns selected historical simulations and reconstructs net return/drawdown
+  from the equity trace. Changed, malformed, gapped or extreme-jump archives are
+  excluded from retrospective training; original files remain untouched. Every
+  postmortem training example repeats admission checks. These examples explicitly
+  deny future-profit and negative-return-means-corruption claims. Vendor accuracy,
+  intrabar drawdown and unobserved liquidity are not certified by this replay.
+- Upgrade records an audit and gives Synta the metric/parameter contract. The
+  existing tool selects past-only lookbacks 5/10/20 and exposes no Z-score input
+  or lookback 100. Historical losses stay rejected. There is no test-until-profit
+  loop and no admission of backtests as future directional/profit labels.
+- Refresh anchors the visible field inside the centered dashboard rather than the entire parent section. Internal scrolling panels compensate inside their own scroll container, without moving the page.
+  Open disclosures win over draft defaults; live token panes no longer open
+  automatically. The timeline runs chronologically, retaining expanded events
+  that leave the bounded recent window. Reading cards retain their panel while
+  expanded. The action archive keeps its own DOM and pagination.
+- Local CPU/network drone admission scales from two to one or zero slots with
+  measured CPU/RAM headroom. Windows children use one or two affinity slots
+  within the previous two-thread ceiling, idle priority, one job and monitored
+  four-GiB RSS limit. Existing 40% host CPU, six-GiB free RAM and foreground media
+  guards remain. Access-denied foreground inspection yields instead of crashing.
+  Transient SMB failures report blocked/retry state. No clocks, board power or
+  unrelated applications change; Windows RTX remains disabled by the operator.
+- The visible Windows console tails bounded new bytes from stdout, stderr and
+  autostart logs. Failed launches show their error instead of only startup
+  banners; retry pacing backs off. Startup banners alone do not prove a running
+  worker. `idle/ready` means no admitted job, not performed training.
+- `remote_connect` prints this signed-in device's actual HTTPS dashboard/chat and
+  SSH addresses, gateway/Serve configuration and upstream check. Login by itself
+  does not install the private web gateway. The installer can be rerun after
+  login and checks the final configuration without resetting other services.
+
+Code tests use deterministic fixtures and DOM simulation. No Windows host,
+operator browser, actual market archive or phone session is available here;
+installation performs the real archive audit, while phone and runtime acceptance
+remain observable operator-device checks. No profitable strategy is claimed.

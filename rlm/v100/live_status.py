@@ -322,7 +322,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         },
         {
             "id": "drones",
-            "label": "Drony",
+            "label": "Drones",
             "state": "running" if drones.get("running") else "unknown",
             "detail": f"{len(active)} active jobs; {len([j for j in jobs if j['state'] == 'queued'])} queued",
             "jobs": active,

@@ -33,6 +33,11 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "audit_backtests",
+        "Replay at most 20 archived historical reports; check source hashes, OHLCV ranges, chronology, chosen lookback and equity metrics. Returns actual audit receipts and excludes invalid reports from retrospective training. Drawdown is not standard deviation; loss is not proof of a glitch. No claim of independent vendor accuracy or profitable future performance.",
+        {},
+    ),
+    tool_schema(
         "capabilities",
         "Read available named tools and their execution scope. Tool availability is not proof that its runtime is healthy; inspect state and receipts.",
         {},
@@ -328,7 +333,7 @@ TOOLS = [
     ),
     tool_schema(
         "backtest_prices",
-        "Run chronological historical spot-price research on public JSON OHLC data. Choose instrument/source and rule. Official Coinbase candles work, e.g. https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600. Other sources need open_time, available_at, open, close fields per row. Optional event_url must return published_at and available_at per event; empty string disables event filter. Select lookback using only prior data in three disjoint walk-forward windows, compare cash/buy-hold and doubled costs. Duplicate data/parameters reuse the pinned report. Costs are assumptions, not certified fees. Not for sports odds or leverage. Results are exploratory hypotheses, never automatic profit labels.",
+        "Run chronological historical spot-price research on public JSON OHLC data. Choose instrument/source and rule. Official Coinbase candles work, e.g. https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600. Other sources need open_time, available_at, open, close fields per row. Optional event_url must return published_at and available_at per event; empty string disables event filter. Select lookback from 5,10,20 using only prior data in three disjoint walk-forward windows, compare cash/buy-hold and doubled costs. No configurable Z-score threshold or lookback 50/100/200 is exposed. Maximum drawdown is peak-to-trough equity loss, not standard deviation. A negative return does not establish a data glitch; use audit_backtests. Duplicate data/parameters reuse the pinned report. Costs are assumptions, not certified fees. Not for sports odds or leverage. Results are exploratory hypotheses, never automatic profit labels. Do not tune repeatedly against the same held-out window until profitable.",
         {
             "price_url": {"type": "string"},
             "event_url": {"type": "string"},
@@ -833,6 +838,10 @@ class ResearchTools:
                 "scope": "Unverified source excerpts; original documents preserved",
                 "workers": 2,
             }
+        if name == "audit_backtests":
+            from rlm.v100.backtest_audit import run
+
+            return run(self.root)
         if name == "backtest_prices":
             from rlm.v100.backtesting import run
 

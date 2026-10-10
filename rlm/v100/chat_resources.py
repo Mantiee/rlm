@@ -56,6 +56,15 @@ def status(root: Path) -> dict:
         "drones": drone_status(root),
         "scope": "Owned job execution only. Windows RAM/disk are worker-local resources, not pooled Debian RAM or shared VRAM. No arbitrary Windows shell is exposed.",
     }
+    from rlm.v100.mission_chat import preferences
+
+    if preferences(root).get("remote_helper_enabled", True) is False:
+        value["helper"] = {
+            "reachable": None,
+            "state": "disabled by operator",
+            "scope": "No Windows GPU probes or jobs. Accepted V100 serves model work; CPU mailbox remains available. Duty cycle cannot cap peak GPU power.",
+        }
+        return value
     try:
         profile = load_profile(selected_helper(root), root)
         if not remote_profile(profile):

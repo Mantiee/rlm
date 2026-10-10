@@ -217,6 +217,8 @@ def test_backtest_cache_and_walk_forward_have_no_future_training(tmp_path, monke
     for row in data[50:]:
         row[3] *= 10
         row[4] *= 10
+        row[1] *= 10
+        row[2] *= 10
     later = backtesting.run(tmp_path, "B", args)
     assert (
         later["walk_forward"][0]["lookback_selected_only_on_past"]

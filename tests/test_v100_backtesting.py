@@ -27,6 +27,8 @@ def test_backtest_selects_parameters_only_before_chronological_split(tmp_path, m
     for row in data[70:]:
         row[3] *= 10
         row[4] *= 10
+        row[1] *= 10
+        row[2] *= 10
     second = backtesting.run(tmp_path, "B", args)
     assert (
         first["selected_lookback_on_training_only"] == second["selected_lookback_on_training_only"]

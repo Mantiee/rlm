@@ -148,6 +148,7 @@ def test_goal_outcomes_execute_owned_child_and_receive_independent_host_decision
     # Real child training/reload; sensor readings simulated because this sandbox
     # does not expose /proc. No Windows/CUDA resource-cap assertion is made.
     monkeypatch.setattr(compute_worker, "available", lambda: (True, "Test CPU ready"))
+    monkeypatch.setattr(psutil, "cpu_percent", lambda interval: 10)
     monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=12 * 2**30))
     monkeypatch.setattr(
         psutil,

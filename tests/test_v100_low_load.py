@@ -94,7 +94,8 @@ def test_installer_restricts_owned_processes_and_leaves_board_settings():
     assert "GetFullPath($process.ExecutablePath) -eq $python" in source
     assert "compute_worker.py" in source and "compute_kernel.py" in source
     assert "Disable-ScheduledTask" in source and "Synta-RTX3090-Helper" in source
-    assert "Get-Content -LiteralPath $path -Tail 20 -Wait" in source
+    assert "cpu-worker.stderr.log" in source and "cpu-autostart.log" in source
+    assert "65536" in source and "[IO.FileShare]::ReadWrite" in source
     assert "nvidia-smi" not in source
 
 

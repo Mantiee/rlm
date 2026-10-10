@@ -99,8 +99,9 @@ def foreground_busy() -> bool:
     user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
     try:
         name = psutil.Process(pid.value).name().casefold()
-    except psutil.NoSuchProcess:
-        return False
+    except psutil.Error:
+        # A protected foreground process is a reason to yield, not crash/restart.
+        return True
     return name in {
         "chrome.exe",
         "msedge.exe",
@@ -124,6 +125,49 @@ def limit_child(pid: int) -> None:
     if sys.platform == "win32":
         child.nice(psutil.IDLE_PRIORITY_CLASS)
         child.cpu_affinity(child.cpu_affinity()[-2:])
+
+
+def adaptive_child_budget(pid: int) -> dict:
+    """Use spare headroom within the existing two-thread ceiling, never boost clocks."""
+    import psutil
+
+    cpu = psutil.cpu_percent(interval=0.1)
+    ram = psutil.virtual_memory().available / 2**30
+    slots = 1 if cpu >= 25 or ram < 8 else 2
+    child = psutil.Process(pid)
+    if sys.platform == "win32":
+        allowed = psutil.Process(os.getpid()).cpu_affinity()
+        child.cpu_affinity(allowed[-slots:])
+    return {
+        "cpu_affinity_slots": slots,
+        "host_cpu_percent": cpu,
+        "free_host_ram_gib": round(ram, 2),
+    }
+
+
+def recover_service(mailbox: Path, worker: str, kernel: Path, once: bool = False) -> None:
+    """Recover transient SMB/telemetry failures without reinstalling or losing logs."""
+    import psutil
+
+    while True:
+        try:
+            service(mailbox, worker, kernel, once)
+            return
+        except (OSError, psutil.Error) as error:
+            print(
+                json.dumps(
+                    {
+                        "worker": worker,
+                        "phase": "blocked",
+                        "reason": str(error),
+                        "retry_seconds": 30,
+                    }
+                ),
+                flush=True,
+            )
+            if once:
+                raise
+            time.sleep(30)
 
 
 def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
@@ -188,6 +232,7 @@ def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
                         "worker": lease["worker"],
                         "seconds": round(time.monotonic() - started, 1),
                         "rss_gib": round(rss / 2**30, 2),
+                        "budget": adaptive_child_budget(process.pid),
                     }
                     atomic(
                         mailbox / "workers" / (lease["worker"] + ".json"),
@@ -302,6 +347,6 @@ if __name__ == "__main__":
         raise ValueError(
             "Distributed service is not supported in free managed Colab; use the interactive notebook"
         )
-    service(
-        args.mailbox.resolve(), args.name, Path(__file__).with_name("compute_kernel.py"), args.once
+    recover_service(
+        args.mailbox, args.name, Path(__file__).with_name("compute_kernel.py"), args.once
     )

@@ -141,6 +141,10 @@ def compare(root: Path) -> dict:
         value.update(state="blocked", error=str(error), updated=time.time())
         log.write("errors", "comparison-blocked", value)
     atomic_json(path, value)
+    from rlm.v100.backtest_audit import run as audit_backtests
+
+    value["audit"] = audit_backtests(root, 4)
+    atomic_json(path, value)
     return value
 
 

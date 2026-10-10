@@ -474,6 +474,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     from rlm.v100 import chat_facts, income_policy, market_research
     from rlm.v100.chat_goals import authorizes_long
 
+    if re.search(
+        r"backtest|drawdown|odchyl|obsuni|glitch", income_policy.normalized(message)
+    ) and re.search(r"audit|sprawdz|zbadaj|check", income_policy.normalized(message)):
+        return chat_facts.audit_response(root, message)
     if (
         not authorizes_long(message)
         and not message.startswith(("/goal ", "/cel "))
@@ -797,6 +801,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         client.research_tool_names = {
             "read_public_page",
             "backtest_prices",
+            "audit_backtests",
             "paper_status",
             "paper_observed_results",
             "morph_model",

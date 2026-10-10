@@ -10,7 +10,7 @@ def language(message: str) -> str:
     return (
         "Polish"
         if re.search(
-            r"\b(?:co|czego|czemu|jak|czy|kiedy|gdzie|uczy|naucz|zarab|zarob|znalaz|zrob|zmien|przetestuj|poszukaj|zbieraj|hej|czesc|odpowiedz)\w*\b",
+            r"\b(?:co|czego|czemu|jak|czy|kiedy|gdzie|uczy|naucz|zarab|zarob|znalaz|zrob|zmien|przetestuj|poszukaj|zbieraj|sprawdz|zbadaj|odchylen|hej|czesc|odpowiedz)\w*\b",
             normalized(message),
         )
         else "English"
@@ -20,7 +20,7 @@ def language(message: str) -> str:
 def requested(message: str) -> bool:
     return bool(
         re.search(
-            r"zarab|zarob|strateg|income|profit|backtest|minus|paper|opportunit|candidate|brier|kandydat",
+            r"zarab|zarob|strateg|income|profit|backtest|minus|paper|opportunit|candidate|brier|kandydat|drawdown|obsunie|odchylen|glitch",
             normalized(message),
         )
     )
@@ -54,6 +54,27 @@ def response(root: Path, message: str) -> dict:
         if pl
         else "A negative backtest return is a historical simulated loss, not a Brier or benchmark score.",
     ]
+    lines.append(
+        "Obsunięcie to największy spadek kapitału od wcześniejszego szczytu, nie odchylenie standardowe. Wynik netto przy podwójnych kosztach to oddzielny zwrot. Sama strata nie dowodzi błędu danych."
+        if pl
+        else "Drawdown is the largest equity decline from a prior peak, not standard deviation. Double-cost net return is a separate return. A loss alone does not prove corrupt data."
+    )
+    audit_path = root / "research/backtests/audit-status.json"
+    if audit_path.exists() and audit_path.stat().st_size <= 2 * 2**20:
+        import json
+
+        audit = json.loads(audit_path.read_text())
+        for row in audit.get("reports", [])[:4]:
+            lines.append(
+                "Audit: "
+                + row["state"]
+                + " | "
+                + row["report"]
+                + " | "
+                + row.get("reason", "archived simulator replay only")
+            )
+    else:
+        lines.append("Audit: unavailable; no source integrity claim accepted")
     for row in value.get("recent_exploratory_backtests", []):
         net = row.get("development_test", {}).get("net_return")
         lines.append(
@@ -95,4 +116,32 @@ def test_response(root: Path, message: str) -> dict:
         "applied": [value],
         "responder": {"model": "controller-historical-comparison"},
         "scope": "Historical research executed; no future edge, verified income or orders claimed",
+    }
+
+
+def audit_response(root: Path, message: str) -> dict:
+    from rlm.v100.backtest_audit import run
+
+    value = run(root)
+    rows = [
+        "Audit: "
+        + row["state"]
+        + " | "
+        + row["report"]
+        + " | "
+        + row.get("reason", "archived replay passed")
+        for row in value["reports"]
+    ]
+    return {
+        "answer": (
+            "Obsunięcie to największy spadek kapitału od wcześniejszego szczytu, nie odchylenie standardowe. Zwrot przy podwójnych kosztach jest osobną metryką. Sama strata nie dowodzi błędu cen. Audyt poniżej odtwarza zapisane źródła i obliczenia; nie potwierdza ich u niezależnego dostawcy."
+            if language(message) == "Polish"
+            else value["metric_correction"]
+        )
+        + "\n"
+        + ("\n".join(rows) or "No archived reports to audit"),
+        "actions": [],
+        "applied": [value],
+        "responder": {"model": "controller-backtest-audit"},
+        "scope": value["scope"],
     }

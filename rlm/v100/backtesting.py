@@ -32,6 +32,17 @@ def bars_from_source(url: str, body: str, fetched_at: datetime) -> list[dict]:
                 float(row[3]),
                 float(row[4]),
             )
+            low, high, volume = float(row[1]), float(row[2]), float(row[5])
+            if (
+                not all(math.isfinite(value) for value in (low, high, volume))
+                or not 0
+                < low
+                <= min(open_price, close_price)
+                <= max(open_price, close_price)
+                <= high
+                or volume < 0
+            ):
+                raise ValueError("Invalid public Coinbase OHLCV price range or volume")
         else:
             opened, closed = (
                 timestamp(row["open_time"]).timestamp(),
@@ -61,6 +72,24 @@ def bars_from_source(url: str, body: str, fetched_at: datetime) -> list[dict]:
     ):
         raise ValueError("Bars overlap, have ambiguous availability, or lack sufficient history")
     return bars
+
+
+def source_quality(bars: list[dict]) -> dict:
+    gaps = sum(
+        left["available_at"] < right["open_time"]
+        for left, right in zip(bars, bars[1:], strict=False)
+    )
+    jumps = sum(
+        abs(right["open"] / left["close"] - 1) > 0.5
+        for left, right in zip(bars, bars[1:], strict=False)
+    )
+    return {
+        "closed_bars": len(bars),
+        "gaps": gaps,
+        "large_opening_jumps": jumps,
+        "state": "requires source review" if gaps or jumps else "structural checks passed",
+        "scope": "Structural checks only. Large moves are flags, not proof of corrupt prices.",
+    }
 
 
 def simulate(
@@ -268,6 +297,12 @@ def run(root: Path, branch: str, arguments: dict, *, source_snapshot: tuple | No
             {key: value for key, value in source.items() if key != "body"} for source in sources
         ],
         "bars": len(bars),
+        "source_quality": source_quality(bars),
+        "metric_definitions": {
+            "max_sampled_drawdown": "Largest sampled peak-to-trough equity loss, including assumed exit costs; not standard deviation",
+            "net_return": "Final liquidated equity divided by initial equity, minus one",
+            "double_cost_stress": "Separate simulation with doubled assumed fees and slippage; its net return is not drawdown",
+        },
         "split_index": split,
         "selected_lookback_on_training_only": chosen,
         "development_test": test,
