@@ -60,6 +60,30 @@ def status(root: Path) -> dict:
     result["next_step"] = (
         "Turn on Tailscale on phone/laptop using the same account, open the HTTPS dashboard/chat above. SSH uses existing Debian credentials."
     )
+    result["blockers"] = []
+    if not result["private_https_proxy_configured"]:
+        result["blockers"].append(
+            "Private HTTPS Serve proxy is not configured. Signing in on iPhone does not enable Serve."
+        )
+        result["next_step"] = (
+            "On Debian run: sudo tailscale serve --bg --https=443 http://127.0.0.1:8786 . Open and approve the enable-HTTPS link printed by Tailscale, then rerun this command."
+        )
+    if result["gateway_service"] != "active":
+        result["blockers"].append(
+            "Owner gateway service is not active; check systemctl --user status synta-remote.service"
+        )
+    if result["public_funnel_enabled"]:
+        result["blockers"].append("Public Funnel is enabled; owner-only access is not ready")
+    if not result.get("configured_origin_matches"):
+        result["blockers"].append(
+            "Owner gateway configuration is missing or has a different DNS origin"
+        )
+    if result.get("dashboard_upstream_http") != 200:
+        result["blockers"].append("Existing LAN dashboard upstream is not responding with HTTP 200")
+    result["ready"] = not result["blockers"]
+    result["scope"] = (
+        "Local configuration and upstream checks; successful access from this iPhone is not verified here. Use the HTTPS DNS name, not the home LAN address or :8765."
+    )
     return result
 
 

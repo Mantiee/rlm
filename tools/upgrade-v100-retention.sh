@@ -131,6 +131,8 @@ if helper_path.exists():
 print('RESEARCH NOTE AUDIT:', json.dumps(repair_history(root), ensure_ascii=False), flush=True)
 print('BACKTEST REPLAY AUDIT:', json.dumps(audit_backtests(root), ensure_ascii=False), flush=True)
 from rlm.v100.mission_chat import retire_request
+from rlm.v100.chat_recovery import repair as repair_questions
+print('CHAT QUESTION RECOVERY:', json.dumps(repair_questions(root), ensure_ascii=False), flush=True)
 print('CHAT REQUEST RETIRED:', json.dumps(retire_request(root, '560e2c23686e46078fa691b7f505767a', 'Operator requested replacement by host trade explorer; original retained.')))
 print('Adaptive Windows RTX enabled in controller. Install adaptive Windows proxy; V100 remains available.', flush=True)
 print('CHAT RESOURCE RECOVERY:', json.dumps(repair_completed(root), ensure_ascii=False), flush=True)

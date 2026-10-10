@@ -282,6 +282,18 @@ class OllamaResearchClient(LlamaCppClient):
             session.trust_env = False
             method = session.get if data is None else session.post
             arguments = {} if data is None else {"json": data}
+            if data is not None:
+                context = getattr(self, "activity_context", {})
+                arguments["headers"] = {
+                    "X-Synta-Task": re.sub(
+                        r"[^A-Za-z0-9 ._:/-]", "", str(getattr(self, "activity_actor", "research"))
+                    )[:100],
+                    "X-Synta-Request": re.sub(
+                        r"[^A-Za-z0-9_-]",
+                        "",
+                        str(context.get("chat_request_id", context.get("request_id", ""))),
+                    )[:64],
+                }
             with method(
                 self.base_url + endpoint,
                 timeout=(min(5, self.remaining_timeout()), self.remaining_timeout()),

@@ -74,6 +74,9 @@ def test_proxy_denies_pressure_then_caps_and_forwards_real_inference(tmp_path):
         assert response.status == 200 and b"OK" in response.read()
         assert seen[0]["options"] == {"num_predict": 1, "num_batch": 16, "num_thread": 2}
         assert not proxy.pressure.generating and proxy.pressure.not_before > 0
+        assert proxy.pressure.workload["source"] == "Debian mission"
+        assert proxy.pressure.workload["state"].startswith("request ended")
+        assert proxy.pressure.workload["model"] == "owned"
         client.close()
     finally:
         for server in (proxy, backend):

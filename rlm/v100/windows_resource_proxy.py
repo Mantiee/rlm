@@ -74,6 +74,7 @@ class Pressure:
         self.lock = threading.Lock()
         self.not_before = 0.0
         self.generating = False
+        self.workload = {}
 
     def stop_owned_runner(self) -> None:
         import psutil
@@ -138,6 +139,7 @@ class Pressure:
                 "contract": "synta-adaptive-windows-v1",
                 "cooldown_seconds": round(max(0, self.not_before - time.monotonic()), 1),
                 "generating": self.generating,
+                "workload": self.workload,
             }
             path = self.root / "logs/resource-status.json"
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +212,18 @@ class Proxy(BaseHTTPRequestHandler):
                 options["num_predict"] = max(1, min(int(options.get("num_predict", 1024)), 2048))
                 body = json.dumps(data).encode()
                 pressure.generating = True
+                pressure.workload = {
+                    "source": "Debian mission"
+                    if self.client_address[0] == self.server.owner
+                    else "Windows local request / startup check",
+                    "client_ip": self.client_address[0],
+                    "model": str(data.get("model", ""))[:100],
+                    "task": self.headers.get("X-Synta-Task", "unlabelled inference")[:100],
+                    "request_id": self.headers.get("X-Synta-Request", "")[:64],
+                    "started": time.time(),
+                    "state": "generating",
+                    "scope": "Transport receipt, not proof of useful output or training.",
+                }
             started = time.monotonic()
             connection = http.client.HTTPConnection(
                 "127.0.0.1", self.server.upstream_port, timeout=180
@@ -246,6 +260,11 @@ class Proxy(BaseHTTPRequestHandler):
                 connection.close()
             if acquired:
                 pressure.generating = False
+                pressure.workload = {
+                    **pressure.workload,
+                    "finished": time.time(),
+                    "state": "request ended; inspect Debian result receipt",
+                }
                 pressure.lock.release()
 
     def send_json(self, status: int, value: dict) -> None:

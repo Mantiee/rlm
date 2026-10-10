@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from pathlib import Path
 
 from rlm.v100.chat_goals import normalized
@@ -11,7 +12,7 @@ def requested(message: str) -> bool:
     text = normalized(message)
     return bool(
         re.search(
-            r"co (?:teraz |aktualnie )?robisz|jaki (?:jest )?(?:postep|progres)|czego sie nauczyl|czy .*uczysz sie|czy uczysz sie|learn.*continuously|what have you learned|what are you doing",
+            r"co (?:(?:teraz|aktualnie|dokladnie|konkretnie|obecnie) )*robisz|co .*robicie|jaki (?:jest )?(?:postep|progres)|czego sie nauczyl|czy .*uczysz sie|czy uczysz sie|learn.*continuously|what have you learned|what (?:exactly )?are you doing",
             text,
         )
     ) and not re.search(r"\b(?:zmien|dodaj|napraw|zrob|wdroz|zaimplementuj)\b", text)
@@ -118,10 +119,72 @@ def respond(root: Path, message: str | None = None) -> dict:
                     + str(error)[:200]
                 )
     lines.append(wording("Przebieg: ", "Run: ") + str(evidence["run"]))
+    from rlm.v100.drones import inspect
+    from rlm.v100.live_status import recent_events
+    from rlm.v100.planning import read
+
+    jobs = inspect(root)
+    now = time.time()
+    lines.append(wording("Odczyt statusu UTC: ", "Status read UTC: ") + str(now))
+    for row in jobs:
+        if row["state"] not in ("running", "queued"):
+            continue
+        age = max(0, now - row["updated"]) if row["updated"] else None
+        lines.append(
+            f"{row['kind']} / {row['branch']} / {row['id']}: {row['state']} | "
+            + wording("wiek zapisu: ", "record age: ")
+            + (f"{age:.0f}s" if age is not None else "unknown")
+            + "\n"
+            + row["assignment"]
+        )
+    if not any(row["state"] == "running" for row in jobs):
+        lines.append(
+            wording(
+                "Brak dronów oznaczonych jako wykonujące zadanie.", "No drones recorded as running."
+            )
+        )
+    plans = read(root)
+    for horizon in ("short", "mid"):
+        plan = plans.get(horizon) or {}
+        lines.append(
+            f"Plan {horizon} [{plan.get('id', 'unknown')}]: {plan.get('text', 'unavailable')}"
+        )
+    events = recent_events(root, 200)
+    observed = [
+        event
+        for event in events
+        if event.get("kind")
+        in (
+            "inference-start",
+            "inference-finished",
+            "inference-failed",
+            "tool-start",
+            "tool-result",
+        )
+    ][-8:]
+    lines.append(
+        wording(
+            "Ostatnie zapisane akcje (historia, nie dowód bieżącej pracy):",
+            "Latest recorded actions (history, not proof of current work):",
+        )
+    )
+    for event in observed:
+        lines.append(
+            f"{event.get('time')} | {event.get('actor')} | {event.get('kind')} | {event.get('tool', '')} | {event.get('summary', '')}"
+        )
+    if not observed:
+        lines.append(
+            wording(
+                "Brak zarejestrowanych akcji w odczytanym oknie.",
+                "No recorded actions in the read window.",
+            )
+        )
     return {
         "answer": "\n".join(lines),
         "actions": [],
         "applied": [],
         "evidence": evidence,
+        "observed_jobs": jobs,
+        "observed_actions": observed,
         "responder": {"model": "controller-status", "delegated_while_master_busy": False},
     }

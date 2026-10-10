@@ -81,6 +81,8 @@ def status(root: Path) -> dict:
             "active_request_target_percent": client.helper_duty_percent,
             "scope": "Inference/vision helper, request pacing; not a hard GPU utilization/power cap",
         }
+        if profile.get("resources", {}).get("require_adaptive_windows_guard"):
+            value["helper"]["admission"] = client.remote_request("/api/synta-resources")
     except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
         value["helper"] = {"reachable": False, "error": str(error)[:300]}
     return value

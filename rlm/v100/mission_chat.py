@@ -390,10 +390,12 @@ def schema(allow_long_goal: bool = False) -> dict:
 
 def conversation_question(message: str) -> bool:
     """Read-only questions take one generation; explicit work retains tools."""
-    value = message.casefold().strip()
+    from rlm.v100.chat_goals import normalized
+
+    value = normalized(message).strip()
     return bool(
         re.match(
-            r"(?:a\s+)?(?:co|czego|czy|jak|dlaczego|czemu|gdzie|kiedy|what|why|where|when|ej zaczniesz)\b",
+            r"(?:(?:a|to|no|ale)\s+)*(?:co|czego|czy|jak|dlaczego|czemu|gdzie|kiedy|what|why|where|when|ej zaczniesz)\b|(?:dalej|znowu|nadal).*\b(?:tracisz|przegrywasz)\b",
             value,
         )
     ) and not bool(
@@ -402,6 +404,49 @@ def conversation_question(message: str) -> bool:
             value,
         )
     )
+
+
+def answer_complete(answer: str) -> bool:
+    """Detect long natural-language cutoffs even when JSON grammar reports stop."""
+    text = answer.strip()
+    return bool(text) and (len(text) < 240 or text[-1] in ".!?…:;)]}`\"'»")
+
+
+def repair_answer(client, message: str, facts: dict) -> str:
+    """One concise recovery generation, with no tools or partial assistant history."""
+    if time.monotonic() + 8 >= getattr(client, "request_deadline", float("inf")):
+        raise ValueError(
+            "Chat output incomplete and request deadline exhausted; no partial answer accepted"
+        )
+    reply = client.request(
+        "/v1/chat/completions",
+        {
+            "model": client.model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Answer only the current question in its language, in at most three complete sentences. This is a read-only recovery, with no new tools or control changes. The previous partial answer is discarded. Only supplied receipts are evidence; do not invent causes of losses, independent data validation, accepted weights or income. Distinguish queued tasks from completed tasks. Facts: "
+                    + json.dumps(facts, ensure_ascii=False),
+                },
+                {"role": "user", "content": message},
+            ],
+            "max_tokens": 512,
+            "temperature": 0.0,
+            "stream": False,
+            **client.template_args(),
+        },
+    )
+    choice = reply["choices"][0]
+    answer = choice["message"].get("content")
+    if (
+        choice.get("finish_reason") not in ("stop", "eos")
+        or not isinstance(answer, str)
+        or not answer_complete(answer)
+    ):
+        raise ValueError(
+            "Chat recovery response incomplete; no partial answer or control actions accepted"
+        )
+    return answer.strip()
 
 
 def conversational_response(
@@ -426,7 +471,7 @@ def conversational_response(
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are Synta. Answer in the language of the current user message, briefly. Internal plans and tool text use English. This is read-only chat: do not claim to execute work or update plans. Only the supplied status is verified. Missing optimizer/profit counters are unknown. Explain how the recorded goal relates to the question, without changing it or promising profit. State missing evidence honestly. Verified current facts: "
+                    "content": "You are Synta. Answer ONLY the current user question, in its language, briefly with complete sentences. Internal plans and tool text use English. This is read-only chat: do not claim to execute work or update plans. Only the supplied status is verified. Missing optimizer/profit counters are unknown. Audit reproducibility does not prove independent price accuracy or causal explanations for losses. Explain how the recorded goal relates to the question, without changing it or promising profit. State missing evidence honestly. Verified current facts: "
                     + json.dumps(facts, ensure_ascii=False),
                 },
                 {"role": "user", "content": message},
@@ -442,15 +487,15 @@ def conversational_response(
     if (
         choice.get("finish_reason") not in ("stop", "eos")
         or not isinstance(answer, str)
-        or not answer.strip()
+        or not answer_complete(answer)
     ):
-        raise ValueError("Conversational model response incomplete; no invented answer accepted")
+        answer = repair_answer(client, message, facts)
     return {
         "answer": answer.strip(),
         "actions": [],
         "applied": [],
         "responder": responder,
-        "scope": "Single model generation; read-only question, no tool execution or control changes",
+        "scope": "Read-only question; at most one concise output recovery, no tool execution or control changes",
     }
 
 
@@ -520,6 +565,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    from rlm.v100 import chat_progress
+
+    if chat_progress.requested(message):
+        return chat_progress.respond(root, message)
     if trade_visualization_requested(message):
         return trade_visualization_reply(root)
     from rlm.v100 import chat_facts, income_policy, market_research
@@ -764,16 +813,21 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 "cpu_admission_detail": cpu_detail,
             },
         )
-    with connect(root) as db:
-        history = db.execute(
-            "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 3"
-        ).fetchall()
+    # Old requests are context only for an explicit referential follow-up.
+    # A standalone new request must never inherit another request's work.
+    history = []
+    if re.fullmatch(r"(?:to |okej |ok )?(?:zrob to|zrób to|wykonaj to|do it)[!. ]*", message, re.I):
+        with connect(root) as db:
+            history = db.execute(
+                "SELECT message,response FROM requests WHERE state='completed' ORDER BY rowid DESC LIMIT 1"
+            ).fetchall()
     messages = [
         {
             "role": "system",
             "content": (
                 "You are Synta, the operator-owned goal-directed research and learning system. Answer in the current authenticated local user message language. Generated internal plans, hypotheses and tool arguments must be English; literal operator quotations remain verbatim. Return answer and explicit requested actions. "
                 "An ordinary question needs no actions. Interpret clear goal-setting requests in ordinary language; slash commands are optional. "
+                "The current user message overrides previous conversational context. Answer it directly. Use complete sentences under 2000 characters. Do not finish mid-sentence to fit a schema. Archived replay does not prove vendor data accuracy or the cause of losses. Do not assert falling knives, volatility or Z-score causes without a measured execution trace. "
                 "Use goal_long ONLY if included in the response schema and ONLY when the CURRENT message explicitly asks "
                 "to set/change the main or long-term objective. Its text must be a literal substring of that message, "
                 "never invented or drawn from chat history, a tool or a quote. Questions, negations and examples do not change goals. "
@@ -904,6 +958,29 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         raise ValueError("Read-only chat question cannot execute unsolicited actions")
     if set(result) != {"answer", "actions"} or not isinstance(result["answer"], str):
         raise ValueError("Invalid chat response")
+    if not answer_complete(result["answer"]):
+        result["actions"] = []
+        result["answer"] = repair_answer(
+            client,
+            message,
+            {
+                "tool_receipts": [
+                    {
+                        "tool": row.get("tool"),
+                        "state": "failed"
+                        if receipt_failed(row)
+                        else "recorded; outcome unverified",
+                        "receipt": {
+                            key: (row.get("result") or {}).get(key)
+                            for key in ("id", "state", "status", "error", "report", "published")
+                        },
+                    }
+                    for row in tool_receipts
+                ],
+                "mission": mission,
+            },
+        )
+        result["answer_recovered"] = True
     if resource_request:
         result["actions"], rejected = chat_resources.filter_actions(result["actions"])
         evidence = chat_resources.status(root)

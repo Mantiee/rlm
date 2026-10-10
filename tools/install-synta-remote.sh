@@ -71,13 +71,24 @@ subprocess.run(['systemctl', '--user', 'enable', '--now', 'synta-remote.service'
 subprocess.run(['systemctl', '--user', 'restart', 'synta-remote.service'], check=True)
 # Keep this user's services running after logout/reboot, without a password in a unit.
 subprocess.run(['sudo', 'loginctl', 'enable-linger', getpass.getuser()], check=True)
-print('Private dashboard:', origin, flush=True)
-print('Private master chat:', origin + '/chat', flush=True)
+print('Configured dashboard URL (not yet verified):', origin, flush=True)
+print('Configured master chat URL (not yet verified):', origin + '/chat', flush=True)
 print('SSH with existing Debian credentials: ssh ' + getpass.getuser() + '@' + host, flush=True)
 print('Only the configured Tailscale owner can read or command the web gateway. Other home devices need their own Tailscale installation.', flush=True)
 PY
 # Serve is private to this tailnet. Never use Funnel for the master command API.
+echo 'If Tailscale prints an enable-HTTPS link, open it and approve Serve. Phone sign-in alone is insufficient.'
 sudo tailscale serve --bg --https=443 http://127.0.0.1:8786
 echo 'Install Tailscale on your phone/laptop and sign in to the same account. Open the HTTPS URLs above.'
 echo 'Existing SSH authentication is unchanged. No Windows GPU, power limit or clock setting was changed.'
-"$PY" -m rlm.v100.remote_connect --root "$AI_V100_ROOT"
+"$PY" <<'PY'
+import json, os, sys
+from pathlib import Path
+from rlm.v100.remote_connect import status
+value = status(Path(os.environ['AI_V100_ROOT']))
+print(json.dumps(value, indent=2), flush=True)
+if not value['ready']:
+    print('Remote access is NOT ready. Resolve the blockers above; no success claim.', file=sys.stderr)
+    sys.exit(1)
+print('Private HTTPS routing configured and LAN dashboard reachable. Open the verified DNS URL on the connected phone.')
+PY

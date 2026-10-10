@@ -101,6 +101,10 @@ def native_turn(
                 max_tokens=payload["max_tokens"],
                 total_completion_tokens=completion_tokens,
             )
+        if choice.get("finish_reason") not in ("stop", "eos", "tool_calls", "length"):
+            raise ValueError(
+                "Model response has an unconfirmed finish reason; no answer or tool action accepted"
+            )
         if choice.get("finish_reason") != "length":
             return choice["message"]
         if attempts >= 3 or payload["max_tokens"] >= ceiling:

@@ -20,7 +20,7 @@ def language(message: str) -> str:
 def requested(message: str) -> bool:
     return bool(
         re.search(
-            r"zarab|zarob|strateg|income|profit|backtest|minus|paper|opportunit|candidate|brier|kandydat|drawdown|obsunie|odchylen|glitch",
+            r"zarab|zarob|tracisz|przegrywasz|strateg|income|profit|backtest|minus|paper|opportunit|candidate|brier|kandydat|drawdown|obsunie|odchylen|glitch",
             normalized(message),
         )
     )
@@ -75,6 +75,11 @@ def response(root: Path, message: str) -> dict:
             )
     else:
         lines.append("Audit: unavailable; no source integrity claim accepted")
+    lines.append(
+        "Powtarzalność obliczeń nie potwierdza prawdziwości cen u niezależnego dostawcy ani przyczyny strat. Nie mam podstaw, aby przypisać je konkretnemu trendowi bez analizy śladu transakcji. Ta odpowiedź nie zmienia strategii ani planu."
+        if pl
+        else "Replay reproducibility does not establish independent price accuracy or a cause of losses. A causal explanation needs execution-trace analysis. This answer changes no strategy or plan."
+    )
     for row in value.get("recent_exploratory_backtests", []):
         net = row.get("development_test", {}).get("net_return")
         lines.append(
