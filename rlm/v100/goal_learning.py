@@ -399,13 +399,29 @@ def admit(root: Path, candidates: list[dict], profile: dict) -> list[dict]:
 
 def status(root: Path) -> dict:
     admission = root / "research/goal-learning/admission.json"
-    with database(root) as db:
-        items = list(
-            db.execute("SELECT id, due, data, outcome FROM forecasts ORDER BY due DESC LIMIT 16")
-        )
+    path = root / "research/goal-learning/ledger.sqlite3"
+    items, all_items = [], []
+    if path.exists():
+        db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
+        db.row_factory = sqlite3.Row
+        try:
+            db.execute("BEGIN")
+            items = list(
+                db.execute(
+                    "SELECT id, due, data, outcome FROM forecasts ORDER BY due DESC LIMIT 16"
+                )
+            )
+            all_items = list(db.execute("SELECT data, due, outcome FROM forecasts"))
+        finally:
+            db.close()
     from rlm.v100.goals import load_goal
 
     goal = load_goal(root)
+    active_items = [
+        item
+        for item in all_items
+        if goal and json.loads(item["data"])["plan"]["long"]["id"] == goal["id"]
+    ]
     current = [
         item
         for item in items
@@ -421,6 +437,13 @@ def status(root: Path) -> dict:
         }
     return {
         "goal_id": goal["id"] if goal else None,
+        "resolved_total": sum(item["outcome"] is not None for item in active_items),
+        "pending_total": sum(
+            item["outcome"] is None and item["due"] + 300 >= time.time() for item in active_items
+        ),
+        "expired_total": sum(
+            item["outcome"] is None and item["due"] + 300 < time.time() for item in active_items
+        ),
         "learning_task": {
             "inputs": "Archived evidence available before prediction",
             "targets": "Independently observed future down/flat/up outcomes",

@@ -1,4 +1,4 @@
-# Synta: requirement and verification audit, v58
+# Synta: requirement and verification audit, v59
 
 This audits the visible conversation. "Implemented" means code exists and the
 listed checks pass, not that it has run successfully on the operator's computers.
@@ -63,3 +63,10 @@ proposals and compatible identity-initialized residual growth. Existing queued
 master trials execute them in isolation. Activation additionally requires verified
 goal outcomes and strict measured task improvement. Native GGUF architecture is
 not reshaped in place. See `SYNTA_MORPHOLOGY.md` for the executable contract.
+
+## v59 runtime recovery
+
+See `SYNTA_RECOVERY.md`: same-run stale-report preservation, independent verified
+goal reads, read-only goal-status SQLite, actual process/forecast receipts, archived
+UI-plan recovery and independent forward-only financial reference labels. These
+labels commission supervised task data, not model skill or profitable strategies.

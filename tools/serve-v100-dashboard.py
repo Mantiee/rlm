@@ -175,7 +175,7 @@ class DashboardState:
                     sys.executable,
                     "-u",
                     "-m",
-                    "rlm.v100.cli",
+                    "rlm.v100.progress",
                     "--root",
                     str(self.root),
                     "mission-report",
@@ -191,12 +191,31 @@ class DashboardState:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             errors.append("Raport nie został odświeżony: " + str(error)[:600])
         mission = self.mission_reader(self.root)
+        freshness = {"state": "fresh" if report else "unavailable", "source": "mission-report"}
+        if not report:
+            cached = self.data.get("report", {})
+            cache_path = self.root / "research/mission/latest-report.json"
+            if cache_path.exists():
+                try:
+                    cached = read_json(cache_path)
+                except (OSError, ValueError) as error:
+                    errors.append("Cached report unavailable: " + str(error)[:200])
+            if cached.get("mission_evidence", {}).get("run") == mission.get("run") and cached:
+                report = cached
+                freshness = {
+                    "state": "stale",
+                    "updated_at": cached.get("updated_at"),
+                    "source": "last verified same-run snapshot",
+                }
         if report.get("mission_evidence", {}).get("run") != mission.get("run"):
             if report:
                 errors.append(
                     "Raport dotyczy poprzedniego przebiegu; pokazano tylko bieżący status"
                 )
             report = {}
+        from rlm.v100.dashboard_snapshot import supplement
+
+        report = supplement(self.root, mission, report, errors)
         try:
             result = subprocess.run(
                 [
@@ -246,6 +265,7 @@ class DashboardState:
             "collected_at": time.time(),
             "mission": mission,
             "report": report,
+            "report_freshness": freshness,
             "gpu": gpu,
             "controller_log": log,
             "paper_reports": [p.parent.name for p in reports if REPORT_ID.fullmatch(p.parent.name)][
@@ -260,7 +280,14 @@ class DashboardState:
                 self.refresh()
                 self.sync_layout()
             except (OSError, ValueError, RuntimeError) as error:
-                self.data = {"collected_at": time.time(), "errors": [str(error)[:600]]}
+                self.data = {
+                    **self.data,
+                    "errors": [str(error)[:600]],
+                    "report_freshness": {
+                        "state": "stale",
+                        "source": "previous snapshot after collector error",
+                    },
+                }
             self.stop.wait(20)
 
 

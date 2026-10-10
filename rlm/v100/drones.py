@@ -53,6 +53,14 @@ def schedule(root: Path, branch: str, kind: str, payload: str, interval: int) ->
     maximum = 12000 if kind in ("python", "desktop") else 1500 if kind == "source" else 400
     if not isinstance(payload, str) or not 1 <= len(payload) <= maximum:
         raise ValueError("Drone payload exceeds its budget")
+    if (
+        kind in ("desktop", "python")
+        and "placeholder" in payload.lower()
+        and re.search(r"(?m)^\s*pass\s*(?:#.*)?$", payload)
+    ):
+        raise ValueError(
+            "Placeholder script refused: implement the experiment or report its missing inputs; printing a simulation banner is not execution"
+        )
     if type(interval) is not int or interval != 0 and not 300 <= interval <= 86400:
         raise ValueError("Drone interval: 0 once, or 300-86400 seconds")
     if kind == "source":
@@ -125,7 +133,10 @@ def execute(root: Path, job: dict) -> dict:
     if job["kind"] == "desktop":
         from rlm.v100.desktop import run
 
-        return run(root, job["payload"])
+        return {
+            **run(root, job["payload"]),
+            "completion_scope": "Guest process execution only; task correctness and income effects are not independently verified",
+        }
     if job["kind"] == "python":
         from rlm.v100.research_sandbox import run
 
@@ -194,6 +205,25 @@ def finish(root: Path, identity: str, value: dict) -> None:
         state = (
             "cancelled" if row["state"] == "cancelled" else "queued" if interval else "completed"
         )
+        if (
+            row["kind"] != "compute-audit"
+            and value.get("status") == "failed"
+            and not interval
+            and state != "cancelled"
+        ):
+            state = "failed"
+        if (
+            row["kind"] in ("desktop", "python")
+            and type(value.get("exit_code")) is int
+            and value["exit_code"] != 0
+        ):
+            value = {
+                **value,
+                "status": "execution failed",
+                "completion_scope": "Process failed; no task success receipt",
+            }
+            if not interval and state != "cancelled":
+                state = "failed"
         if (
             row["kind"] == "compute-audit"
             and value.get("status") == "failed"

@@ -241,3 +241,18 @@ def watch(root: Path) -> None:
             time.sleep(1)
     except KeyboardInterrupt:
         return
+
+
+def main() -> None:
+    """Dedicated reporting entry point; no inference CLI initialization."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("command", choices=["mission-report"])
+    args = parser.parse_args()
+    report(args.root)
+
+
+if __name__ == "__main__":
+    main()

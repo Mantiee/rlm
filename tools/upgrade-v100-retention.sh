@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10058.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10059.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -57,6 +57,7 @@ from rlm.v100.self_code import prepare
 from rlm.v100.desktop import prepare as prepare_desktop
 from rlm.v100.supervisor import install
 from rlm.v100.chat_resources import repair_completed
+from rlm.v100.planning import realign_income_plans
 
 root = Path(os.environ['AI_V100_ROOT'])
 # Operator explicitly requested a 50 percent helper wall-time target.
@@ -69,6 +70,7 @@ if helper_path.exists():
     helper.setdefault('resources', {})['helper_duty_percent'] = 50
     atomic_json(helper_path, helper)
     print('Helper active wall-time target:', helper['resources']['helper_duty_percent'], 'percent; not a hard GPU cap')
+print("GOAL PLAN RECOVERY:", json.dumps(realign_income_plans(root), ensure_ascii=False))
 prepare(root)
 if (root / 'research/desktop/manifest.json').exists():
     prepare_desktop(root)

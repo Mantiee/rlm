@@ -1,6 +1,7 @@
 """Read-only, bounded training evidence for the operator and research agents."""
 
 import json
+import sqlite3
 from pathlib import Path
 
 
@@ -19,10 +20,16 @@ def collect(root: Path) -> dict:
     mission = status(root)
     from rlm.v100.goal_learning import status as goal_status
 
+    goal_errors = []
+    try:
+        goal = goal_status(root)
+    except (OSError, ValueError, sqlite3.Error) as error:
+        goal = {"state": "unavailable", "detail": str(error)[:300]}
+        goal_errors.append({"scope": "Goal metrics collection", "detail": str(error)[:300]})
     run = Path(mission["run"]) if mission.get("run") else None
     result = {
         "schema": "v100-mission-evidence-v1",
-        "goal_learning": goal_status(root),
+        "goal_learning": goal,
         "mission_running": mission["running"],
         "phase": mission.get("state", {}).get("phase", mission.get("phase")),
         "run": str(run) if run else None,
@@ -32,7 +39,7 @@ def collect(root: Path) -> dict:
         "optimizer_updates_observed": None,
         "training_runs": [],
         "reports": [],
-        "errors": [],
+        "errors": goal_errors,
         "scope": "Current mission evidence only. Missing metrics mean unknown, not zero. Attempted/global steps are not successful optimizer updates. Recorded updates do not prove accepted weights or profit. GUI readiness is not a prerequisite for native inference, calculator tools or GPU training. Arithmetic training is an optional experiment, not a prerequisite or proof of an income edge.",
     }
     dispatcher = root / "research/goal-compute/status.json"

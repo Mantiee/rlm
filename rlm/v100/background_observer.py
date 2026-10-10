@@ -20,7 +20,20 @@ def tick(root: Path) -> None:
         ActivityLog(root, "controller", "goal-learning").write(
             "errors", "goal-observer-failed", {"detail": str(error)[:400]}
         )
+    from rlm.v100.goal_observer import tick as reference_tick
+
+    try:
+        reference_tick(root)
+    except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
+        ActivityLog(root, "controller", "goal-observer").write(
+            "errors", "reference-collection-failed", {"detail": str(error)[:400]}
+        )
     compute_tick(root)
+    from rlm.v100.goal_learning import status as goal_status
+
+    atomic_json(
+        root / "research/goal-learning/status.json", {**goal_status(root), "updated": time.time()}
+    )
     ledger = root / "research/paper/ledger.sqlite3"
     if not ledger.exists():
         return

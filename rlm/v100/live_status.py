@@ -9,6 +9,9 @@ import requests
 
 def public_summary(value: dict | str) -> str:
     """Select public conclusions only; never expose reasoning/thinking token fields."""
+    from rlm.v100.activity import redact
+
+    value = redact(value)
     if isinstance(value, str):
         return value[:8000]
     if not isinstance(value, dict):
@@ -24,6 +27,12 @@ def public_summary(value: dict | str) -> str:
         "error",
         "detail",
         "report",
+        "state",
+        "id",
+        "value",
+        "exit_code",
+        "stdout",
+        "completion_scope",
     ):
         if isinstance(value.get(key), (str, int, float)):
             parts.append(f"{key}: {str(value[key])[:2000]}")
@@ -142,7 +151,9 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
         result.append(
             {
                 "label": f"{job['branch']} / {job['kind']} / {job['id']}",
-                "state": job["state"],
+                "state": "execution completed; outcome unverified"
+                if job["kind"] in ("desktop", "python") and job["state"] == "completed"
+                else job["state"],
                 "task": job.get("assignment", ""),
                 "updated": job.get("updated"),
                 "result": public_summary(job.get("result") or {}),

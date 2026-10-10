@@ -64,10 +64,11 @@ def assess(root: Path, mission: dict, report: dict, layout: dict) -> dict:
         "mission_evidence.reports",
     )
     goal = evidence.get("goal_learning", {})
+    outcomes = goal.get("resolved_total", goal.get("recent_resolved"))
     add(
         "Goal outcomes",
-        "observed" if goal.get("recent_resolved", 0) > 0 else "unknown",
-        goal.get("recent_resolved", 0),
+        "observed" if type(outcomes) is int and outcomes > 0 else "unknown",
+        outcomes if outcomes is not None else "Goal metrics unavailable",
         "research/goal-learning/ledger.sqlite3",
     )
     from rlm.v100.live_status import recent_events
