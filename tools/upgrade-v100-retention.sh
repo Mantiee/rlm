@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10063.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10064.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -72,7 +72,8 @@ if helper_path.exists():
     helper.setdefault('resources', {})['helper_duty_percent'] = 50
     atomic_json(helper_path, helper)
     print('Helper active wall-time target:', helper['resources']['helper_duty_percent'], 'percent; not a hard GPU cap')
-if not (root / 'research/income-research-policy.json').exists():
+# Current operator explicitly authorized capital-growth research in paper.
+if not income_policy(root).get('capital_research'):
     update_income_policy(root, 'Enable hypothetical capital research')
 print("GOAL PLAN RECOVERY:", json.dumps(realign_income_plans(root), ensure_ascii=False))
 prepare(root)
@@ -105,7 +106,7 @@ preferences['goal_learning'] = {
     'scope': 'The operator alone authorizes long-term goal changes; no fixed asset, source or pattern list.'
 }
 preferences['income_research'] = {
-    'instructions': 'For income goals, compare concrete zero-deposit mechanisms across domains, including outside markets. Use income_opportunities and register_income_opportunity after archiving primary terms and demand evidence. Include conservative net estimates, labor, eligibility, time to first income, blockers and a falsifiable next test. Prepare useful deliverables within authorized tools. Estimates and successful processes are not actual income. UI maintenance is a separate task, not a financial plan.',
+    'instructions': 'For income goals, compare hypothetical capital-growth strategies in paper and zero-upfront mechanisms across domains, including outside markets. No real spending does not mean zero capital in the simulation. Use income_opportunities and register_income_opportunity after archiving primary terms and demand evidence. Include conservative net estimates, labor, eligibility, time to first income, blockers and a falsifiable next test. Prepare useful deliverables within authorized tools. Estimates and successful processes are not actual income. UI maintenance is a separate task, not a financial plan.',
     'evidence': 'research/income-opportunities/status.json, research/source-acquisition/status.json and tool receipts',
     'scope': 'No real orders, sales, outreach, accounts, spending or automatic payment claims.'
 }

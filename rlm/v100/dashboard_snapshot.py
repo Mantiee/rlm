@@ -8,10 +8,30 @@ from pathlib import Path
 
 
 def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
+    from rlm.v100.financial_snapshot import supplement as financial_supplement
     from rlm.v100.goals import load_goal
     from rlm.v100.planning import read
 
-    result = dict(report)
+    result = financial_supplement(root, report, errors)
+    if mission.get("run"):
+        path = Path(mission["run"]) / "learning/heartbeat.json"
+        if path.exists() and path.stat().st_size <= 16384:
+            try:
+                result["learning_activity"] = json.loads(path.read_text())
+            except (OSError, ValueError) as error:
+                errors.append("Learning heartbeat unavailable: " + str(error)[:200])
+        state_path = Path(mission["run"]) / "learning/state.json"
+        if state_path.exists() and state_path.stat().st_size <= 2 * 2**20:
+            try:
+                state = json.loads(state_path.read_text())
+                cycles = state.get("cycles", [])
+                result["completed_learning_cycles"] = len(cycles)
+                result["last_learning_cycle"] = cycles[-1] if cycles else None
+                result["accepted_weight_updates_this_run"] = sum(
+                    c.get("status", "").startswith("selected for next serving") for c in cycles
+                )
+            except (OSError, ValueError, TypeError) as error:
+                errors.append("Learning state unavailable: " + str(error)[:200])
     from rlm.v100.public_benchmarks import progress_for_run
 
     benchmark = progress_for_run(root, Path(mission["run"]) if mission.get("run") else None)

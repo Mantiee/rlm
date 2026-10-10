@@ -35,6 +35,13 @@ def test_dashboard_private_bind_and_readonly_http_routes(tmp_path):
             from rlm.v100.activity import ActivityLog
 
             event_id = ActivityLog(tmp_path).write("tools", "tool-start", {"tool": "calculate"})
+            from rlm.v100.live_status import action_events, agent_views, recent_events
+
+            recorded = recent_events(tmp_path)
+            state.data["live"] = {
+                "events": action_events(recorded),
+                "agents": agent_views(recorded, []),
+            }
             with urlopen(origin + "/api/actions?limit=1", timeout=3) as response:
                 actions = json.load(response)
                 assert actions["events"][0]["id"] == event_id
@@ -110,7 +117,8 @@ def test_dashboard_does_not_attribute_previous_run_reports_to_current_run(tmp_pa
     state = dashboard.DashboardState(tmp_path, lambda root: {"run": "new-run", "running": True})
     state.refresh()
     assert state.data["mission"]["run"] == "new-run"
-    assert state.data["report"] == {}
+    assert "paper" not in state.data["report"]
+    assert state.data["report"]["recent_exploratory_backtests"] == []
     assert state.data["gpu"]["memory_used"] == 14758
     assert "poprzedniego przebiegu" in state.data["errors"][0]
 
@@ -124,7 +132,8 @@ def test_dashboard_report_timeout_is_visible_and_does_not_hide_live_mission(tmp_
     state.collect_report()
     state.refresh()
     assert state.data["mission"]["running"] is True
-    assert state.data["report"] == {}
+    assert "paper" not in state.data["report"]
+    assert state.data["report"]["recent_exploratory_backtests"] == []
     assert state.data["gpu"] == {}
     assert (
         sum("timed out" in error or "TimeoutExpired" in error for error in state.data["errors"])

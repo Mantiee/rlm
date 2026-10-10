@@ -103,6 +103,21 @@ def learn_loop(
     if paper is not None:
         state["paper_settings_sha256"] = paper.settings_sha
     cycle = 0
+
+    def stage(name: str, reason: str | None = None, next_check: float | None = None):
+        atomic_json(
+            output / "heartbeat.json",
+            {
+                "cycle_in_progress": cycle,
+                "stage": name,
+                "updated": time.time(),
+                "reason": reason,
+                "next_check": next_check,
+                "goal_id": (goal or {}).get("id"),
+                "scope": "Last entered loop stage, not a verified optimizer or acceptance counter",
+            },
+        )
+
     with ExitStack() as scopes:
         if paper is not None:
             scopes.enter_context(paper)
@@ -117,6 +132,7 @@ def learn_loop(
                 # User chat can steer the next experiment. Completed trials retain
                 # their old objective; the independent regression suite stays fixed.
             cycle += 1
+            stage("preparing-verified-inputs")
             prepare_inputs(root, current_pool, suite)
             atomic_json(live, current)
             save_progress(root, output, state)
@@ -164,6 +180,7 @@ def learn_loop(
             # Serve the current version during R&D/waiting. Only our own inference
             # process is stopped for the training phase; never another user's server.
             with managed_server(live, root, output / "live-server.log"):
+                stage("serving-research")
                 if (
                     current.get("resources", {}).get("public_benchmarks")
                     and not current["resources"].get("public_baseline")
@@ -172,6 +189,7 @@ def learn_loop(
                     from rlm.v100.public_benchmarks import evaluate as public_evaluate
 
                     public_path = output / "public-baseline.json"
+                    stage("public-baseline")
                     try:
                         public_evaluate(root, current, public_path)
                         current["resources"].update(
@@ -229,6 +247,7 @@ def learn_loop(
                             else {}
                         )
                         for branch in active_branches:
+                            stage("research-" + branch)
                             try:
                                 result = (
                                     futures[branch].result() if separate else helper_work(branch)
@@ -242,6 +261,7 @@ def learn_loop(
                                     {"error": type(error).__name__, "detail": str(error)[:400]},
                                 )
                     if paper is not None:
+                        stage("income-research")
                         try:
                             if active_branches:
                                 paper.research(
@@ -264,6 +284,7 @@ def learn_loop(
                                 flush=True,
                             )
                     if current["runtime"].get("tool_protocol") == "json":
+                        stage("memory-summarization")
                         from rlm.v100.mission_memory import compress
 
                         try:
@@ -275,6 +296,7 @@ def learn_loop(
                                 flush=True,
                             )
                     expanded = output / f"pool-{cycle:04d}.jsonl"
+                    stage("verified-data-admission")
                     changed = extend_pool(current_pool, root, expanded, profile=current)
                     if initial_update and cycle == 1 and not changed:
                         expanded.write_bytes(current_pool.read_bytes())
@@ -295,6 +317,11 @@ def learn_loop(
                         expanded.write_bytes(current_pool.read_bytes())
                         changed = True
                     if not changed:
+                        stage(
+                            "waiting-for-verified-data",
+                            "No new verified and admitted examples",
+                            time.time() + interval,
+                        )
                         history.append(
                             {"cycle": cycle, "status": "no new verified and admitted examples"}
                         )
@@ -321,6 +348,7 @@ def learn_loop(
             else:
                 reason = None
             if reason:
+                stage("training-deferred", reason, time.time() + interval)
                 history.append(
                     {
                         "cycle": cycle,
@@ -344,6 +372,7 @@ def learn_loop(
 
             scratch_queue = pending_scratch(root)
             if scratch_queue:
+                stage("scratch-architecture-training-and-tests")
                 from rlm.v100.architecture_promotion import activate
 
                 architecture_result = scratch_trial(
@@ -373,6 +402,7 @@ def learn_loop(
 
             foundation_queue = pending_foundations(root)
             if foundation_queue:
+                stage("alternative-architecture-training-and-tests")
                 if paper is not None:
                     paper.phase("alternative-architecture-trial", cycle, current)
                 architecture_result = foundation_trial(
@@ -414,6 +444,7 @@ def learn_loop(
                 save_progress(root, output, state)
                 continue
             trial = output / f"update-{cycle:04d}"
+            stage("candidate-training-and-independent-tests")
             if paper is not None:
                 paper.phase("training-started", cycle, current)
             try:
@@ -429,6 +460,7 @@ def learn_loop(
                     train_timeout=train_timeout,
                 )
             except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                stage("candidate-failed", str(error)[:400], time.time() + interval)
                 history.append(
                     {
                         "cycle": cycle,
@@ -508,7 +540,5 @@ def learn_loop(
 
 def save_progress(root: Path, output: Path, state: dict) -> None:
     atomic_json(output / "state.json", state)
-    if (root / "research/mission/active.json").exists():
-        from rlm.v100.progress import report
-
-        report(root)
+    # Full financial hash audits run in the independent dashboard collector.
+    # A report must never block the research/training controller checkpoint.

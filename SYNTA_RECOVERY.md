@@ -195,6 +195,40 @@ Runtime evidence is stored under research/market-research, research/backtests,
 research/income-policy-history and research/architecture-candidates. Code tests do
 not assert operator-browser, Windows/CUDA runtime acceptance or actual income.
 
+## v64: delivered replies, independent financial visibility and remote access
+
+- Financial questions including the operator's `zarobiles` wording read measured
+  historical/ledger facts directly. They do not substitute a no-real-orders
+  explanation for an unprofitable simulation. Explicit `assume capital` commands
+  update hypothetical-capital policy without authorizing spending. The upgrade
+  applies the current operator's explicit paper-capital authorization.
+- Read-only financial/status questions can bypass the GPU work queue. Terminal
+  chat monitors requests still pending after its wait window, delivers eventual
+  saved results and errors, and offers `/results` and `/pending`. Real commands
+  retain their bounded queue and tool receipts.
+- Completed research cycles, last entered loop stage, admitted data, optimizer
+  steps and accepted weights are separate. The loop records preparation,
+  research, memory work, data admission, waits and candidate trials. A checkpoint
+  no longer runs a synchronous full financial audit inside the controller.
+- Dashboard inference/readiness HTTP polling uses already-collected events;
+  browser requests have eight-second deadlines and one in-flight request per
+  endpoint. The action archive uses live-document delegated events and a retained
+  DOM container, preserving expanded records across updates and on errors.
+- Stored historical tests load independently of the aggregate report. A separate
+  bounded read checks the current paper state and its last event, exposing equity,
+  positions, quote/fee blockers and original timestamps. It is visibly distinct
+  from a full-history audit; it does not invent fill counts. Saved paper reports
+  retain their own period/time rather than pretending to be live or current-run
+  training evidence. Negative results remain negative.
+- `install-synta-remote.sh` prepares owner-only Tailscale HTTPS dashboard/chat and
+  existing SSH access, without port forwarding. It requires actual operator
+  login/HTTPS authorization and the same account on mobile/laptop. See
+  SYNTA_REMOTE_ACCESS.md for boundaries and shutdown. Windows RTX stays disabled;
+  the existing conservative Windows CPU worker is unchanged.
+
+The finite code tests do not prove a profitable strategy, continuous optimizer
+updates, a successful phone login, or runtime performance on the operator's GPUs.
+
 ## v63: independent live refresh and conservative Windows CPU
 
 - Live file snapshots refresh every five seconds without running `mission-report`

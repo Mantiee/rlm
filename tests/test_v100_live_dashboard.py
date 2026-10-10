@@ -169,7 +169,7 @@ class Element {
  replaceChildren(...items){this.children=items}
  setAttribute(k,v){this[k]=v}
 }
-const document={querySelectorAll:()=>[],getElementById:id=>nodes[id],createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t),createTextNode:t=>t};
+const document={addEventListener:()=>{},querySelectorAll:()=>[],getElementById:id=>nodes[id],createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t),createTextNode:t=>t};
 const location={reload(){throw Error('Unexpected reload')}};
 const setInterval=()=>{};
 const fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(sample)});
@@ -320,9 +320,9 @@ class Element extends Text {
  querySelector(s){return this.querySelectorAll(s)[0]||null}
  cloneNode(deep){const n=new Element(this.nodeName);n.id=this.id;n.dataset={...this.dataset};n.attrs={...this.attrs};n.style={...this.style};n.open=this.open;if(deep)n.append(...this.childNodes.map(c=>c.cloneNode(true)));return n}
 }
-const body=new Element('body');const document={body,getElementById:id=>body.querySelector('#'+id),querySelectorAll:s=>body.querySelectorAll(s),createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t),createTextNode:t=>new Text(t)};
+const listeners={};const body=new Element('body');const document={addEventListener:(name,callback)=>{listeners[name]=callback},body,getElementById:id=>body.querySelector('#'+id),querySelectorAll:s=>body.querySelectorAll(s),createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t),createTextNode:t=>new Text(t)};
 const window={scrollX:0,scrollY:400,scrollTo(x,y){this.scrollX=x;this.scrollY=y}};
-const location={reload(){throw Error('Unexpected reload')}};const setInterval=()=>{};const fetch=()=>new Promise(()=>{});
+const location={reload(){throw Error('Unexpected reload')}};const setInterval=()=>{};let fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve({})});
 """
     for identity in dashboard_layout.REQUIRED_IDS:
         program += f"{{const n=new Element('div');n.id={json.dumps(identity)};body.append(n)}}\n"
@@ -339,6 +339,10 @@ let readerTop=100;detail.isConnected=true;detail.getBoundingClientRect=()=>({top
 const originalQuery=document.querySelectorAll;document.querySelectorAll=s=>s==='details[data-key][open]'?[detail]:s==='[id], [data-scroll-key]'?[readingCard,pre]:originalQuery(s);
 stablePaint(()=>{readerTop=160;$('probe').textContent='updated while a new event was inserted above'});
 if(window.scrollY!==460||readingCard.scrollTop!==140||pre.scrollTop!==73)throw Error('Visible reading anchor moved');
+const timeline=new Element('section');timeline.id='timeline-panel';body.append(timeline);stablePaint(()=>archivePanel());
+const archive=document.getElementById('action-archive'),select=document.getElementById('archive-day');select.options=select.children;
+let archiveCalls=0;fetch=async()=>{archiveCalls++;return {ok:true,json:async()=>({days:['2026-10-10'],day:'2026-10-10',events:[{id:'proof',time:'now',kind:'tool-result',payload:{result:'actual'}}],next_cursor:200,archive_bytes:200})}};
+(async()=>{listeners.click({target:document.getElementById('archive-load')});await new Promise(resolve=>setTimeout(resolve,10));const rows=document.getElementById('archive-rows');if(rows.children.length!==1)throw Error('Archive click did not load live DOM');const opened=rows.children[0];opened.open=true;for(let i=0;i<3;i++)stablePaint(()=>archivePanel());if(document.getElementById('action-archive')!==archive||rows.children[0]!==opened||!opened.open)throw Error('Expanded archive reset during refresh');listeners.click({target:document.getElementById('archive-load')});await new Promise(resolve=>setTimeout(resolve,10));if(archiveCalls!==2||rows.children.length!==1)throw Error('Archive stopped responding or duplicated events')})().catch(error=>{console.error(error);process.exitCode=1});
 """
     result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
     assert result.returncode == 0, result.stderr

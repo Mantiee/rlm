@@ -30,15 +30,16 @@ class BackendNotReady(requests.ConnectionError):
 def connect(root: Path):
     path = root / "research/state/user-chat.sqlite3"
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=30)
+    db = sqlite3.connect(path, timeout=2)
     db.row_factory = sqlite3.Row
     db.execute("""CREATE TABLE IF NOT EXISTS requests(
         id TEXT PRIMARY KEY, created TEXT NOT NULL, message TEXT NOT NULL,
         state TEXT NOT NULL, response TEXT, attempts INTEGER NOT NULL DEFAULT 0,
         error TEXT, updated REAL NOT NULL DEFAULT 0)""")
-    db.execute("BEGIN IMMEDIATE")
     if "wait_started" not in {row[1] for row in db.execute("PRAGMA table_info(requests)")}:
-        db.execute("ALTER TABLE requests ADD COLUMN wait_started REAL NOT NULL DEFAULT 0")
+        db.execute("BEGIN IMMEDIATE")
+        if "wait_started" not in {row[1] for row in db.execute("PRAGMA table_info(requests)")}:
+            db.execute("ALTER TABLE requests ADD COLUMN wait_started REAL NOT NULL DEFAULT 0")
     db.commit()
     try:
         with db:
@@ -66,6 +67,104 @@ def submit(root: Path, message: str) -> str:
             (identity, datetime.now(UTC).isoformat(), message),
         )
     return identity
+
+
+def recent_requests(root: Path, limit: int = 20) -> list[dict]:
+    if type(limit) is not int or not 1 <= limit <= 32:
+        raise ValueError("Read 1-32 recent chat requests")
+    with connect(root) as db:
+        rows = db.execute("SELECT * FROM requests ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
+    return [
+        {**dict(row), "response": json.loads(row["response"]) if row["response"] else None}
+        for row in reversed(rows)
+    ]
+
+
+def direct_facts(root: Path, message: str) -> dict | None:
+    """Explicit read-only host questions never queue behind GPU work."""
+    from rlm.v100 import chat_facts, chat_progress
+
+    if message.strip() == "/status" or chat_progress.requested(message):
+        return chat_progress.respond(root, message)
+    if conversation_question(message) and chat_facts.requested(message):
+        return chat_facts.response(root, message)
+    return None
+
+
+def save_direct_reply(root: Path, message: str, response: dict) -> dict:
+    if not isinstance(message, str) or not message.strip() or len(message) > 8000:
+        raise ValueError("Chat needs 1-8000 characters")
+    if response.get("actions") or response.get("applied"):
+        raise ValueError("Direct replies must be read-only facts")
+    identity = uuid.uuid4().hex
+    with connect(root) as db:
+        db.execute(
+            "INSERT INTO requests(id,created,message,state,response,updated) VALUES(?,?,?,'completed',?,?)",
+            (
+                identity,
+                datetime.now(UTC).isoformat(),
+                message,
+                json.dumps(response, ensure_ascii=False),
+                time.time(),
+            ),
+        )
+    ActivityLog(root, "controller", "chat").write(
+        "decisions", "user-command-completed", {"id": identity, **response}
+    )
+    return inspect(root, identity)
+
+
+class LateReplies:
+    """Deliver eventual results while the operator is back at the input prompt."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.pending = set()
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+
+    def track(self, identity: str):
+        with self.lock:
+            self.pending.add(identity)
+
+    def poll(self):
+        with self.lock:
+            identities = list(self.pending)
+        for identity in identities:
+            result = inspect(self.root, identity)
+            if result["state"] == "queued":
+                continue
+            with self.lock:
+                self.pending.discard(identity)
+            print("\nLATE REPLY | REQUEST: " + identity, flush=True)
+            display_reply(result)
+            print("\nYOU > ", end="", flush=True)
+
+    def run(self):
+        while not self.stop.wait(2):
+            try:
+                self.poll()
+            except (OSError, sqlite3.Error) as error:
+                print("\nReply monitor delayed: " + str(error)[:200], flush=True)
+
+
+def display_reply(result: dict):
+    if result["state"] == "completed":
+        response = result["response"]
+        label = response.get("responder", {}).get("model", "controller")
+        print(f"\nSYNTA [{label}]\n\n{response['answer']}\n", flush=True)
+        print(
+            "ACTION RECEIPTS:",
+            json.dumps(response.get("applied", []), ensure_ascii=False),
+            flush=True,
+        )
+    else:
+        print(
+            waiting_label(result)
+            if result["state"] == "queued"
+            else "FAILED: " + str(result.get("error")),
+            flush=True,
+        )
 
 
 def inspect(root: Path, identity: str) -> dict:
@@ -245,7 +344,7 @@ def conversation_question(message: str) -> bool:
     value = message.casefold().strip()
     return bool(
         re.match(
-            r"(?:a\s+)?(?:co|czy|jak|dlaczego|czemu|gdzie|kiedy|what|why|where|when|ej zaczniesz)\b",
+            r"(?:a\s+)?(?:co|czego|czy|jak|dlaczego|czemu|gdzie|kiedy|what|why|where|when|ej zaczniesz)\b",
             value,
         )
     ) and not bool(
@@ -382,7 +481,11 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     ):
         receipt = income_policy.update(root, message)
         return {
-            "answer": "Research policy saved. Hypothetical capital only; no spending or real orders.",
+            "answer": (
+                "Zapisano badanie wzrostu hipotetycznego kapitału w paper. Zlecono porównanie strategii; wynik i koszty muszą być zmierzone."
+                if chat_facts.language(message) == "Polish"
+                else "Hypothetical-capital research saved. Strategy comparison commissioned; returns and costs must be measured."
+            ),
             "actions": [],
             "applied": [receipt],
             "responder": {"model": "controller-research-policy"},
@@ -424,7 +527,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     from rlm.v100 import chat_progress
 
     if chat_progress.requested(message) or chat_progress.continue_requested(message):
-        result = chat_progress.respond(root)
+        result = chat_progress.respond(root, message)
         if chat_progress.continue_requested(message):
             result["answer"] = (
                 "Kontynuacja dotychczasowego celu. Nie zmieniam planu na edycję dashboardu. "
@@ -961,7 +1064,15 @@ def waiting_label(result: dict) -> str:
 def chat(root: Path, message: str | None = None) -> None:
     from rlm.v100.chat_progress import requested as progress_requested
 
-    print("\nSYNTA MASTER CHAT\n/exit closes chat only. /status reads mission status.\n")
+    print(
+        "\nSYNTA MASTER CHAT\n/exit closes chat only. /status reads mission status. /results reads recent replies. /pending reads the queue.\n"
+    )
+    monitor = LateReplies(root)
+    if message is None:
+        for row in recent_requests(root, 32):
+            if row["state"] == "queued":
+                monitor.track(row["id"])
+        threading.Thread(target=monitor.run, daemon=True).start()
     while True:
         try:
             text = message if message is not None else input("\nYOU > ")
@@ -969,6 +1080,21 @@ def chat(root: Path, message: str | None = None) -> None:
             break
         if text.strip() == "/exit":
             break
+        if text.strip() in ("/results", "/pending"):
+            for row in recent_requests(root):
+                if text.strip() == "/results" or row["state"] == "queued":
+                    print("REQUEST: " + row["id"] + " | " + row["message"], flush=True)
+                    display_reply(row)
+            if message is not None:
+                break
+            continue
+        if text.strip() != "/status" and not progress_requested(text):
+            direct = direct_facts(root, text)
+            if direct is not None:
+                display_reply(save_direct_reply(root, text, direct))
+                if message is not None:
+                    break
+                continue
         if (
             text.strip() == "/status"
             or text.strip().startswith(("/goal ", "/cel "))
@@ -980,6 +1106,8 @@ def chat(root: Path, message: str | None = None) -> None:
                 break
             continue
         identity = submit(root, text)
+        with monitor.lock:
+            monitor.pending.discard(identity)
         print("\nREQUEST:", identity, flush=True)
         try:
             result = wait_reply(
@@ -988,25 +1116,11 @@ def chat(root: Path, message: str | None = None) -> None:
         except KeyboardInterrupt:
             print("\nChat closed. Request remains queued/processing; mission continues.")
             break
-        if result["state"] == "completed":
-            who = result["response"].get("responder", {})
-            label = who.get("model", "controller")
-            if who.get("delegated_while_master_busy"):
-                label += " - zastępca, V100 zajęty"
-            elif who.get("accepted_master_on_cpu"):
-                label += " - zaakceptowany master na CPU"
-            print(f"\nSYNTA [{label}]\n\n{result['response']['answer']}\n")
-            applied = result["response"]["applied"]
-            print(
-                "ACTION RECEIPTS:",
-                json.dumps(applied, ensure_ascii=False) if applied else "No control changes",
-            )
-        else:
-            print(
-                waiting_label(result)
-                if result["state"] == "queued"
-                else f"FAILED: {result.get('error')}"
-            )
-            print("Read result: v100-continual chat-status", identity)
+        display_reply(result)
+        if result["state"] == "queued":
+            monitor.track(identity)
+            print("Awaiting eventual reply; /results also retrieves saved answers.")
         if message is not None:
             break
+
+    monitor.stop.set()

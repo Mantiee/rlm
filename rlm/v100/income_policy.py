@@ -36,7 +36,7 @@ def setting(message: str) -> bool | None:
     ):
         return None
     if not re.search(
-        r"\b(?:zmien|ustaw|przelacz|wlacz|wylacz|switch|enable|disable|change)\b", value
+        r"\b(?:zmien|ustaw|przelacz|wlacz|wylacz|zaloz|zakladaj|masz zalozyc|switch|enable|disable|change|assume)\b", value
     ):
         return None
     if not re.search(r"kapital|capital|deposit|wplat|funded|zero.upfront", value):

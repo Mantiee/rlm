@@ -3,7 +3,7 @@ name = "rlms"
 authors = [
     {name = "Alex Zhang", email = "altzhang@mit.edu"},
 ]
-version = "0.1.3+v100.63"
+version = "0.1.3+v100.64"
 description = "Recursive Language Models."
 readme = "README.md"
 license = "MIT"

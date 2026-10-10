@@ -10,7 +10,7 @@ def language(message: str) -> str:
     return (
         "Polish"
         if re.search(
-            r"\b(?:co|czemu|jak|czy|kiedy|gdzie|zarab|zarabianiem|zrob|zmien|przetestuj|poszukaj|zbieraj|hej|czesc|odpowiedz)\w*\b",
+            r"\b(?:co|czego|czemu|jak|czy|kiedy|gdzie|uczy|naucz|zarab|zarob|znalaz|zrob|zmien|przetestuj|poszukaj|zbieraj|hej|czesc|odpowiedz)\w*\b",
             normalized(message),
         )
         else "English"
@@ -20,7 +20,7 @@ def language(message: str) -> str:
 def requested(message: str) -> bool:
     return bool(
         re.search(
-            r"zarab|income|profit|backtest|minus|paper|opportunit|candidate|brier|kandydat",
+            r"zarab|zarob|strateg|income|profit|backtest|minus|paper|opportunit|candidate|brier|kandydat",
             normalized(message),
         )
     )
@@ -35,9 +35,9 @@ def response(root: Path, message: str) -> dict:
     pl = language(message) == "Polish"
     paper = value.get("paper", {})
     lines = [
-        "Brak potwierdzonego rzeczywistego dochodu. Nie ma wiarygodnej daty pierwszego zarobku."
+        "Oceniam wyniki symulacji i strategii, przy założeniu hipotetycznego kapitału. Brak realnych zleceń nie wyjaśnia strat w paper."
         if pl
-        else "No actual income verified. There is no verified date of first income.",
+        else "I assess simulated capital growth and strategy results. No real orders does not explain paper losses.",
         ("Faza: " if pl else "Phase: ") + str(value.get("phase")),
         ("Wykonania paper: " if pl else "Paper fills: ")
         + str(paper.get("executed_fills", "unknown")),

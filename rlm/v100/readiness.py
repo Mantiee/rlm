@@ -73,7 +73,7 @@ def assess(root: Path, mission: dict, report: dict, layout: dict) -> dict:
     )
     from rlm.v100.live_status import recent_events
 
-    events = recent_events(root)
+    events = report["live_events"] if "live_events" in report else recent_events(root)
     add(
         "Streaming transport",
         "observed" if any(e.get("kind") == "inference-delta" for e in events) else "unknown",

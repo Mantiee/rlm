@@ -146,3 +146,24 @@ accepted weight updates have not been demonstrated in this workspace.
 Final v63 validation: 1134 passed, 65 skipped, one existing PEFT warning.
 Ruff, formatting, shell syntax and whitespace checks pass. PowerShell has
 static contract tests; this Linux workspace does not execute Windows APIs.
+
+## v64 final verification
+
+The terminal and authenticated mobile gateway return financial/status facts without
+waiting for GPU jobs. Eventual queued replies remain available and are delivered
+by the terminal monitor. Regression coverage includes the exact uploaded Polish
+question, assume-capital authorization, language-specific learning facts, queue
+persistence, CSRF/owner checks, bounded proxy routes and conflicting remote setup.
+
+Dashboard HTTP inference/readiness reads use cached events. Executed JavaScript
+tests click archive controls, expand a record, run repeated rendering updates and
+click again, checking DOM identity, disclosure state and deduplication. Full
+controller checkpoints no longer call the full report audit. Financial display
+tests read while a ledger writer holds a transaction, refuse checksum tampering,
+and show historical losses without inventing missing fill counts or timestamps.
+
+Final test run: **1159 passed, 65 skipped**, one existing PEFT warning; no
+deselections. Ruff, shell syntax and diff checks passed. The real operator phone
+login, Tailscale policy/HTTPS approval, Windows APIs and V100/CUDA performance
+remain deployment checks. No profitable strategy or accepted production weight
+update is inferred from passing these code tests.
