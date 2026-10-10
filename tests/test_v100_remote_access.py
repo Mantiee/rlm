@@ -2,7 +2,7 @@ import json
 import threading
 from contextlib import contextmanager
 from io import BytesIO
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import pytest
@@ -109,9 +109,115 @@ def test_dashboard_navigation_preserves_renderer_and_body_attributes(opening):
     assert remote_access.dashboard_navigation(result) == result
 
 
-def test_dashboard_without_body_cannot_silently_omit_navigation():
-    with pytest.raises(ValueError, match="no body element"):
-        remote_access.dashboard_navigation(b"<html><p>Missing body</p></html>")
+def test_dashboard_without_content_cannot_silently_omit_navigation():
+    with pytest.raises(ValueError, match="no body content"):
+        remote_access.dashboard_navigation(b"<html><head><title>Empty</title></head></html>")
+
+
+def test_real_dashboard_renderer_with_implicit_body_retains_exact_script_and_policy(
+    tmp_path, monkeypatch
+):
+    from rlm.v100.dashboard_layout import BASE_TEMPLATE, render_template, validate_template
+
+    source = render_template(BASE_TEMPLATE, validate_template(BASE_TEMPLATE)).encode()
+    assert b"<body" not in source
+    policy = "default-src 'none'; script-src 'sha256-existing'; style-src 'unsafe-inline'"
+
+    original_urlopen = remote_access.urlopen
+
+    def upstream(req, timeout):
+        if not req.full_url.startswith(CONFIG["dashboard"]):
+            return original_urlopen(req, timeout=timeout)
+        response = BytesIO(source)
+        response.headers = {"Content-Type": "text/html", "Content-Security-Policy": policy}
+        return response
+
+    monkeypatch.setattr(remote_access, "urlopen", upstream)
+    folder = tmp_path / "research/remote-access"
+    folder.mkdir(parents=True)
+    (folder / "config.json").write_text(json.dumps(CONFIG))
+    with gateway(tmp_path) as (server, base):
+        code, headers, body = request(base, "/")
+        verification = remote_access.verify_navigation(tmp_path, server.server_port)
+    assert code == 200
+    assert headers["Content-Security-Policy"] == policy
+    assert body.replace(remote_access.NAVIGATION, b"", 1) == source
+    assert body.index(remote_access.NAVIGATION) < body.index(b"<h1>")
+    assert body.index(b"</style>") < body.index(remote_access.NAVIGATION)
+    assert remote_access.dashboard_navigation(body) == body
+    assert verification["navigation_verified"] is True
+    assert verification["chat"] == CONFIG["origin"] + "/chat"
+
+
+def test_targeted_update_verification_refuses_missing_links(tmp_path, monkeypatch):
+    folder = tmp_path / "research/remote-access"
+    folder.mkdir(parents=True)
+    (folder / "config.json").write_text(json.dumps(CONFIG))
+
+    def missing_links(req, timeout):
+        response = BytesIO(b"<html><h1>Dashboard</h1></html>")
+        response.status = 200
+        return response
+
+    monkeypatch.setattr(remote_access, "urlopen", missing_links)
+    with pytest.raises(RuntimeError, match="verification failed"):
+        remote_access.verify_navigation(tmp_path)
+
+
+def test_targeted_update_waits_for_gateway_listener_without_hiding_http_errors(
+    tmp_path, monkeypatch
+):
+    folder = tmp_path / "research/remote-access"
+    folder.mkdir(parents=True)
+    (folder / "config.json").write_text(json.dumps(CONFIG))
+    calls = []
+
+    def starting(req, timeout):
+        calls.append(req.full_url)
+        if len(calls) == 1:
+            raise URLError(ConnectionRefusedError("Gateway starting"))
+        response = BytesIO(remote_access.NAVIGATION)
+        response.status = 200
+        return response
+
+    monkeypatch.setattr(remote_access, "urlopen", starting)
+    monkeypatch.setattr(remote_access.time, "sleep", lambda seconds: None)
+    assert remote_access.verify_navigation(tmp_path)["navigation_verified"] is True
+    assert calls == [
+        "http://127.0.0.1:8786/",
+        "http://127.0.0.1:8786/",
+        "http://127.0.0.1:8786/chat",
+    ]
+
+    def failed(req, timeout):
+        raise HTTPError(req.full_url, 404, "Navigation failed", {}, None)
+
+    monkeypatch.setattr(remote_access, "urlopen", failed)
+    with pytest.raises(HTTPError):
+        remote_access.verify_navigation(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "<head><title>Łódź</title><!-- <body> --></head>",
+        "<head>\r<title>Łódź\u2028test</title></head>",
+        '<style>body:before {content:"<body>"}</style>',
+        "<script>const fake = '<body><nav id=\"synta-remote-navigation\">';</script>",
+    ],
+)
+def test_implicit_body_skips_metadata_comments_and_fake_tags(head):
+    source = ("<html>" + head + "<h1>Dashboard</h1></html>").encode()
+    result = remote_access.dashboard_navigation(source)
+    assert (
+        result
+        == ("<html>" + head).encode() + remote_access.NAVIGATION + b"<h1>Dashboard</h1></html>"
+    )
+
+
+def test_existing_navigation_with_single_quoted_id_is_not_duplicated():
+    source = b"<html><nav id='synta-remote-navigation'><a href='/chat'>Chat</a></nav></html>"
+    assert remote_access.dashboard_navigation(source) == source
 
 
 def test_gateway_dashboard_injects_mobile_links_and_preserves_upstream_policy(

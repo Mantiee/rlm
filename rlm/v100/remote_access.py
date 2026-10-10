@@ -10,6 +10,8 @@ import re
 import secrets
 import sqlite3
 import threading
+import time
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -19,14 +21,89 @@ from urllib.request import Request, urlopen
 NAVIGATION = b"""<nav id="synta-remote-navigation" aria-label="Synta navigation" style="display:flex;flex-wrap:wrap;gap:12px;margin:0 0 20px;padding:8px;border:1px solid #536b88;border-radius:10px;background:#101725;font:16px system-ui"><a href="/" style="display:flex;align-items:center;min-height:44px;padding:0 16px;color:#9bcaff">Dashboard</a><a href="/chat" style="display:flex;align-items:center;min-height:44px;padding:0 16px;color:#9bcaff">Master chat</a></nav>"""
 
 
+class NavigationPosition(HTMLParser):
+    """Locate explicit or implicit body content without matching comments or scripts."""
+
+    def __init__(self, content: str):
+        super().__init__(convert_charrefs=False)
+        self.line_starts = [0] + [match.end() for match in re.finditer("\n", content)]
+        self.body_start: int | None = None
+        self.content_start: int | None = None
+        self.metadata: list[str] = []
+        self.present = False
+
+    def character_position(self) -> int:
+        line, column = self.getpos()
+        return self.line_starts[line - 1] + column
+
+    def handle_starttag(self, tag, attrs):
+        if self.metadata:
+            return
+        if tag == "body":
+            self.body_start = self.character_position() + len(self.get_starttag_text())
+        elif tag in ("style", "title", "script", "noscript", "template"):
+            self.metadata.append(tag)
+        elif tag not in ("html", "head", "meta", "link", "base") and self.content_start is None:
+            self.content_start = self.character_position()
+        if tag == "nav" and ("id", "synta-remote-navigation") in attrs:
+            self.present = True
+
+    def handle_endtag(self, tag):
+        if self.metadata and tag == self.metadata[-1]:
+            self.metadata.pop()
+
+    def handle_data(self, data):
+        if not self.metadata and data.strip() and self.content_start is None:
+            self.content_start = self.character_position()
+
+    def handle_entityref(self, name):
+        self.handle_data("&" + name + ";")
+
+    def handle_charref(self, name):
+        self.handle_data("&#" + name + ";")
+
+
 def dashboard_navigation(body: bytes) -> bytes:
-    """Add gateway-owned navigation without modifying the renderer or its script."""
-    if b'id="synta-remote-navigation"' in body:
+    """Add navigation to valid HTML with optional body tags; retain exact script bytes."""
+    content = body.decode("utf-8")
+    parser = NavigationPosition(content)
+    parser.feed(content)
+    parser.close()
+    if parser.present:
         return body
-    opening = re.search(rb"""<body\b(?:[^>"']|"[^"]*"|'[^']*')*>""", body, re.IGNORECASE)
-    if opening is None:
-        raise ValueError("Dashboard HTML has no body element for remote navigation")
-    return body[: opening.end()] + NAVIGATION + body[opening.end() :]
+    offset = parser.body_start if parser.body_start is not None else parser.content_start
+    if offset is None:
+        raise ValueError("Dashboard HTML has no body content for remote navigation")
+    byte_offset = len(content[:offset].encode("utf-8"))
+    return body[:byte_offset] + NAVIGATION + body[byte_offset:]
+
+
+def verify_navigation(root: Path, port: int = 8786) -> dict:
+    """Read both actual gateway pages before declaring a targeted update successful."""
+    config = validate_config(json.loads((root / "research/remote-access/config.json").read_text()))
+    for route in ("/", "/chat"):
+        req = Request(
+            f"http://127.0.0.1:{port}" + route,
+            headers={"Tailscale-User-Login": config["owner_login"]},
+        )
+        for attempt in range(20):
+            try:
+                response = urlopen(req, timeout=5)
+                break
+            except URLError as error:
+                if not isinstance(error.reason, ConnectionRefusedError) or attempt == 19:
+                    raise
+                time.sleep(0.25)
+        with response:
+            body = response.read(8 * 2**20 + 1)
+            if response.status != 200 or NAVIGATION not in body:
+                raise RuntimeError("Remote navigation verification failed for " + route)
+    return {
+        "navigation_verified": True,
+        "dashboard": config["origin"] + "/",
+        "chat": config["origin"] + "/chat",
+        "scope": "Both local authenticated gateway pages verified; phone routing requires a browser check",
+    }
 
 
 CHAT_SCRIPT = r"""
@@ -208,8 +285,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.json_reply({"error": "Dashboard unavailable", "upstream_status": error.code}, 503)
         except (URLError, TimeoutError, OSError, sqlite3.Error) as error:
             self.json_reply({"error": "Service delayed", "detail": str(error)[:200]}, 503)
-        except (ValueError, KeyError):
-            self.json_reply({"error": "Unavailable request or invalid data"}, 404)
+        except (ValueError, KeyError) as error:
+            self.json_reply(
+                {"error": "Unavailable request or invalid data", "detail": str(error)[:200]}, 404
+            )
 
     def do_POST(self):  # noqa: N802
         if not self.authorized():
