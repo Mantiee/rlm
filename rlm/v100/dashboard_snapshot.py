@@ -16,6 +16,9 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
         ("drones", "research/drones-status.json"),
         ("external_compute", "research/compute-status.json"),
         ("desktop", "research/desktop/status.json"),
+        ("income_opportunities", "research/income-opportunities/status.json"),
+        ("income_dispatch", "research/income-opportunities/dispatch.json"),
+        ("source_acquisition", "research/source-acquisition/status.json"),
     ):
         path = root / filename
         if path.exists():
@@ -31,6 +34,12 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
     try:
         goal = load_goal(root)
         if goal:
+            if result.get("income_opportunities", {}).get("goal_id") != goal["id"]:
+                result.pop("income_opportunities", None)
+            if result.get("income_dispatch", {}).get("goal_id") != goal["id"]:
+                result.pop("income_dispatch", None)
+            if result.get("source_acquisition", {}).get("goal_id") != goal["id"]:
+                result.pop("source_acquisition", None)
             result["plans"] = read(root)
             evidence = dict(result.get("mission_evidence", {}))
             evidence.setdefault("run", mission.get("run"))

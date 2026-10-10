@@ -602,6 +602,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
 
         client.research_owner = "A"
         client.research_tool_names = {
+            "income_opportunities",
+            "register_income_opportunity",
             "capabilities",
             "repair_dashboard",
             "compute_resources",

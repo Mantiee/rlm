@@ -115,7 +115,7 @@ def test_upgrade_plan_recovery_preserves_goal_and_versions(tmp_path):
     receipt = planning.realign_income_plans(tmp_path)
     assert receipt["changed"] and not receipt["long_term_goal_changed"]
     plan = planning.read(tmp_path)
-    assert plan["long"] == goal and "precommit" in plan["short"]["text"]
+    assert plan["long"] == goal and "register_income_opportunity" in plan["short"]["text"]
     assert any(
         "Fix dashboard CSS layout" in p.read_text()
         for p in (tmp_path / "research/plans").glob("*.json")

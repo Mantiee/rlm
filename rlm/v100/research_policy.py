@@ -62,5 +62,6 @@ def apply(client, root: Path):
     result.sampling_args["max_tokens"] = min(policy["max_tokens"], result.context_window // 4)
     if target == "helper":
         result.helper_batch_tokens = min(policy["batch_tokens"], client.helper_batch_tokens)
-        result.helper_duty_percent = min(30, client.helper_duty_percent)
+        # Pacing is operator-owned, not a model-selected research budget.
+        result.helper_duty_percent = client.helper_duty_percent
     return result

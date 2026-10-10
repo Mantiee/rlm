@@ -51,10 +51,12 @@ def status(root: Path) -> dict:
     progress = json.loads(learning.read_text()) if learning.exists() else {}
     state = json.loads(phase.read_text()) if phase.exists() else {"phase": "starting"}
     evaluation = Path(result["run"]) / f"baseline-{state.get('context_window')}.progress.json"
+    startup = Path(result["run"]) / f"server-{state.get('context_window')}.startup.json"
     return {
         **result,
         "running": running,
         "state": state,
+        "server_startup": json.loads(startup.read_text()) if startup.exists() else None,
         "evaluation": json.loads(evaluation.read_text()) if evaluation.exists() else None,
         "learning": {
             "completed_cycles": len(progress.get("cycles", [])),

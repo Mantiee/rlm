@@ -1,4 +1,4 @@
-# Synta: requirement and verification audit, v59
+# Synta: requirement and verification audit, v60
 
 This audits the visible conversation. "Implemented" means code exists and the
 listed checks pass, not that it has run successfully on the operator's computers.
@@ -70,3 +70,17 @@ See `SYNTA_RECOVERY.md`: same-run stale-report preservation, independent verifie
 goal reads, read-only goal-status SQLite, actual process/forecast receipts, archived
 UI-plan recovery and independent forward-only financial reference labels. These
 labels commission supervised task data, not model skill or profitable strategies.
+
+## v60 recovery additions
+
+Native startup now bypasses a second controller CLI and reports stages with a
+child-bound protected receipt. Research respects the operator's 50% pacing.
+Income candidates/tests have their own bounded, versioned evidence ledger and
+periodic RTX allocation, including non-market mechanisms. UI work cannot replace
+automatic financial plans. Public-source counters distinguish rereads and fresh
+content; event evidence is separate from a shared journal path.
+
+Validation includes a real child HTTP server standing in for the native binary,
+actual SQLite/host source archives with mocked network, concurrent fetch-counter
+updates, invalid/stale evidence rejection and explicit unknown payment. It does
+not test V100 CUDA, profitability, actual demand or the operator's Windows run.

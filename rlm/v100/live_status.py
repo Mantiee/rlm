@@ -2,6 +2,7 @@
 
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -60,6 +61,7 @@ def recent_events(root: Path, limit: int = 200) -> list[dict]:
                     continue
                 events.append(
                     {
+                        "id": row.get("id"),
                         "time": row.get("time"),
                         "actor": row.get("actor"),
                         "branch": row.get("branch"),
@@ -71,6 +73,23 @@ def recent_events(root: Path, limit: int = 200) -> list[dict]:
                         or public_summary(payload),
                         "category": row.get("category"),
                         "request_id": row.get("context", {}).get("request_id"),
+                        "goal_id": row.get("context", {}).get("operator_goal_id_at_event"),
+                        "step_id": row.get("context", {}).get("step_id"),
+                        "evidence_ref": {
+                            name: payload["result"][name]
+                            for name in (
+                                "id",
+                                "url",
+                                "sha256",
+                                "body_sha256",
+                                "fetched_at",
+                                "acquired",
+                                "retrieval",
+                                "path",
+                                "report",
+                            )
+                            if isinstance(payload.get("result"), dict) and name in payload["result"]
+                        },
                         "usage": {
                             key: value
                             for key, value in (payload.get("usage") or {}).items()
@@ -118,7 +137,14 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
             state=event.get("kind"),
             tool=event.get("tool"),
             source=event.get("source"),
+            event_id=event.get("id"),
+            goal_id=event.get("goal_id"),
         )
+        if event.get("kind") == "inference-start":
+            view["stream_output"], view["stream_reasoning"], view["returned_trace"] = "", "", ""
+        if event.get("evidence_ref"):
+            view["evidence_ref"] = event["evidence_ref"]
+            view["evidence_at"] = event.get("time")
         if event.get("task"):
             view["task"] = event["task"]
         if event.get("device"):
@@ -147,6 +173,13 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
         elif event.get("summary"):
             view["result"] = event["summary"]
     result = list(views.values())
+    for view in result:
+        try:
+            view["historical"] = (
+                time.time() - datetime.fromisoformat(view["updated"]).timestamp() > 600
+            )
+        except (KeyError, TypeError, ValueError):
+            view["historical"] = False
     for job in jobs[:16]:
         result.append(
             {
@@ -159,6 +192,10 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
                 "result": public_summary(job.get("result") or {}),
                 "declaration": "",
                 "source": "research/state/drones.sqlite3",
+                "event_id": job["id"],
+                "historical": job["state"] in ("completed", "failed", "cancelled")
+                and isinstance(job.get("updated"), (int, float))
+                and time.time() - job["updated"] > 600,
             }
         )
     return result

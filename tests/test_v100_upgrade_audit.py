@@ -67,7 +67,7 @@ def test_adaptive_research_does_not_change_fixed_clients(tmp_path):
     assert (
         selected.enable_thinking
         and selected.helper_batch_tokens == 16
-        and selected.helper_duty_percent == 30
+        and selected.helper_duty_percent == 65
     )
     with pytest.raises(ValueError):
         research_policy.choose(tmp_path, "helper", True, 4096, 64)

@@ -36,7 +36,9 @@ def receipt_path(profile: dict, root: Path) -> Path:
     return root / "research/state" / f"server-{port}.json"
 
 
-def write_receipt(profile: dict, root: Path) -> None:
+def write_receipt(profile: dict, root: Path, pid: int | None = None) -> None:
+    pid = os.getpid() if pid is None else pid
+    identity = process_identity(pid)
     files = {}
     for name in ("binary", "model", "draft_model"):
         if profile["server"][name]:
@@ -47,13 +49,21 @@ def write_receipt(profile: dict, root: Path) -> None:
         if path.is_file():
             stat = path.stat()
             files[str(path)] = [stat.st_size, stat.st_mtime_ns, stat.st_ino]
+    model_hash = file_hash(Path(profile["server"]["model"]))
+    native_hash = execution_hash(profile)
+    if process_identity(pid) != identity:
+        raise ProcessLookupError("Native process changed during artifact verification")
+    for raw, expected in files.items():
+        stat = Path(raw).stat()
+        if [stat.st_size, stat.st_mtime_ns, stat.st_ino] != expected:
+            raise ValueError("Server artifact changed during verification")
     atomic_json(
         receipt_path(profile, root),
         {
-            "pid": os.getpid(),
-            "process_start": process_identity(os.getpid()),
-            "model_sha256": file_hash(Path(profile["server"]["model"])),
-            "execution_sha256": execution_hash(profile),
+            "pid": pid,
+            "process_start": identity,
+            "model_sha256": model_hash,
+            "execution_sha256": native_hash,
             "files": files,
         },
     )

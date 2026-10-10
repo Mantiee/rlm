@@ -47,7 +47,7 @@ PY
 uv --no-config pip install --python "$PY" --no-deps --reinstall-package rlms \
   "rlms @ git+https://github.com/Mantiee/rlm.git@$REV"
 uv --no-config pip check --python "$PY"
-uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10059.txt"
+uv --no-config pip freeze --python "$PY" > "$AI_V100_ROOT/research/requirements.continual.v10060.txt"
 
 "$PY" <<'PY'
 import json, os
@@ -92,6 +92,11 @@ preferences['goal_learning'] = {
     'instructions': 'Read get_plan and follow user directions or discover goal-relevant hypotheses yourself in any domain. Use observe_goal_source to archive fresh signals and a numeric public outcome, then predict_goal_pattern to precommit probability, threshold and horizon. The resident CPU/network observer checks future outcomes; both successes and failures become host-verified training candidates. Goal-linked development gates require sufficient independent validation groups. A goal score is not causal or profit proof.',
     'evidence': 'research/goal-learning/ledger.sqlite3 and mission_evidence.goal_learning',
     'scope': 'The operator alone authorizes long-term goal changes; no fixed asset, source or pattern list.'
+}
+preferences['income_research'] = {
+    'instructions': 'For income goals, compare concrete zero-deposit mechanisms across domains, including outside markets. Use income_opportunities and register_income_opportunity after archiving primary terms and demand evidence. Include conservative net estimates, labor, eligibility, time to first income, blockers and a falsifiable next test. Prepare useful deliverables within authorized tools. Estimates and successful processes are not actual income. UI maintenance is a separate task, not a financial plan.',
+    'evidence': 'research/income-opportunities/status.json, research/source-acquisition/status.json and tool receipts',
+    'scope': 'No real orders, sales, outreach, accounts, spending or automatic payment claims.'
 }
 atomic_json(preferences_path, preferences)
 print('CHAT RESOURCE RECOVERY:', json.dumps(repair_completed(root), ensure_ascii=False), flush=True)

@@ -32,10 +32,7 @@ def update(root: Path, horizon: str, text: str, actor: str) -> dict:
         and horizon != "long"
         and any(word in goal.get("text", "").lower() for word in ("income", "dochód", "zarab"))
     ):
-        if any(word in text.lower() for word in ("dashboard", "html", "css", "layout")) and not any(
-            word in text.lower()
-            for word in ("forecast", "outcome", "income", "source", "prognoz", "dochód")
-        ):
+        if any(word in text.lower() for word in ("dashboard", "html", "css", "layout")):
             raise ValueError(
                 "UI-only plans cannot replace financial goal work; use a separate dashboard task"
             )
@@ -83,11 +80,17 @@ def realign_income_plans(root: Path) -> dict:
     changed = []
     for horizon in ("short", "mid"):
         text = current.get(horizon, {}).get("text", "").lower()
-        if any(word in text for word in ("dashboard", "css", "html", "layout")):
+        if (
+            not text
+            or any(word in text for word in ("dashboard", "css", "html", "layout"))
+            or text.startswith(
+                "evaluate source-disjoint goal outcomes and lawful zero-deposit opportunities"
+            )
+        ):
             replacement = (
-                "Collect host-timestamped numeric evidence; precommit diverse falsifiable goal forecasts; resolve actual future outcomes including failures. Inspect tool receipts and blockers. Dashboard maintenance is secondary."
+                "Find diverse lawful zero-deposit income opportunities, including outside markets. Archive primary evidence and register_income_opportunity with conservative net-income, time-to-first-income, labor, eligibility and falsification estimates. Prepare one useful test or deliverable for the strongest feasible candidate. No spending, accounts, outreach or real orders."
                 if horizon == "short"
-                else "Evaluate source-disjoint goal outcomes and lawful zero-deposit opportunities. Dispatch verified CPU trials when enough labels exist; compare V100 candidates against goal, retention and independent gates. Report measured progress; no real orders or income guarantees."
+                else "Compare evidence-backed opportunities across domains by repeatable net income, time, uncertainty and operational feasibility. Disprove weak candidates and diversify tests. Collect independent future outcomes for task ML; use owned CPU trials and V100 candidates only when labels and gates admit them. Distinguish hypotheses, prepared deliverables, validated outcomes and actual income."
             )
             changed.append(update(root, horizon, replacement, "A"))
     return {

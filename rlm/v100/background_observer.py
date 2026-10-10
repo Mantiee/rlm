@@ -12,7 +12,10 @@ from rlm.v100.common import atomic_json
 def tick(root: Path) -> None:
     from rlm.v100.goal_compute import tick as compute_tick
     from rlm.v100.goal_learning import tick as goal_tick
+    from rlm.v100.income_opportunities import commission
     from rlm.v100.spot_bootstrap import prepare
+
+    commission(root)
 
     try:
         goal_tick(root)

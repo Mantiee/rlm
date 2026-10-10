@@ -77,11 +77,22 @@ def guard_cpu_process(
 def managed_server(
     profile_path: Path, root: Path, log_path: Path, cancel: threading.Event | None = None
 ):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    startup_path = log_path.with_suffix(".startup.json")
+
+    def startup(stage: str, **details) -> None:
+        value = {"stage": stage, "updated": time.time(), "log": str(log_path), **details}
+        atomic_json(startup_path, value)
+        print("Server startup:", json.dumps(value), flush=True)
+
+    startup("validating-profile")
     profile = load_profile(profile_path, root)
     from rlm.v100.remote_helper import remote_profile
-    from rlm.v100.scratch_master import is_scratch, verify
 
-    if is_scratch(profile):
+    if profile["runtime"].get("backend") == "isolated-architecture":
+        from rlm.v100.scratch_master import verify
+
+        startup("verifying-isolated-architecture")
         verify(profile)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a") as log:
@@ -95,6 +106,7 @@ def managed_server(
         return
 
     if remote_profile(profile):
+        startup("checking-remote-backend", endpoint=profile["runtime"]["base_url"])
         client = helper_client(profile, root)
         from rlm.v100.remote_helper import OllamaResearchClient
 
@@ -125,16 +137,31 @@ def managed_server(
     }
     if cpu:
         environment["CUDA_VISIBLE_DEVICES"] = ""
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if profile["server"].get("library_path"):
+        environment["LD_LIBRARY_PATH"] = (
+            profile["server"]["library_path"] + ":" + environment.get("LD_LIBRARY_PATH", "")
+        )
+    from rlm.v100.cli import server_command
+    from rlm.v100.serving import write_receipt
+
+    argv = server_command(profile)
+    for key in ("binary", "model", "draft_model"):
+        value = profile["server"][key]
+        if value and not Path(value).is_file():
+            raise FileNotFoundError(value)
+    startup("launching-native-process")
     with log_path.open("a") as log:
+        log.write("Starting native server directly: " + json.dumps(argv) + "\n")
+        log.flush()
         process = subprocess.Popen(
-            command(root, profile_path, "serve"),
+            argv,
             stdout=log,
             stderr=subprocess.STDOUT,
             env=environment,
         )
         stop_guard = threading.Event()
         guard = None
+        ready = False
         if cpu and profile.get("resources", {}).get("cpu_guard"):
             guard = threading.Thread(
                 target=guard_cpu_process,
@@ -143,9 +170,21 @@ def managed_server(
             )
             guard.start()
         try:
+            deadline = time.monotonic() + min(180, profile["runtime"]["max_timeout"])
+            startup("verifying-artifacts", pid=process.pid)
+            # The native child loads CUDA concurrently with verification. No second
+            # controller CLI import, registry initialization or Python launcher.
+            if process.poll() is not None:
+                raise RuntimeError(f"Native server exited before verification; inspect {log_path}")
+            try:
+                write_receipt(profile, root, pid=process.pid)
+            except ProcessLookupError as error:
+                raise RuntimeError(
+                    f"Native server exited during verification; inspect {log_path}"
+                ) from error
+            startup("waiting-for-health", pid=process.pid)
             if cpu:
                 os.setpriority(os.PRIO_PROCESS, process.pid, 10)
-            deadline = time.monotonic() + profile["runtime"]["max_timeout"]
             with requests.Session() as session:
                 session.trust_env = False
                 while True:
@@ -165,7 +204,12 @@ def managed_server(
                     if response.status_code == 200:
                         break
                     time.sleep(0.25)
+            startup("ready", pid=process.pid)
+            ready = True
             yield profile
+        except Exception as error:
+            startup("failed", pid=process.pid, error=str(error)[:500])
+            raise
         finally:
             stop_guard.set()
             if guard is not None:
@@ -177,6 +221,8 @@ def managed_server(
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+            if ready:
+                startup("stopped", pid=process.pid)
 
 
 @contextmanager

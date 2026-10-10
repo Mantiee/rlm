@@ -99,6 +99,9 @@ def observe(root: Path, url: str, field: str = "") -> dict:
         "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
         "excerpt": excerpt,
     }
+    from rlm.v100.source_receipts import record
+
+    retrieval = record(root, resolved, row["body_sha256"])
     identity = digest(row)
     archive = root / "research/goal-learning/sources" / (identity + ".json")
     atomic_json(archive, {"observation": row, "body": body})
@@ -110,6 +113,7 @@ def observe(root: Path, url: str, field: str = "") -> dict:
     return {
         "id": identity,
         **row,
+        "retrieval": retrieval,
         "scope": "Host retrieval time, not proven original publication time",
     }
 

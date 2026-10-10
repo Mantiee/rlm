@@ -63,6 +63,16 @@ TOOLS = [
         {"html": {"type": "string", "maxLength": 11000}},
     ),
     tool_schema(
+        "income_opportunities",
+        "Read evidence-backed income hypotheses, estimates and blockers across all domains. These are not verified revenue or training labels.",
+        {},
+    ),
+    tool_schema(
+        "register_income_opportunity",
+        "Record a concrete lawful zero-upfront-spend income hypothesis after observe_goal_source. specification requires title, domain, mechanism, eligibility, blockers, next_test, failure_condition (nonempty strings); gross_pln_low, gross_pln_high, total_cost_pln, labor_hours (>0), first_income_days, upfront_spend_pln (=0) (finite nonnegative estimates); evidence (1-8 fresh host observation IDs). Include all labor/costs, actual demand and falsification. Estimates are before personal tax and never actual income. No account, outreach or sale is executed.",
+        {"specification": {"type": "object"}},
+    ),
+    tool_schema(
         "goal_learning_status",
         "Read precommitted goal-linked forecasts and observed scores; scores are not causal/profit proof.",
         {},
@@ -551,6 +561,15 @@ class ResearchTools:
             from rlm.v100.goal_learning import status
 
             return status(self.root)
+        if name == "income_opportunities" and not arguments:
+            from rlm.v100.income_opportunities import status
+
+            value = status(self.root)
+            return {**value, "total": len(value["candidates"]), "candidates": value["candidates"][:8]}
+        if name == "register_income_opportunity" and set(arguments) == {"specification"}:
+            from rlm.v100.income_opportunities import register
+
+            return register(self.root, self.branch, arguments["specification"])
         if name == "observe_goal_source" and set(arguments) == {"url", "field"}:
             from rlm.v100.goal_learning import observe
 
@@ -975,6 +994,9 @@ class ResearchTools:
                 "status": "source text, not independently verified truth",
                 "fetched_at": datetime.now(UTC).isoformat(),
             }
+            from rlm.v100.source_receipts import record
+
+            source["retrieval"] = record(self.root, url, hashlib.sha256(body.encode()).hexdigest())
             self.sources.append(source)
             from rlm.v100.mission_memory import archive
 

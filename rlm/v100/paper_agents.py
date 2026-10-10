@@ -146,7 +146,7 @@ def paper_round(
                 selected_branch,
                 {
                     "role": "researcher",
-                    "brief": "Research the actual income goal using primary public pages and preserved memory. Choose a useful market or zero-deposit income experiment. Identify missing fee/feed evidence before any paper trade. Propose a useful falsifiable self-upgrade; do not certify profit.",
+                    "brief": "Read income_opportunities. Seek a concrete zero-deposit income mechanism across domains, including outside markets. Archive primary terms with observe_goal_source, then register_income_opportunity with demand, net costs, labor, eligibility, first-income delay and falsification. Prepare a useful test or deliverable. No UI, placeholder scripts, outreach, accounts, spending or profit claims.",
                 },
                 [
                     {
@@ -172,10 +172,10 @@ def paper_round(
             ]
             if income_research:
                 jobs[0]["brief"] = (
-                    "Read get_plan. Seek useful lawful net-income or self-upgrade hypotheses in any domain. "
-                    "Compare time, costs, resources and reproducible evidence. Use chronological backtests "
-                    "or observe_goal_source and predict_goal_pattern for future outcomes. Failed forecasts count. "
-                    "Delegate useful source/CPU work. No real sale, spending or guaranteed-profit claim."
+                    "Read get_plan and income_opportunities. Find a different lawful zero-deposit mechanism, "
+                    "including outside markets. Archive primary terms with observe_goal_source; register_income_opportunity "
+                    "with net estimates, labor, eligibility, demand and a falsifiable test. Prepare a useful deliverable "
+                    "or precommit a future forecast. No UI, sales, accounts, spending or profit claims."
                 )
                 jobs[1]["brief"] = (
                     "Critique the income or self-upgrade hypothesis: legality, costs, time to "
@@ -205,6 +205,8 @@ def paper_round(
                 available = getattr(worker, "research_tool_names", None)
                 worker.research_tool_names = {
                     "goal_learning_status",
+                    "income_opportunities",
+                    "register_income_opportunity",
                     "observe_goal_source",
                     "predict_goal_pattern",
                     "propose_foundation_trial",

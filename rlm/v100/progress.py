@@ -133,6 +133,9 @@ def report(root: Path) -> dict:
         ("external_compute", root / "research/compute-status.json"),
         ("desktop", root / "research/desktop/status.json"),
         ("supervisor", root / "research/supervisor/status.json"),
+        ("income_opportunities", root / "research/income-opportunities/status.json"),
+        ("income_dispatch", root / "research/income-opportunities/dispatch.json"),
+        ("source_acquisition", root / "research/source-acquisition/status.json"),
         ("official_benchmark", root / "research/public-benchmarks/progress.json"),
     ):
         value[name] = json.loads(path.read_text()) if path.exists() else {"state": "not started"}
