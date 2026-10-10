@@ -7,6 +7,7 @@ param(
     [int]$BatchTokens = 16,
     [ValidateRange(1,65)]
     [int]$ActiveTimePercent = 30,
+    [string]$ResourceProxyPython,
     [switch]$DebugLogs,
     [switch]$Stop
 )
@@ -58,6 +59,14 @@ function Stop-HelperProcesses([string]$RuntimePath) {
     }
 }
 if ($Stop) {
+    $proxyOwner = Join-Path $Root 'resource-proxy-owner.json'
+    if (Test-Path -LiteralPath $proxyOwner) {
+        $owner = Get-Content -Raw -LiteralPath $proxyOwner | ConvertFrom-Json
+        $candidate = Get-Process -Id $owner.pid -ErrorAction SilentlyContinue
+        if ($candidate -and $candidate.Path -eq $owner.path -and $candidate.StartTime.ToUniversalTime().ToString('o') -eq $owner.started) {
+            Stop-Process -Id $candidate.Id -Force
+        }
+    }
     if (Test-Path $GuardianPath) {
         $Guardian = Get-Content -Raw $GuardianPath | ConvertFrom-Json
         $GuardProcess = Get-Process -Id $Guardian.pid -ErrorAction SilentlyContinue
@@ -186,6 +195,8 @@ if ($First -lt 4294967295) { $Ranges += "$(Number-Ip $First)-255.255.255.255" }
 $Worker = $null
 $CreatedAllowRule = $false
 $CreatedBlockRule = $false
+$CreatedProxyRule = $false
+$ProxyRule = "v100-helper-proxy-$Port-from-$DebianIp"
 Remove-Item -LiteralPath $OwnerPath -ErrorAction SilentlyContinue
 try {
 if (-not (Confirm-HelperRule $BlockRule 'Block' $Ranges '')) {
@@ -200,11 +211,27 @@ New-NetFirewallRule -Name $Rule -DisplayName $Rule -Direction Inbound -Action Al
 $CreatedAllowRule = $true
 }
 
+if ($ResourceProxyPython -and -not (Confirm-HelperRule $ProxyRule 'Allow' @($DebianIp) $ResourceProxyPython)) {
+    New-NetFirewallRule -Name $ProxyRule -DisplayName $ProxyRule -Direction Inbound -Action Allow `
+        -Protocol TCP -LocalPort $Port -LocalAddress $WindowsIp -RemoteAddress $DebianIp `
+        -Program $ResourceProxyPython -Profile Any | Out-Null
+    $CreatedProxyRule = $true
+}
+
 $WorkerScript = Join-Path $Root 'serve-worker.ps1'
 @'
-param([string]$OllamaPath, [string]$HelperRoot)
+param([string]$OllamaPath, [string]$HelperRoot, [string]$ProxyPython, [string]$ProxyBind, [string]$ProxyOwner, [int]$ProxyPort)
 $ErrorActionPreference = 'Stop'
 $prefix = [IO.Path]::GetFullPath((Split-Path $OllamaPath)).TrimEnd('\') + '\'
+$proxy = $null
+if ($ProxyPython) {
+    $source = Join-Path $HelperRoot 'windows_resource_proxy.py'
+    $arguments = "-u `"$source`" --root `"$HelperRoot`" --bind $ProxyBind --owner $ProxyOwner --port $ProxyPort --upstream-port $($ProxyPort + 1)"
+    $proxy = Start-Process -FilePath $ProxyPython -ArgumentList $arguments -PassThru -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $HelperRoot 'logs/resource-proxy.stdout.log') `
+        -RedirectStandardError (Join-Path $HelperRoot 'logs/resource-proxy.stderr.log')
+    @{pid=$proxy.Id;started=$proxy.StartTime.ToUniversalTime().ToString('o');path=$ProxyPython} | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $HelperRoot 'resource-proxy-owner.json')
+}
 $restarting = $false
 while ($true) {
     while (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) {
@@ -221,7 +248,7 @@ while ($true) {
     ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $HelperRoot 'server-owner.json')
     if ($restarting) {
         Start-Sleep -Seconds 5
-        $warm = @{model='qwen3.5:9b-q8_0';stream=$false;think=$false;keep_alive=-1;messages=@(@{role='user';content='Return only OK.'});options=@{num_ctx=[int]$env:OLLAMA_CONTEXT_LENGTH;num_batch=[int]$env:HELPER_BATCH_TOKENS;num_predict=8;num_thread=4}} | ConvertTo-Json -Depth 8
+        $warm = @{model='qwen3.5:9b-q8_0';stream=$false;think=$false;keep_alive=-1;messages=@(@{role='user';content='Return only OK.'});options=@{num_ctx=[int]$env:OLLAMA_CONTEXT_LENGTH;num_batch=[int]$env:HELPER_BATCH_TOKENS;num_predict=8;num_thread=2}} | ConvertTo-Json -Depth 8
         $warmJob = Start-Job -ArgumentList "http://$env:OLLAMA_HOST/api/chat",$warm -ScriptBlock {
             param($url,$body)
             Invoke-RestMethod $url -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120
@@ -233,6 +260,7 @@ while ($true) {
     }
     @{time=(Get-Date).ToUniversalTime().ToString('o');phase='serving';pid=$server.Id} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
     while (-not $server.HasExited) {
+        if ($proxy -and $proxy.HasExited) { Stop-Process -Id $server.Id -Force; throw 'Resource proxy exited; GPU stopped. See resource-proxy.stderr.log.' }
         if (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) {
             Get-CimInstance Win32_Process -Filter "Name='ollama.exe' OR Name='llama-server.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
             $restarting = $true
@@ -242,15 +270,20 @@ while ($true) {
     }
     if (-not $restarting) { break }
 }
+if ($proxy -and -not $proxy.HasExited) { Stop-Process -Id $proxy.Id -Force }
 '@ | Set-Content -Encoding UTF8 $WorkerScript
 
 $Info = New-Object Diagnostics.ProcessStartInfo
 $Info.FileName = Join-Path $PSHOME 'powershell.exe'
 $Info.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$WorkerScript`" -OllamaPath `"$Ollama`" -HelperRoot `"$Root`""
+if ($ResourceProxyPython) {
+    if (-not (Test-Path -LiteralPath $ResourceProxyPython) -or -not (Test-Path -LiteralPath (Join-Path $Root 'windows_resource_proxy.py'))) { throw 'Install adaptive CPU runtime/proxy before enabling GPU.' }
+    $Info.Arguments += " -ProxyPython `"$ResourceProxyPython`" -ProxyBind $WindowsIp -ProxyOwner $DebianIp -ProxyPort $Port"
+}
 $Info.UseShellExecute = $false
 $Info.CreateNoWindow = $true
 $Settings = @{
-    OLLAMA_HOST = "${WindowsIp}:$Port"
+    OLLAMA_HOST = $(if ($ResourceProxyPython) { "127.0.0.1:$($Port + 1)" } else { "${WindowsIp}:$Port" })
     OLLAMA_MODELS = (Join-Path $Root 'models')
     OLLAMA_CONTEXT_LENGTH = "$Context"
     OLLAMA_NUM_PARALLEL = '1'
@@ -283,7 +316,7 @@ $Ready = $false
     if (-not $Ready) { throw 'Helper startup timed out.' }
     Write-Host "Downloading $Model (about 10 GB) into $Root\models ..."
     # The isolated CLI prints the normal download progress bar. Its environment
-    # points at 11435, not the existing desktop Ollama instance.
+    # points at the isolated backend (11436 behind adaptive proxy), not desktop Ollama.
     $PullInfo = New-Object Diagnostics.ProcessStartInfo
     $PullInfo.FileName = $Ollama
     $PullInfo.Arguments = "pull $Model"
@@ -292,6 +325,17 @@ $Ready = $false
     $PullProcess = [Diagnostics.Process]::Start($PullInfo)
     $PullProcess.WaitForExit()
     if ($PullProcess.ExitCode -ne 0) { throw 'Model download did not complete.' }
+    function Wait-HelperAdmission {
+        if (-not $ResourceProxyPython) { return }
+        $deadline = (Get-Date).AddMinutes(3)
+        while ((Get-Date) -lt $deadline) {
+            $status = Invoke-RestMethod "$Origin/api/synta-resources" -TimeoutSec 3
+            if ($status.ready -and $status.cooldown_seconds -le 0) { return }
+            Start-Sleep -Seconds 2
+        }
+        throw "Adaptive GPU admission is paused: $($status.reason). See resource-status.json."
+    }
+    Wait-HelperAdmission
     $schema = @{ type = 'object'; properties = @{ result = @{ type = 'integer' } }; required = @('result'); additionalProperties = $false }
     # Infrastructure health is separate from the earlier arithmetic quality case.
     # A model cannot qualify financial findings by merely agreeing with itself.
@@ -326,6 +370,7 @@ $Ready = $false
         options = @{ num_ctx = $Context; num_predict = 1024; num_batch = $BatchTokens; num_thread = 4; temperature = 0; seed = 42 }
         messages = @(@{ role = 'user'; content = 'What is 17 * (6013 - 5347) - 319 - 367 - 113 - 79? Return JSON with result.' })
     } | ConvertTo-Json -Depth 10
+    Wait-HelperAdmission
     $MathResponse = Invoke-RestMethod "$Origin/api/chat" -Method Post -ContentType 'application/json' -Body $MathRequest -TimeoutSec 600
     $MathPassed = $false
     $MathError = $null
@@ -378,6 +423,13 @@ $Ready = $false
     if ($Worker -and -not $Worker.HasExited) { $Worker.Kill() }
     try { Stop-HelperProcesses $RuntimeRoot }
     catch { Write-Warning "Helper cleanup failed: $($_.Exception.Message)" }
+    $proxyOwner = Join-Path $Root 'resource-proxy-owner.json'
+    if (Test-Path -LiteralPath $proxyOwner) {
+        $owner = Get-Content -Raw -LiteralPath $proxyOwner | ConvertFrom-Json
+        $candidate = Get-Process -Id $owner.pid -ErrorAction SilentlyContinue
+        if ($candidate -and $candidate.Path -eq $owner.path -and $candidate.StartTime.ToUniversalTime().ToString('o') -eq $owner.started) { Stop-Process -Id $candidate.Id -Force }
+    }
+    if ($CreatedProxyRule) { Remove-NetFirewallRule -Name $ProxyRule -ErrorAction SilentlyContinue }
     if ($CreatedAllowRule) { Remove-NetFirewallRule -Name $Rule -ErrorAction SilentlyContinue }
     if ($CreatedBlockRule) { Remove-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue }
     throw $LaunchError

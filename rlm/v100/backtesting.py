@@ -101,10 +101,15 @@ def simulate(
     fee_bps: float,
     slippage_bps: float,
     events: list[float] | None = None,
+    *,
+    capture_executions: bool = False,
 ) -> dict:
     cash, units, peak, drawdown, fills = 1.0, 0.0, 1.0, 0.0, 0
     fee, slip = fee_bps / 10000, slippage_bps / 10000
     trace = []
+    executions = []
+    total_costs = 0.0
+    entry_capital = None
     for index in range(start, stop):
         # Only a completed PREVIOUS bar can choose the next opening fill.
         previous = index - 1
@@ -115,12 +120,36 @@ def simulate(
             window = bars[previous - lookback]["available_at"]
             active = active and any(window <= at <= known_at for at in events)
         price = bars[index]["open"]
+        action = None
+        before_cash, before_units = cash, units
         if active and not units:
+            action = "buy"
             units, cash = cash / (price * (1 + slip) * (1 + fee)), 0.0
             fills += 1
         elif not active and units:
+            action = "sell"
             cash, units = units * price * (1 - slip) * (1 - fee), 0.0
             fills += 1
+        if capture_executions and action:
+            if action == "buy":
+                entry_capital = before_cash
+            quantity = units if action == "buy" else before_units
+            execution_price = price * (1 + slip if action == "buy" else 1 - slip)
+            costs = quantity * execution_price * fee + quantity * price * slip
+            total_costs += costs
+            executions.append(
+                {
+                    "time": bars[index]["open_time"],
+                    "action": action,
+                    "price": execution_price,
+                    "quantity": quantity,
+                    "costs": costs,
+                    "total_costs": total_costs,
+                    "cash_before": before_cash,
+                    "cash_after": cash,
+                    "net_pnl": cash - entry_capital if action == "sell" else None,
+                }
+            )
         equity = cash + units * bars[index]["close"] * (1 - slip) * (1 - fee)
         peak, drawdown = max(peak, equity), max(drawdown, 1 - equity / max(peak, equity))
         trace.append(
@@ -131,9 +160,26 @@ def simulate(
             }
         )
     if units:
+        if capture_executions:
+            last = bars[stop - 1]
+            costs = units * last["close"] * ((1 - slip) * fee + slip)
+            total_costs += costs
+            executions.append(
+                {
+                    "time": last["available_at"],
+                    "action": "sell",
+                    "price": last["close"] * (1 - slip),
+                    "quantity": units,
+                    "costs": costs,
+                    "total_costs": total_costs,
+                    "reason": "sample-end liquidation",
+                    "net_pnl": units * last["close"] * (1 - slip) * (1 - fee) - entry_capital,
+                }
+            )
         cash = units * bars[stop - 1]["close"] * (1 - slip) * (1 - fee)
         fills += 1  # Forced sample-end liquidation, explicitly reported.
     return {
+        **({"executions": executions, "total_costs": total_costs} if capture_executions else {}),
         "net_return": cash - 1,
         "max_sampled_drawdown": drawdown,
         "fills": fills,

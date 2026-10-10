@@ -30,7 +30,8 @@ def test_combined_startup_includes_cpu_and_separate_visible_monitor():
     monitor = source.split("$monitorAction =", 1)[1].split("$monitorPrincipal =", 1)[0]
     assert "-WindowStyle Hidden" not in monitor
     assert "Synta-Helper-Monitor" in source
-    assert "-ActiveTimePercent 50 -BatchTokens 16 -Context 32768" in source
+    assert "ActiveTimePercent=65;BatchTokens=64;Context=32768" in source
+    assert "ResourceProxyPython" in source
     assert "'guardian-owner.json'" in source
     assert "-ActiveTimePercent 50" in (TOOLS / "start-windows-lab.ps1").read_text()
 

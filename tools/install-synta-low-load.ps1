@@ -65,10 +65,10 @@ if (-not (Test-Path -LiteralPath $stdout)) { New-Item -ItemType File -Path $stdo
 $watcher = Join-Path $owned 'watch-low-load.ps1'
 @'
 $path = Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-worker.stdout.log'
-Write-Host 'SYNTA WINDOWS CPU | 2 threads | idle priority | one job | RTX disabled'
-Write-Host 'Yields at host CPU >40%, free RAM <6 GiB or foreground browser/video/game.'
+Write-Host 'SYNTA WINDOWS CPU | 2 threads | idle priority | one job | GPU policy in separate RTX monitor'
+Write-Host 'Browser allowed. Yields at host CPU >65%, free RAM <6 GiB or heavy game.'
 Write-Host 'Close this console to stop viewing logs; the scheduled CPU worker stays running.'
-$paths = @($path, (Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-worker.stderr.log'), (Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-autostart.log'))
+$paths = @($path, (Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-worker.stderr.log'), (Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-autostart.log'), (Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-native.stdout.log'), (Join-Path $env:USERPROFILE 'ai-v100-helper\logs\cpu-native.stderr.log'))
 $positions = @{}
 while ($true) {
     foreach ($file in $paths) {

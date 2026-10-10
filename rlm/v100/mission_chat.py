@@ -80,10 +80,59 @@ def recent_requests(root: Path, limit: int = 20) -> list[dict]:
     ]
 
 
+def retire_request(root: Path, identity: str, reason: str) -> dict:
+    """Retire only the specified request after mission shutdown, retaining its original row."""
+    if not re.fullmatch(r"[a-f0-9]{32}", identity):
+        raise ValueError("Invalid chat request identity")
+    with connect(root) as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM requests WHERE id=?", (identity,)).fetchone()
+        if row is None:
+            return {"id": identity, "retired": False, "reason": "Request not present"}
+        archive = root / "research/state/chat-retired" / (identity + ".json")
+        if not archive.exists():
+            atomic_json(archive, dict(row))
+        if row["state"] != "completed":
+            db.execute(
+                "UPDATE requests SET state='cancelled',error=?,updated=? WHERE id=?",
+                (reason, time.time(), identity),
+            )
+        return {"id": identity, "retired": row["state"] != "completed", "archive": str(archive)}
+
+
+def trade_visualization_requested(message: str) -> bool:
+    from rlm.v100.income_policy import normalized
+
+    text = normalized(message)
+    return bool(
+        re.search(r"wykres|wizualiz|visualiz|chart", text)
+        and re.search(r"kup|sprzed|buy|sell|transakc|trad|zwrot", text)
+    )
+
+
+def trade_visualization_reply(root: Path) -> dict:
+    from rlm.v100.trade_explorer import snapshot
+
+    receipt = snapshot(root)
+    return {
+        "answer": "Interaktywny Trade explorer jest częścią renderera hosta: / na porcie 8765. "
+        "Wybierz serię paper lub historyczną, zakres czasu i metrykę. Kliknij znacznik kupna/sprzedaży, "
+        "aby odczytać cenę, koszty i zapis wykonania. Brak transakcji jest pokazany jawnie. "
+        "Dane odświeżają się bez resetowania wybranego zakresu. "
+        + ("Błędy danych: " + "; ".join(receipt["errors"]) if receipt["errors"] else ""),
+        "actions": [],
+        "applied": [],
+        "responder": {"model": "controller-trade-explorer"},
+        "evidence": {"series": len(receipt["series"]), "updated": receipt["updated"]},
+    }
+
+
 def direct_facts(root: Path, message: str) -> dict | None:
     """Explicit read-only host questions never queue behind GPU work."""
     from rlm.v100 import chat_facts, chat_progress
 
+    if trade_visualization_requested(message):
+        return trade_visualization_reply(root)
     if message.strip() == "/status" or chat_progress.requested(message):
         return chat_progress.respond(root, message)
     if conversation_question(message) and chat_facts.requested(message):
@@ -471,6 +520,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    if trade_visualization_requested(message):
+        return trade_visualization_reply(root)
     from rlm.v100 import chat_facts, income_policy, market_research
     from rlm.v100.chat_goals import authorizes_long
 

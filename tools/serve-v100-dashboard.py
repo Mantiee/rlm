@@ -284,7 +284,13 @@ class DashboardState:
             live = snapshot(self.root, mission, report, gpu)
         except (OSError, ValueError, RuntimeError) as error:
             errors.append("Podgląd pracy niedostępny: " + str(error)[:200])
+        from rlm.v100.trade_explorer import snapshot as trade_snapshot
+
+        chart = self.data.get("trades", {})
+        if time.time() - chart.get("updated", 0) > 30:
+            chart = trade_snapshot(self.root)
         self.data = {
+            "trades": chart,
             "live": live,
             "collected_at": time.time(),
             "mission": mission,
@@ -359,6 +365,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     json.dumps(
                         self.server.state.data, ensure_ascii=False, allow_nan=False
                     ).encode(),
+                    "application/json; charset=utf-8",
+                )
+            elif route == "/api/trades":
+                body, mime = (
+                    json.dumps(self.server.state.data.get("trades", {}), allow_nan=False).encode(),
                     "application/json; charset=utf-8",
                 )
             elif route == "/api/live-inference":

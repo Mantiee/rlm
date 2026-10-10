@@ -1,5 +1,6 @@
 param(
-    [Parameter(Mandatory=$true)][string]$Revision
+    [Parameter(Mandatory=$true)][string]$Revision,
+    [switch]$Adaptive
 )
 # Current-user logon startup, with no saved password and no global resource changes.
 $ErrorActionPreference = 'Stop'
@@ -19,6 +20,10 @@ foreach ($name in @('watch-rtx3090-helper.ps1', 'install-owned-compute-autostart
 $launcher = Join-Path $root 'start-rtx3090-helper.ps1'
 Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/Mantiee/rlm/$Revision/tools/start-rtx3090-helper.ps1" -OutFile ($launcher + '.new')
 Move-Item -Force -LiteralPath ($launcher + '.new') -Destination $launcher
+if ($Adaptive) {
+    Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/Mantiee/rlm/$Revision/rlm/v100/windows_resource_proxy.py" -OutFile (Join-Path $root 'windows_resource_proxy.py')
+}
+@{adaptive=[bool]$Adaptive} | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root 'adaptive-settings.json')
 $watchdog = Join-Path $root 'autostart-watchdog.ps1'
 @'
 $ErrorActionPreference = 'Stop'
@@ -34,7 +39,14 @@ while ($true) {
             $ownedGuardian = $process -and $process.StartTime.ToUniversalTime().ToString('o') -eq $owner.started -and $process.Path -eq $owner.path
         }
         if (-not $ownedGuardian -and -not (Get-NetTCPConnection -State Listen -LocalPort 11435 -ErrorAction SilentlyContinue)) {
-            & (Join-Path $root 'start-rtx3090-helper.ps1') -ActiveTimePercent 50 -BatchTokens 16 -Context 32768 *>> (Join-Path $root 'logs/autostart.log')
+            $config = Get-Content -Raw (Join-Path $root 'adaptive-settings.json') | ConvertFrom-Json
+            $options = @{ActiveTimePercent=65;BatchTokens=64;Context=32768}
+            if ($config.adaptive) {
+                $python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
+                if (-not (Test-Path -LiteralPath $python)) { throw 'Waiting for isolated CPU Python runtime.' }
+                $options.ResourceProxyPython = $python
+            }
+            & (Join-Path $root 'start-rtx3090-helper.ps1') @options *>> (Join-Path $root 'logs/autostart.log')
         }
     } catch {
         "$(Get-Date -Format o) $($_.Exception.Message)" | Add-Content (Join-Path $root 'logs/autostart.log')
@@ -59,4 +71,4 @@ Start-ScheduledTask -TaskName 'Synta-Helper-Monitor'
 
 Write-Host 'Installed: Synta-RTX3090-Helper. Starts after this user signs in; existing guardian/game guard preserved.'
 Write-Host "Log: $root\logs\autostart.log"
-Write-Host 'Startup pacing target: 50%; context 32768; batch 16. Debian research pacing is a separate setting. No hard board power/temperature limit.'
+Write-Host 'Startup pacing target: 65%; context 32768; batch up to 64. Adaptive proxy lowers pacing/batch under measured pressure. Debian research pacing is a separate setting. No hard board power/temperature limit.'

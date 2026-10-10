@@ -73,7 +73,8 @@ def test_readonly_reports_work_during_writer_and_cannot_modify(tmp_path):
 @pytest.mark.parametrize(
     "cpu,ram,foreground,ready",
     [
-        (41, 12, False, False),
+        (66, 12, False, False),
+        (41, 12, False, True),
         (10, 5, False, False),
         (10, 12, True, False),
         (20, 12, False, True),
@@ -99,7 +100,7 @@ def test_installer_restricts_owned_processes_and_leaves_board_settings():
     assert "nvidia-smi" not in source
 
 
-def test_running_job_stops_on_cpu_pressure(tmp_path, monkeypatch):
+def test_running_job_suspends_and_resumes_on_cpu_pressure(tmp_path, monkeypatch):
     import hashlib
 
     import psutil
@@ -126,14 +127,29 @@ def test_running_job_stops_on_cpu_pressure(tmp_path, monkeypatch):
     process.wait = lambda: process.returncode
     monkeypatch.setattr(compute_worker.subprocess, "Popen", lambda *args, **kwargs: process)
     monkeypatch.setattr(compute_worker, "limit_child", lambda pid: None)
-    monkeypatch.setattr(compute_worker, "available", lambda: (False, "Host CPU busy"))
+    states = iter([(False, "Host CPU busy"), (True, "ready")])
+    monkeypatch.setattr(compute_worker, "available", lambda: next(states))
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=12 * 2**30))
+    monkeypatch.setattr(compute_worker, "adaptive_child_budget", lambda pid: {})
+    transitions = []
+
+    def complete_after_resume(seconds):
+        if transitions == ["suspend", "resume"]:
+            process.returncode = 0
+
+    monkeypatch.setattr(compute_worker.time, "sleep", complete_after_resume)
     monkeypatch.setattr(
         psutil,
         "Process",
         lambda pid: SimpleNamespace(
-            memory_info=lambda: SimpleNamespace(rss=1024), children=lambda recursive: []
+            memory_info=lambda: SimpleNamespace(rss=1024),
+            children=lambda recursive: [],
+            suspend=lambda: transitions.append("suspend"),
+            resume=lambda: transitions.append("resume"),
         ),
     )
-    with pytest.raises(RuntimeError, match="Host CPU busy"):
+    # The controlled kernel has no result files; pressure must not kill its process.
+    with pytest.raises(FileNotFoundError):
         compute_worker.execute(tmp_path, path, lease, kernel)
-    assert process.returncode == -9
+    assert process.returncode == 0
+    assert transitions == ["suspend", "resume"]

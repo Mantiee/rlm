@@ -70,7 +70,9 @@ if helper_path.exists():
     before = helper_path.with_name('researcher-rtx3090.before-v53.json')
     if not before.exists():
         before.write_text(helper_path.read_text())
-    helper.setdefault('resources', {})['helper_duty_percent'] = 50
+    helper.setdefault('resources', {})['helper_duty_percent'] = 65
+    helper['resources']['helper_batch_tokens'] = 64
+    helper['resources']['require_adaptive_windows_guard'] = True
     atomic_json(helper_path, helper)
     print('Helper active wall-time target:', helper['resources']['helper_duty_percent'], 'percent; not a hard GPU cap')
 # Current operator explicitly authorized capital-growth research in paper.
@@ -91,11 +93,15 @@ preferences['chat_language'] = 'current operator message'
 preferences['capture_local_model_trace'] = True
 preferences['stream_local_model_trace'] = True
 preferences['automatic_goal_compute'] = True
-# Operator stopped the Windows GPU after a black-screen hang. Never reconnect
-# or restart it implicitly; Windows CPU mailbox remains available.
-preferences['remote_helper_enabled'] = False
-preferences['remote_helper_reason'] = 'Use low-priority Windows CPU with pressure guards; GPU peak power cannot be capped per Synta process'
-preferences['windows_compute'] = {'device': 'cpu', 'threads': 2, 'child_ram_gib': 4, 'min_free_host_ram_gib': 6, 'pause_host_cpu_percent': 40, 'priority': 'idle', 'yield_to_foreground_media': True, 'gpu_enabled': False}
+# Current operator explicitly requested GPU assistance again with Windows-only pressure guards.
+preferences['remote_helper_enabled'] = True
+preferences['remote_helper_reason'] = 'Operator requested adaptive RTX plus idle-priority CPU; Windows proxy gates actual pressure, not browser presence. GPU peak power is not capped per process'
+policy_path = root / 'research/research-policy.json'
+from rlm.v100.research_policy import settings as research_settings
+research_policy = research_settings(root)
+research_policy['helper']['batch_tokens'] = 64
+atomic_json(policy_path, research_policy)
+preferences['windows_compute'] = {'device': 'adaptive CPU and RTX', 'threads': 2, 'child_ram_gib': 4, 'min_free_host_ram_gib': 6, 'pause_host_cpu_percent': 65, 'priority': 'idle', 'yield_to_foreground_media': False, 'gpu_enabled': True}
 preferences['backtest_metric_contract'] = {
     'instructions': 'Maximum sampled drawdown is peak-to-trough equity loss, not standard deviation. Double-cost net return is a separate metric. Never infer corrupt data from negative returns or claim a glitch audit without audit_backtests receipts. Current price tool only exposes momentum, mean_reversion and buy_hold; lookback choices are 5, 10, 20 selected on past data. Do not invent configurable Z-score thresholds or lookbacks 50/100/200. Repeating held-out tests until profitable overfits. Invalid archives are excluded from retrospective training. Historical postmortems are not future financial labels.',
     'evidence': 'research/backtests/audit-status.json',
@@ -116,9 +122,17 @@ preferences['income_research'] = {
     'scope': 'No real orders, sales, outreach, accounts, spending or automatic payment claims.'
 }
 atomic_json(preferences_path, preferences)
+# Setup/identity migration can tighten an old profile. Reapply this explicit
+# operator policy after migration; guarded transport is required before inference.
+if helper_path.exists():
+    helper = json.loads(helper_path.read_text())
+    helper['resources'].update(helper_duty_percent=65, helper_batch_tokens=64, require_adaptive_windows_guard=True)
+    atomic_json(helper_path, helper)
 print('RESEARCH NOTE AUDIT:', json.dumps(repair_history(root), ensure_ascii=False), flush=True)
 print('BACKTEST REPLAY AUDIT:', json.dumps(audit_backtests(root), ensure_ascii=False), flush=True)
-print('Windows RTX requests disabled. Accepted V100 and Windows CPU remain available.', flush=True)
+from rlm.v100.mission_chat import retire_request
+print('CHAT REQUEST RETIRED:', json.dumps(retire_request(root, '560e2c23686e46078fa691b7f505767a', 'Operator requested replacement by host trade explorer; original retained.')))
+print('Adaptive Windows RTX enabled in controller. Install adaptive Windows proxy; V100 remains available.', flush=True)
 print('CHAT RESOURCE RECOVERY:', json.dumps(repair_completed(root), ensure_ascii=False), flush=True)
 print(json.dumps(install(root, path), indent=2), flush=True)
 print('RETENTION AND GOAL-LINKED FORECAST LEARNING AVAILABLE. Existing setup preserved; no calibration sweep.', flush=True)

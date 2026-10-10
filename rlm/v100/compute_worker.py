@@ -71,10 +71,10 @@ def available() -> tuple[bool, str]:
 
     if psutil.virtual_memory().available < 6 * 2**30:
         return False, "Less than six GiB free host RAM"
-    if psutil.cpu_percent(interval=0.1) > 40:
+    if psutil.cpu_percent(interval=0.1) > 65:
         return False, "Host CPU busy"
     if foreground_busy():
-        return False, "Foreground browser, video or game; CPU experiment paused"
+        return False, "Foreground heavy game; CPU experiment paused"
     if any(
         (p.info.get("name") or "").casefold() == "league of legends.exe"
         for p in psutil.process_iter(["name"])
@@ -84,7 +84,7 @@ def available() -> tuple[bool, str]:
 
 
 def foreground_busy() -> bool:
-    """Conservatively yield to interactive media/browser apps on Windows."""
+    """Yield to heavy foreground games; browser presence is not load evidence."""
     if sys.platform != "win32":
         return False
     import psutil
@@ -103,18 +103,16 @@ def foreground_busy() -> bool:
         # A protected foreground process is a reason to yield, not crash/restart.
         return True
     return name in {
-        "chrome.exe",
-        "msedge.exe",
-        "firefox.exe",
-        "brave.exe",
-        "opera.exe",
-        "vlc.exe",
-        "mpv.exe",
-        "potplayer64.exe",
-        "wmplayer.exe",
-        "moviesandtv.exe",
         "league of legends.exe",
-        "steam.exe",
+        "valorant-win64-shipping.exe",
+        "cs2.exe",
+        "fortniteclient-win64-shipping.exe",
+        "cyberpunk2077.exe",
+        "overwatch.exe",
+        "eldenring.exe",
+        "gta5.exe",
+        "rdr2.exe",
+        "dota2.exe",
     }
 
 
@@ -133,7 +131,7 @@ def adaptive_child_budget(pid: int) -> dict:
 
     cpu = psutil.cpu_percent(interval=0.1)
     ram = psutil.virtual_memory().available / 2**30
-    slots = 1 if cpu >= 25 or ram < 8 else 2
+    slots = 1 if cpu >= 40 or ram < 8 else 2
     child = psutil.Process(pid)
     if sys.platform == "win32":
         allowed = psutil.Process(os.getpid()).cpu_affinity()
@@ -203,6 +201,7 @@ def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
                 cwd=local,
             )
             started = time.monotonic()
+            last_tick, active_seconds, suspended = started, 0.0, False
             try:
                 limit_child(process.pid)
                 while process.poll() is None:
@@ -219,16 +218,34 @@ def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
                     except psutil.NoSuchProcess:
                         process.wait()
                         break
-                    if rss > 4 * 2**30 or time.monotonic() - started > 150:
-                        raise RuntimeError("Compute child exceeded four GiB RAM or 150 seconds")
+                    now = time.monotonic()
+                    if not suspended:
+                        active_seconds += now - last_tick
+                    last_tick = now
+                    if rss > 4 * 2**30 or active_seconds > 150 or now - started > 600:
+                        raise RuntimeError(
+                            "Compute child exceeded four GiB RAM, 150 active seconds or ten wall minutes"
+                        )
                     ready, reason = available()
-                    if not ready:
-                        raise RuntimeError(reason)
+                    if psutil.virtual_memory().available < 2 * 2**30:
+                        raise RuntimeError("Critical host RAM pressure; releasing owned child")
+                    if not ready and not suspended:
+                        for child in owned.children(recursive=True):
+                            child.suspend()
+                        owned.suspend()
+                        suspended = True
+                    elif ready and suspended:
+                        owned.resume()
+                        for child in owned.children(recursive=True):
+                            child.resume()
+                        suspended = False
                     lease["heartbeat"] = time.time()
                     atomic(lease_path, lease)
                     row = {
                         "job": path.stem,
-                        "phase": "training",
+                        "phase": "paused" if suspended else "training",
+                        "reason": reason,
+                        "active_seconds": round(active_seconds, 1),
                         "worker": lease["worker"],
                         "seconds": round(time.monotonic() - started, 1),
                         "rss_gib": round(rss / 2**30, 2),
@@ -244,6 +261,11 @@ def execute(mailbox: Path, path: Path, lease: dict, kernel: Path) -> None:
                     raise RuntimeError("Compute child failed; inspect worker.log")
             finally:
                 if process.poll() is None:
+                    try:
+                        for child in psutil.Process(process.pid).children(recursive=True):
+                            child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
                     process.kill()
                 process.wait()
         for name in ("report.json", "weights.safetensors"):

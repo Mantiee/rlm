@@ -871,3 +871,25 @@ def test_chat_does_not_inherit_research_thinking_budget(tmp_path):
     actual = apply(instance, tmp_path)
     assert actual.enable_thinking is False
     assert actual.sampling_args["max_tokens"] == 2048
+
+
+def test_guarded_windows_profile_refuses_inference_without_live_guard(monkeypatch):
+    monkeypatch.setattr(remote_helper, "helper_boot_id", lambda: "guard-test-boot")
+    instance = client(require_adaptive_windows_guard=True)
+    calls = []
+
+    def request(endpoint, data=None):
+        calls.append(endpoint)
+        return {"ready": True, "updated": 0}
+
+    monkeypatch.setattr(instance, "remote_request", request)
+    with pytest.raises(requests.ConnectionError, match="adaptive guard unavailable"):
+        instance.http_request(
+            "/v1/chat/completions",
+            {
+                "model": remote_helper.MODEL,
+                "messages": [{"role": "user", "content": "test"}],
+                "max_tokens": 128,
+            },
+        )
+    assert calls == ["/api/synta-resources"]

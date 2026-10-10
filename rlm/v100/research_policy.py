@@ -25,8 +25,16 @@ def choose(root: Path, target: str, thinking: bool, max_tokens: int, batch_token
     if type(max_tokens) is not int or not 256 <= max_tokens <= ceiling:
         raise ValueError(f"Output tokens must be between 256 and {ceiling}")
     batches = (128, 256, 512) if target == "master" else (16,)
+    if target == "helper":
+        guard_path = root / "research/researcher-rtx3090.json"
+        if guard_path.exists():
+            guard = json.loads(guard_path.read_text()).get("resources", {})
+            if guard.get("require_adaptive_windows_guard") is True:
+                batches = (16, 32, 64)
     if type(batch_tokens) is not int or batch_tokens not in batches:
-        raise ValueError("Batch outside host budget; RTX is limited to 16 after crashes")
+        raise ValueError(
+            "Batch outside host budget; Windows adaptive proxy can lower the requested batch"
+        )
     lock = root / "research/research-policy.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     with lock.open("a") as handle:

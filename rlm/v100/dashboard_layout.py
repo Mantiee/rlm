@@ -49,7 +49,7 @@ function textField(parent,label,value){if(value===undefined||value===null||value
 const disclosureStates=new Map(), disclosureScroll=new Map(), panelScroll=new Map();
 function nodeKey(n){return n.nodeType===1?(n.id||n.dataset.key||n.dataset.scrollKey||''):''}
 function updateNode(old,fresh){
-if(old.id==='action-archive')return;
+if(['action-archive','trade-explorer'].includes(old.id))return;
 // The live user's disclosure state wins over an automatically opened draft.
 if(old.nodeName==='DETAILS'&&old.open!==undefined)fresh.open=old.open;
 if(old.nodeType!==fresh.nodeType||old.nodeName!==fresh.nodeName){old.replaceWith(fresh);return}
@@ -121,12 +121,53 @@ const anchor=atPoint?.nodeName==='BODY'||atPoint?.nodeName==='HTML'?null:atPoint
 try{renderRoot=draft;update()}finally{renderRoot=null}
 updateNode(body,draft);for(const [n,top,left] of containers){n.scrollTop=top;n.scrollLeft=left}const shift=reader?.isConnected?reader.getBoundingClientRect().top-readerTop:0;const scrollParent=containers.filter(([n])=>n!==reader&&n.contains?.(reader)).at(-1)?.[0];if(scrollParent){scrollParent.scrollTop+=shift;if(window.scrollX!==x||window.scrollY!==y)window.scrollTo(x,y)}else if(window.scrollX!==x||window.scrollY!==y+shift)window.scrollTo(x,y+shift);
 }
-async function refresh(){return singleFetch('status',async()=>{try{const data=await readAPI('/api/status');stablePaint(()=>render(data))}catch(error){$('warning').textContent='Refresh failed: '+error.message}})}
+let tradeData=null,tradeChoice='',tradeStart=0,tradeEnd=100,tradeMetric='equity',tradeSelected=null;
+function tradePanel(){
+ if(document.getElementById('trade-explorer'))return;
+ const panel=document.createElement('section');panel.id='trade-explorer';
+ panel.innerHTML='<h2>Trade explorer - buys, sells and returns</h2><p class="muted">Forward paper and historical simulations are separate. Select a recorded execution for its receipt.</p><div class="grid"><label>Series <select id="trade-series"></select></label><label>Metric <select id="trade-metric"><option value="equity">Equity / capital</option><option value="return">Net return %</option><option value="price">Historical close price</option></select></label></div><div class="grid"><label>From <input id="trade-start" type="range" min="0" max="99" value="0"></label><label>To <input id="trade-end" type="range" min="1" max="100" value="100"></label></div><p class="muted">Blue markers: entries. Orange markers: exits. Curve: selected metric. Click a marker for execution details.</p><p id="trade-summary"></p><p id="trade-scope" class="muted"></p><svg id="trade-plot" viewBox="0 0 960 300" style="max-height:320px;min-height:260px" role="img" aria-label="Recorded equity and execution timeline"></svg><p id="trade-hover" style="min-height:24px">Hover a point; select a buy or sell marker to inspect the execution.</p><details id="trade-receipt"><summary>Selected execution receipt</summary><pre id="trade-detail">No execution selected.</pre></details><p id="trade-errors"></p>';
+ document.getElementById('paper').closest('section').before(panel);
+ panel.querySelector('#trade-series').onchange=e=>{tradeChoice=e.target.value;tradeStart=0;tradeEnd=100;tradeSelected=null;drawTrades()};
+ panel.querySelector('#trade-metric').onchange=e=>{tradeMetric=e.target.value;drawTrades()};
+ for(const id of ['trade-start','trade-end'])panel.querySelector('#'+id).oninput=e=>{if(id==='trade-start')tradeStart=Math.min(+e.target.value,tradeEnd-1);else tradeEnd=Math.max(+e.target.value,tradeStart+1);drawTrades()};
+}
+function tradeTime(value){return typeof value==='number'?value*1000:Date.parse(value)}
+function drawTrades(){
+ if(!tradeData)return;
+ const get=id=>document.getElementById(id), select=get('trade-series');
+ const options=(tradeData.series||[]).map(row=>({id:row.id,label:row.label}));
+ const signature=JSON.stringify(options);if(select.dataset.signature!==signature){select.replaceChildren();for(const row of options){const o=document.createElement('option');o.value=row.id;o.textContent=row.label;select.append(o)}select.dataset.signature=signature}
+ if(!options.some(row=>row.id===tradeChoice))tradeChoice=options[0]?.id||'';select.value=tradeChoice;
+ get('trade-start').value=String(tradeStart);get('trade-end').value=String(tradeEnd);get('trade-metric').value=tradeMetric;
+ get('trade-errors').textContent=(tradeData.errors||[]).join('\n');
+ const row=(tradeData.series||[]).find(s=>s.id===tradeChoice), plot=get('trade-plot');plot.replaceChildren();
+ if(!row){get('trade-summary').textContent='No recorded trade series available.';get('trade-scope').textContent=tradeData.scope||'';return}
+ get('trade-scope').textContent=row.scope;
+ const initial=row.initial_capital;get('trade-summary').textContent=`Net P&L: ${Number(row.net_pnl).toFixed(4)} ${row.currency} | Net return: ${(row.net_pnl/initial*100).toFixed(2)}% | Modeled costs: ${Number(row.total_costs).toFixed(4)} | Recorded executions in view archive: ${row.executions.length} | Collected ${new Date(tradeData.updated*1000).toLocaleTimeString()}`;
+ const all=row.points||[],begin=Math.floor(all.length*tradeStart/100),end=Math.max(begin+1,Math.ceil(all.length*tradeEnd/100)),points=all.slice(begin,end);
+ const value=p=>tradeMetric==='return'?(p.equity/initial-1)*100:tradeMetric==='price'?p.price:p.equity;
+ const valid=points.filter(p=>Number.isFinite(value(p))&&Number.isFinite(tradeTime(p.time)));
+ if(!valid.length){plot.append(svg('text',{x:30,y:90,fill:'#adbdd1'},tradeMetric==='price'?'No recorded close-price series for this selection. Use equity or inspect execution prices.':'No recorded equity points.'));return}
+ const times=valid.map(p=>tradeTime(p.time)),lo=Math.min(...times),hi=Math.max(...times),values=[...valid.map(value),...(tradeMetric==='price'?row.executions.filter(t=>tradeTime(t.time)>=lo&&tradeTime(t.time)<=hi&&Number.isFinite(+t.price)).map(t=>+t.price):[])],min=Math.min(...values),max=Math.max(...values),pad=Math.max((max-min)*.1,Math.abs(max)*.001,.0001);
+ const x=t=>65+(t-lo)/Math.max(1,hi-lo)*865,y=v=>250-(v-min+pad)/(max-min+2*pad)*215;
+ for(let i=0;i<5;i++){const v=min-pad+(max-min+2*pad)*i/4;plot.append(svg('line',{x1:65,x2:930,y1:y(v),y2:y(v),stroke:'#304259'}),svg('text',{x:2,y:y(v)+4,fill:'#adbdd1','font-size':11},v.toFixed(3)))}
+ const totalPositive=row.net_pnl>=0;plot.append(svg('polyline',{points:valid.map(p=>`${x(tradeTime(p.time))},${y(value(p))}`).join(' '),fill:'none',stroke:totalPositive?'#75c5ae':'#e68d80','stroke-width':2}));
+ for(const p of valid){const dot=svg('circle',{cx:x(tradeTime(p.time)),cy:y(value(p)),r:5,fill:'transparent',tabindex:0});const describe=()=>{get('trade-hover').textContent=`${new Date(tradeTime(p.time)).toLocaleString()} | ${tradeMetric}: ${value(p).toFixed(5)} | Equity: ${p.equity.toFixed(5)} ${row.currency}`};dot.onmouseenter=describe;dot.onfocus=describe;plot.append(dot)}
+ for(const trade of row.executions||[]){const t=tradeTime(trade.time);if(t<lo||t>hi)continue;const nearest=valid.reduce((a,b)=>Math.abs(tradeTime(a.time)-t)<=Math.abs(tradeTime(b.time)-t)?a:b);const buy=['buy','short','bet'].includes(trade.action),color=buy?'#69baff':'#ffbd69';const marker=svg('circle',{cx:x(t),cy:y(tradeMetric==='price'?+trade.price:value(nearest)),r:7,fill:color,stroke:'#101721','stroke-width':2,tabindex:0,role:'button','aria-label':`${trade.action} ${trade.symbol||''} ${trade.time}`});marker.style.cursor='pointer';marker.append(svg('title',{},`${trade.action} | price ${trade.price??'n/a'} | net P&L ${trade.net_pnl??'not realized at entry'}`));const choose=()=>{tradeSelected=trade.receipt;get('trade-detail').textContent=JSON.stringify(trade,null,2);get('trade-receipt').open=true};marker.onclick=choose;marker.onkeydown=e=>{if(e.key==='Enter'||e.key===' ')choose()};plot.append(marker)}
+ plot.append(svg('text',{x:65,y:282,fill:'#adbdd1','font-size':11},new Date(lo).toLocaleString()),svg('text',{x:650,y:282,fill:'#adbdd1','font-size':11},new Date(hi).toLocaleString()));
+ if(!row.executions.length)get('trade-hover').textContent='No recorded fills in this tail. Equity / forecasts are not proof of executed trades.';
+ if(tradeSelected){const selected=row.executions.find(t=>t.receipt===tradeSelected);if(selected)get('trade-detail').textContent=JSON.stringify(selected,null,2)}
+}
+async function tradesView(){return singleFetch('trades',async()=>{try{tradePanel();const data=await readAPI('/api/trades');const retained=tradeData?.series?.find(s=>s.id===tradeChoice);if(retained&&!(data.series||[]).some(s=>s.id===tradeChoice))data.series=[...(data.series||[]),retained];stablePaint(()=>{tradeData=data;drawTrades()})}catch(error){const node=document.getElementById('trade-errors');if(node)node.textContent='Trade data unavailable: '+error.message}})}
+
+async function refresh(){return singleFetch('status',async()=>{try{const data=await readAPI('/api/status');stablePaint(()=>render(data));tradePanel()}catch(error){$('warning').textContent='Refresh failed: '+error.message}})}
 async function liveInference(){if(!latestSnapshot)return;return singleFetch('inference',async()=>{try{const live=await readAPI('/api/live-inference');if(latestInference&&inferenceStamp(live)<inferenceStamp(latestInference))return;latestInference=live;stablePaint(()=>agentView(mergeInference(latestSnapshot,live)))}catch(error){$('warning').textContent='Live inference unavailable: '+error.message}})}
 async function readinessView(){return singleFetch('readiness',async()=>{try{const data=await readAPI('/api/readiness');stablePaint(()=>{const p=panel('readiness-panel','Commissioning evidence',$('goal-learning-panel')||$('plan-panel'));let body=$('readiness-view');if(!body){body=document.createElement('div');body.id='readiness-view';p.append(body)}body.replaceChildren();for(const c of data.checks||[])textField(body,c.name,`${c.state} | ${c.detail} | ${c.source||''}`)})}catch(error){$('warning').textContent='Readiness unavailable: '+error.message}})}
 document.addEventListener('click',e=>{if(e.target?.id==='archive-load')loadArchive()});document.addEventListener('change',e=>{if(e.target?.id==='archive-day')loadArchive(true)});$('reload').onclick=()=>pendingLayout?location.reload():refresh();refresh();setInterval(refresh,5000);setInterval(liveInference,2000);setInterval(readinessView,5000);
 </script></html>"""
 
+
+PAGE = PAGE.replace("</script>", "tradesView();setInterval(tradesView,10000);</script>", 1)
 
 APP_SCRIPT = PAGE.split("<script>", 1)[1].split("</script>", 1)[0]
 BASE_TEMPLATE = PAGE.split("<script>", 1)[0] + "</html>"

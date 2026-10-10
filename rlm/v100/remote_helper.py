@@ -147,6 +147,7 @@ class OllamaResearchClient(LlamaCppClient):
         max_vram_gib: int = 12,
         helper_batch_tokens: int = 64,
         helper_duty_percent: int = 65,
+        require_adaptive_windows_guard: bool = False,
         **kwargs: Any,
     ):
         origin = private_origin(base_url)
@@ -170,6 +171,9 @@ class OllamaResearchClient(LlamaCppClient):
         self.metadata_hash_scheme = metadata_hash_scheme
         self.max_vram_gib = max_vram_gib
         self.helper_batch_tokens = helper_batch_tokens
+        if type(require_adaptive_windows_guard) is not bool:
+            raise ValueError("Adaptive guard requirement must be boolean")
+        self.require_adaptive_windows_guard = require_adaptive_windows_guard
         self.helper_duty_percent = helper_duty_percent
         self.request_lock = threading.Lock()
         self.tool_protocol = "json"
@@ -265,7 +269,14 @@ class OllamaResearchClient(LlamaCppClient):
             )
 
     def remote_request(self, endpoint: str, data: dict | None = None) -> dict:
-        if endpoint not in ("/api/tags", "/api/show", "/api/ps", "/api/chat", "/api/version"):
+        if endpoint not in (
+            "/api/tags",
+            "/api/show",
+            "/api/ps",
+            "/api/chat",
+            "/api/version",
+            "/api/synta-resources",
+        ):
             raise ValueError("Remote research transport does not expose model management")
         with requests.Session() as session:
             session.trust_env = False
@@ -400,6 +411,16 @@ class OllamaResearchClient(LlamaCppClient):
                 raise ValueError("Remote helper requires JSON-object output")
             payload["format"] = shape.get("schema", "json")
         with self.request_lock, self.workload_slot() as quota:
+            if self.require_adaptive_windows_guard:
+                guard = self.remote_request("/api/synta-resources")
+                if (
+                    guard.get("contract") != "synta-adaptive-windows-v1"
+                    or guard.get("ready") is not True
+                    or time.time() - guard.get("updated", 0) > 10
+                ):
+                    raise requests.ConnectionError(
+                        "Windows adaptive guard unavailable: " + str(guard.get("reason", "unknown"))
+                    )
             self.identity()
             self.loaded()
             started = time.monotonic()

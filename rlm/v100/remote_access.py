@@ -77,6 +77,7 @@ def proxy_allowed(route: str) -> bool:
     return parsed.path in (
         "/",
         "/api/status",
+        "/api/trades",
         "/api/actions",
         "/api/live-inference",
         "/api/readiness",

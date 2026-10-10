@@ -52,14 +52,17 @@ while ($true) {
             $_.CommandLine -and $_.CommandLine.Contains($root) -and $_.CommandLine.Contains('compute_worker.py')
         }
         if (-not $existing) {
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $config.launcher -Revision $config.revision -Mailbox $config.mailbox -WorkerName $config.worker 1>> (Join-Path $logs 'cpu-worker.stdout.log') 2>> (Join-Path $logs 'cpu-worker.stderr.log')
-            if ($LASTEXITCODE -ne 0) { throw "CPU worker exited with code $LASTEXITCODE. See cpu-worker.stderr.log." }
+            $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$($config.launcher)`" -Revision $($config.revision) -Mailbox `"$($config.mailbox)`" -WorkerName $($config.worker)"
+            $launcher = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -PassThru -Wait -WindowStyle Hidden `
+                -RedirectStandardOutput (Join-Path $logs 'cpu-worker.stdout.log') `
+                -RedirectStandardError (Join-Path $logs 'cpu-worker.stderr.log')
+            if ($launcher.ExitCode -ne 0) { throw "CPU launcher exited $($launcher.ExitCode). Full native traceback: cpu-native.stderr.log." }
         }
     } catch {
         "$(Get-Date -Format o) $($_.Exception.Message)" | Add-Content -LiteralPath (Join-Path $logs 'cpu-autostart.log')
         # A failed launch is not an idle/ready worker. Show the diagnostic in the
         # same visible stream; do not repeat only the startup banner forever.
-        $lastError = Get-Content -LiteralPath (Join-Path $logs 'cpu-worker.stderr.log') -Tail 12 -ErrorAction SilentlyContinue
+        $lastError = Get-Content -LiteralPath (Join-Path $logs 'cpu-native.stderr.log') -Tail 100 -ErrorAction SilentlyContinue
         "$(Get-Date -Format o) BLOCKED: $($_.Exception.Message)`n$($lastError -join "`n")" | Add-Content -LiteralPath (Join-Path $logs 'cpu-worker.stdout.log')
         Start-Sleep -Seconds 90
     }

@@ -358,6 +358,9 @@ def helper_client(
             "max_vram_gib": profile["resources"]["max_vram_gib"],
             "helper_batch_tokens": profile["resources"].get("helper_batch_tokens", 64),
             "helper_duty_percent": profile["resources"].get("helper_duty_percent", 65),
+            "require_adaptive_windows_guard": profile["resources"].get(
+                "require_adaptive_windows_guard", False
+            ),
         }
         if remote
         else {}

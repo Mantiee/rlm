@@ -105,7 +105,7 @@ def test_protected_foreground_pauses_worker_instead_of_crashing(monkeypatch):
     assert compute_worker.foreground_busy() is True
 
 
-@pytest.mark.parametrize("cpu,slots", [(10, 2), (30, 1)])
+@pytest.mark.parametrize("cpu,slots", [(10, 2), (30, 2), (45, 1)])
 def test_windows_child_affinity_adapts_within_two_slots(monkeypatch, cpu, slots):
     import psutil
 

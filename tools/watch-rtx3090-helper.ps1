@@ -14,14 +14,19 @@ while ($true) {
         $loaded = Invoke-RestMethod -Uri ($Endpoint.TrimEnd('/') + '/api/ps') -TimeoutSec 2
         $loaded.models | Select-Object name,context_length,@{Name='VRAM_GiB';Expression={[math]::Round($_.size_vram/1GB,2)}} | Format-Table -AutoSize
     } catch { Write-Host 'Helper unavailable or paused by game guard.' }
+    $status = Join-Path $dir 'logs\resource-status.json'
+    if (Test-Path -LiteralPath $status) {
+        Write-Host 'ADAPTIVE ADMISSION (browser allowed):'
+        Get-Content -LiteralPath $status -Raw
+    }
     $log = Join-Path $dir 'logs\server.stderr.log'
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 8 }
-    $cpuLog = Join-Path $dir 'logs\cpu-worker.stdout.log'
+    $cpuLog = Join-Path $dir 'logs\cpu-native.stdout.log'
     if (Test-Path -LiteralPath $cpuLog) {
         Write-Host 'OWNED CPU WORKER:'
         Get-Content -LiteralPath $cpuLog -Tail 3
     }
-    $cpuError = Join-Path $dir 'logs\cpu-worker.stderr.log'
+    $cpuError = Join-Path $dir 'logs\cpu-native.stderr.log'
     if ((Test-Path -LiteralPath $cpuError) -and (Get-Item -LiteralPath $cpuError).Length -gt 0) {
         Get-Content -LiteralPath $cpuError -Tail 2
     }
