@@ -46,6 +46,40 @@ def filter_actions(actions: list[dict]) -> tuple[list[dict], list[dict]]:
     return allowed, rejected
 
 
+def inference_performance(root: Path) -> dict:
+    parent = (root / "research/inference-recovery-update").resolve()
+    current = parent / "current.json"
+    if not current.is_file():
+        return {"state": "not recorded", "scope": "No inference speedup measured here"}
+    profile_path = Path(json.loads(current.read_text())["profile"]).resolve()
+    if not profile_path.is_relative_to(parent):
+        raise ValueError("Inference benchmark reference escaped the owned update directory")
+    folder = profile_path.parent
+    results = folder / "inference-benchmark/results.json"
+    blocked = folder / "benchmark-blocked.json"
+    if blocked.is_file():
+        return {"state": "blocked", "receipt": str(blocked), **json.loads(blocked.read_text())}
+    if not results.is_file():
+        return {"state": "not complete", "scope": "No complete inference benchmark receipt"}
+    result = json.loads(results.read_text())
+    configured = json.loads(profile_path.read_text())["server"].get("spec_type", "none")
+    return {
+        "state": result["selection"]["state"],
+        "selection": result["selection"],
+        "variants": [
+            {
+                key: row[key]
+                for key in ("name", "state", "speedup", "same_probe_outputs", "error")
+                if key in row
+            }
+            for row in result["variants"]
+        ],
+        "configured_spec_type": configured,
+        "receipt": str(results),
+        "scope": "Recorded local same-model inference experiment. Configured profile is not proof of the current serving process. No financial skill or broad quality claim.",
+    }
+
+
 def status(root: Path) -> dict:
     from rlm.v100.common import load_profile
     from rlm.v100.competition import helper_client
@@ -58,6 +92,7 @@ def status(root: Path) -> dict:
         "local": local_budget(root),
         "external_compute": inspect(root),
         "drones": drone_status(root),
+        "inference_performance": inference_performance(root),
         "scope": "Owned job execution only. Windows RAM/disk are worker-local resources, not pooled Debian RAM or shared VRAM. No arbitrary Windows shell is exposed.",
     }
     from rlm.v100.mission_chat import preferences

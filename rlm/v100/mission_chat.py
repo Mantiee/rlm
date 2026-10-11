@@ -661,10 +661,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 + result["answer"]
             )
         return result
-    if (
-        any(word in message.casefold() for word in ("dashboard", "raport html"))
-        and re.search(r"\b(?:zrob|zrób|napraw|popraw)\b", message.casefold())
-        and not re.search(r"\b(?:nie|bez)\b", message.casefold())
+    if message.strip() == "/reset-dashboard" or re.fullmatch(
+        r"(?:reset|restore|przywroc|przywróć) (?:the )?(?:default|domyslny|domyślny) (?:dashboard|raport html)[.! ]*",
+        message.strip(),
+        re.I,
     ):
         from rlm.v100.dashboard_editor import status as layout_status
         from rlm.v100.dashboard_editor import write as layout_write

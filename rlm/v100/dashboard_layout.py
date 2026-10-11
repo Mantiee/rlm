@@ -138,7 +138,7 @@ function executionDescription(trade,row){
  const num=v=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(6):'not recorded';
  const before=trade.spot_equity_before,after=trade.spot_equity_after;
  const change=typeof before==='number'&&before>0&&typeof after==='number'?((after/before-1)*100).toFixed(3)+'%':'not recorded';
- return [`${trade.action} at ${new Date(tradeTime(trade.time)).toLocaleString()}`,`Fill price: ${num(Number(trade.price))}`,`Same-price spot equity change: ${change}`,`Paid/modelled execution friction: ${num(Number(trade.costs))}`,`Reserved future exit friction: ${num(trade.estimated_exit_cost)}`,`Fee per leg: ${num(trade.fee_bps)} bps | Slippage per leg: ${num(trade.slippage_bps)} bps`,`1 bp = 0.01%. Entry and exit are separate legs. ${row.currency}.`,`Opening execution is separate from the later candle close.`,JSON.stringify(trade,null,2)].join('\n');
+ return [`${trade.action} at ${new Date(tradeTime(trade.time)).toLocaleString()}`,`Fill price: ${num(Number(trade.price))}`,`Same-price spot equity change: ${change}`,`Paid/modelled execution friction: ${num(Number(trade.costs))} | ${num(trade.execution_friction_percent)}% of pre-fill spot equity`,`Accounting reconciliation: ${trade.accounting_verified===true?'passed at the execution reference price':'not recorded; inspect archived receipt'}`,`Reserved future exit friction: ${num(trade.estimated_exit_cost)}`,`Fee per leg: ${num(trade.fee_bps)} bps | Slippage per leg: ${num(trade.slippage_bps)} bps`,`1 bp = 0.01%. Entry and exit are separate legs. ${row.currency}.`,`Opening execution is separate from the later candle close.`,JSON.stringify(trade,null,2)].join('\n');
 }
 function tradeTime(value){return typeof value==='number'?value*1000:Date.parse(value)}
 function drawTrades(){

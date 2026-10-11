@@ -76,6 +76,13 @@ def server_command(profile: dict) -> list[str]:
             "--spec-draft-n-max",
             str(s["draft_tokens"]),
         ]
+    elif s.get("spec_type", "none") not in ("none", "draft-simple", "draft-mtp"):
+        if s["spec_type"] not in ("ngram-simple", "ngram-cache", "ngram-mod"):
+            raise ValueError("Model-free speculation requires a supported n-gram implementation")
+        tokens = s.get("draft_tokens", 4)
+        if type(tokens) is not int or not 1 <= tokens <= 16:
+            raise ValueError("N-gram draft_tokens must be between 1 and 16")
+        command += ["--spec-type", s["spec_type"], "--spec-draft-n-max", str(tokens)]
     return command
 
 

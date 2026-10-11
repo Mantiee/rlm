@@ -203,6 +203,12 @@ def simulate(
             )
         cash = units * bars[stop - 1]["close"] * (1 - slip) * (1 - fee)
         fills += 1  # Forced sample-end liquidation, explicitly reported.
+    for receipt in executions:
+        entry_drop = receipt["spot_equity_before"] - receipt["spot_equity_after"]
+        if not math.isclose(entry_drop, receipt["costs"], rel_tol=1e-8, abs_tol=1e-10):
+            raise ValueError("Execution spot-equity loss does not reconcile with modeled costs")
+        receipt["execution_friction_percent"] = 100 * entry_drop / receipt["spot_equity_before"]
+        receipt["accounting_verified"] = True
     return {
         **({"executions": executions, "total_costs": total_costs} if capture_executions else {}),
         "net_return": cash - 1,

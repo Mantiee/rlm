@@ -230,9 +230,17 @@ def choose_experiment(
         {
             "id": record_id(record),
             "group": record["group"],
+            "verification_kind": record.get("verification", {}).get("kind", "unknown"),
+            "task_scope": (
+                "Predict an independently observed numeric change; not earnings, vulnerability discovery or task execution"
+                if record.get("verification", {}).get("kind") == "goal_observation"
+                else "Historical simulator postmortem; not forward profit evidence"
+                if record.get("verification", {}).get("kind") == "historical_postmortem"
+                else "Verified support task; inspect its actual question"
+            ),
             "question": next(
                 (
-                    message["content"][:240]
+                    message["content"][:1200]
                     for message in record["messages"]
                     if message["role"] == "user"
                 ),
@@ -294,6 +302,7 @@ def choose_experiment(
                     "catalog": catalog,
                     "history": history,
                     "fixed_microbatch": 1,
+                    "curriculum_contract": "Select a justified curriculum, not just source names. Numeric down/flat/up labels cannot teach web operations or bug discovery. These are separate evaluated tasks. Financial skill requires net realized paper outcomes or independently checked deliverables. L2 anchoring limits parameter drift; it does not establish preserved income skills. Explain what the actual labels can test and prefer broader relevant coverage over repeatedly fitting a few examples.",
                     "gpu": "V100 sm70 32GiB; FP16/NF4",
                     "budget": parameters,
                     "parameter_selection": "Choose each numeric parameter from its explicit enum. Do not round, rescale or exceed the listed values.",
@@ -427,6 +436,20 @@ def plan_duel(
             )
             decision = choose_experiment(client, branch, catalog, branch_profile, shared.recent())
             selected = set(decision["selected_ids"]) | mandatory
+            selected_rows = [row for row in train if record_id(row) in selected]
+            curriculum = {
+                "available_training_records": len(train),
+                "selected_training_records": len(selected_rows),
+                "validation_records": len(validation),
+                "planned_optimizer_steps": decision["parameters"]["max_steps"],
+                "approximate_example_passes": decision["parameters"]["max_steps"]
+                * decision["parameters"]["gradient_accumulation"]
+                / len(selected_rows),
+                "task_kinds": sorted(
+                    {row.get("verification", {}).get("kind", "unknown") for row in selected_rows}
+                ),
+                "scope": "Curriculum exposure estimate, not measured optimizer updates or financial skill. Full validation remains held out.",
+            }
             branch_path = output / branch
             branch_path.mkdir()
             dataset = branch_path / "dataset.jsonl"
@@ -457,6 +480,7 @@ def plan_duel(
                 "dataset": str(dataset),
                 "dataset_sha256": file_hash(dataset),
                 "decision": decision,
+                "curriculum": curriculum,
             }
             shared.append(
                 branch,

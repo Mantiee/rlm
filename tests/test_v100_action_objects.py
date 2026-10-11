@@ -179,14 +179,14 @@ def test_continue_learning_does_not_become_dashboard_instruction():
     assert not continue_requested("zmień cel na naukę")
 
 
-def test_dashboard_repair_reports_written_but_not_published(tmp_path, monkeypatch):
+def test_explicit_dashboard_reset_reports_written_but_not_published(tmp_path, monkeypatch):
     from rlm.v100 import dashboard_editor, mission_chat
 
     monkeypatch.setattr(dashboard_editor, "write", lambda root, html: {"written": True})
     monkeypatch.setattr(
         dashboard_editor, "status", lambda root: {"valid": True, "published": False}
     )
-    result = mission_chat.respond(tmp_path, tmp_path, {"message": "napraw dashboard"})
+    result = mission_chat.respond(tmp_path, tmp_path, {"message": "/reset-dashboard"})
     assert result["applied"] == [{"written": True}]
     assert not result["dashboard"]["published"]
     assert "nie potwierdził" in result["answer"]

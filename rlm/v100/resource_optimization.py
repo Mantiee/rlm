@@ -13,7 +13,7 @@ from rlm.v100.common import atomic_json
 def requested(message: str) -> bool:
     text = normalized(message)
     if re.search(
-        r"dashboard|\bhtml\b|strateg|backtest|threshold|prog\w* transak|(?:ustaw|zmien|set|change)\w*\s+(?:cel|goal|plan)",
+        r"dashboard|\bhtml\b|strateg|backtest|threshold|n-?gram|offload|\bmodel\w*|\blearn\w*|\buczeni\w*|prog\w* transak|(?:ustaw|zmien|set|change)\w*\s+(?:cel|goal|plan)",
         text,
     ):
         return False
