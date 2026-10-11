@@ -1,6 +1,10 @@
 
 ---
 
+Synta v74 adds model-selected goal experiments after source commissioning, offline
+helper recovery and a CPU shadow forecast learner using audited future outcomes.
+Real capital is zero; existing PAPER balances remain usable. See [SYNTA_V74.md](SYNTA_V74.md).
+
 Synta v73 keeps paper observations running when the fee publication cannot be verified,
 without extending expired fees or admitting fills. See [SYNTA_V73.md](SYNTA_V73.md).
 

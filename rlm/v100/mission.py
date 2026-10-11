@@ -15,7 +15,6 @@ from rlm.v100.competition import (
     helper_client,
     managed_server,
     require_idle_gpu,
-    waiting_researcher,
 )
 from rlm.v100.evaluation import evaluate_suite
 from rlm.v100.goals import load_goal, set_goal
@@ -224,10 +223,9 @@ def previous_baseline(root: Path, profile: dict, suite: Path) -> tuple[dict, Pat
 
 def run(root: Path, profile: dict, directory: Path) -> None:
     from rlm.v100.continuous import learn_loop
-    from rlm.v100.mission_memory import archive, compress, repair
+    from rlm.v100.mission_memory import archive, repair
     from rlm.v100.paper import PaperBook
     from rlm.v100.paper_agents import financial_helper_profile
-    from rlm.v100.paper_learning import PaperLearning
     from rlm.v100.research_tools import ResearchTools
     from rlm.v100.serving import assert_served_expert
 
@@ -318,29 +316,9 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     flash_attention_requested=serving["server"]["flash_attention"],
                     kv_cache_type=serving["server"]["cache_type"],
                 )
-                with waiting_researcher(
-                    helper_path, root, directory / "research-helper.log", fallback=serving
-                ) as helper:
-                    try:
-                        if financial:
-                            with PaperLearning(root, paper_settings) as income:
-                                income.research(serving, helper)
-                        else:
-                            from rlm.v100.competition import research_task
-
-                            research_task(
-                                helper_client(helper, root, "A"),
-                                "A",
-                                {
-                                    "role": "researcher",
-                                    "brief": "Investigate the operator goal and propose a new independently testable self-upgrade.",
-                                },
-                                [],
-                                root,
-                            )
-                        compress(root, serving)
-                    except (ValueError, RuntimeError, OSError) as error:
-                        print("Goal research error; see activity logs:", error, flush=True)
+                # Commissioning research belongs to the continuous loop below.
+                # Do not repeat several long research turns before the first
+                # verified training cycle and its observable heartbeat exist.
                 note(directory, "baseline-before-weight-updates", context_window=context)
                 cached = previous_baseline(root, serving, suite)
                 if cached:

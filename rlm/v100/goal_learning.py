@@ -439,8 +439,13 @@ def status(root: Path) -> dict:
             "goal_id": admission_record.get("goal_id"),
             "scope": "Not admission evidence for the active goal",
         }
+    policy_path = root / "research/goal-policy/status.json"
+    shadow = json.loads(policy_path.read_text()) if policy_path.exists() else None
+    if shadow and shadow.get("goal_id") != (goal or {}).get("id"):
+        shadow = None
     return {
         "goal_id": goal["id"] if goal else None,
+        "cpu_shadow_policy": shadow,
         "resolved_total": sum(item["outcome"] is not None for item in active_items),
         "pending_total": sum(
             item["outcome"] is None and item["due"] + 300 >= time.time() for item in active_items

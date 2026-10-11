@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 
+import requests
+
 from rlm.v100.activity import ActivityLog
 from rlm.v100.common import atomic_json, load_profile
 
@@ -164,13 +166,12 @@ def execute(root: Path, job: dict) -> dict:
         )
     from rlm.v100.competition import helper_client
     from rlm.v100.goals import load_goal
+    from rlm.v100.income_work import accepted_master
     from rlm.v100.mission_chat import preferences
     from rlm.v100.remote_helper import remote_profile, selected_helper
     from rlm.v100.researchers import research_task
 
     if preferences(root).get("remote_helper_enabled", True) is False:
-        from rlm.v100.income_work import accepted_master
-
         client = accepted_master(root, job["branch"])
     else:
         profile = load_profile(selected_helper(root), root)
@@ -180,12 +181,30 @@ def execute(root: Path, job: dict) -> dict:
             )
         profile["runtime"]["max_timeout"] = min(120, profile["runtime"]["max_timeout"])
         client = helper_client(profile, root, job["branch"])
-        client.identity()
+        try:
+            client.identity()
+        except requests.RequestException as error:
+            ActivityLog(root, job["branch"], "resident-" + job["kind"]).write(
+                "steps",
+                "local-master-fallback",
+                {
+                    "reason": str(error)[:300],
+                    "scope": "Remote transport unavailable; accepted local master only, no changed-identity fallback",
+                },
+            )
+            client = accepted_master(root, job["branch"])
+    client.research_tool_steps = 6
     client.activity_actor = "resident-" + job["kind"]
     client.research_tool_names = {
         "income_opportunities",
         "register_income_opportunity",
         "goal_learning_status",
+        "suggest_goal_forecast",
+        "sandbox_run",
+        "sandbox_status",
+        "propose_compute_trial",
+        "compute_trial_status",
+        "propose_colab_trial",
         "observe_goal_source",
         "predict_goal_pattern",
         "mission_evidence",

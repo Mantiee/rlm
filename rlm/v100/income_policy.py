@@ -24,7 +24,7 @@ def read(root: Path) -> dict:
             "capital_research": False,
             "real_orders": False,
             "spending": False,
-            "scope": "Hypothetical research only; no spending, accounts, outreach or real orders",
+            "scope": "Real spendable capital unavailable; hypothetical funded research and public/guest experiments allowed. External submissions use the existing operator review. No spending or real orders",
         }
     )
 
@@ -36,7 +36,8 @@ def setting(message: str) -> bool | None:
     ):
         return None
     if not re.search(
-        r"\b(?:zmien|ustaw|przelacz|wlacz|wylacz|zaloz|zakladaj|masz zalozyc|switch|enable|disable|change|assume)\b", value
+        r"\b(?:zmien|ustaw|przelacz|wlacz|wylacz|zaloz|zakladaj|masz zalozyc|switch|enable|disable|change|assume)\b",
+        value,
     ):
         return None
     if not re.search(r"kapital|capital|deposit|wplat|funded|zero.upfront", value):

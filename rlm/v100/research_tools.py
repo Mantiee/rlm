@@ -33,6 +33,15 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "suggest_goal_forecast",
+        "Inspect a CPU shadow forecast learned from independently settled active-goal outcomes. Return probabilities for a fresh numeric target; horizon and threshold use predict_goal_pattern units. Does not commit a forecast, change Gemma weights, certify an edge or place an order. Use the receipt and compare uniform/cash baselines.",
+        {
+            "target": {"type": "string"},
+            "horizon_seconds": {"type": "integer"},
+            "threshold": {"type": "number"},
+        },
+    ),
+    tool_schema(
         "inspect_trade_costs",
         "Read exact archived trade cost decomposition at execution and later close valuations. Distinguish entry fees/slippage, estimated exit costs, and subsequent market movement. Does not change reports or certify vendor accuracy.",
         {},
@@ -624,6 +633,14 @@ class ResearchTools:
             from rlm.v100.goal_learning import observe
 
             return observe(self.root, **arguments)
+        if name == "suggest_goal_forecast" and set(arguments) == {
+            "target",
+            "horizon_seconds",
+            "threshold",
+        }:
+            from rlm.v100.goal_policy import suggest
+
+            return suggest(self.root, **arguments)
         if name == "predict_goal_pattern" and set(arguments) == {"specification"}:
             from rlm.v100.goal_learning import predict
 
@@ -1211,7 +1228,10 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
     router.sampling_args = dict(client.sampling_args)
     router.sampling_args["max_tokens"] = min(1024, client.sampling_args.get("max_tokens", 512))
     router.enable_thinking = False
-    for _ in range(3):
+    tool_steps = getattr(client, "research_tool_steps", 3)
+    if type(tool_steps) is not int or not 1 <= tool_steps <= 8:
+        raise ValueError("Research tool budget must be 1-8 steps")
+    for _ in range(tool_steps):
         available_tools = copy.deepcopy(selected_tools)
         for tool in available_tools:
             if tool["function"]["name"] == "read_source":

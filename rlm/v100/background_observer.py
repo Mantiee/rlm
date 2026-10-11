@@ -19,6 +19,9 @@ def tick(root: Path) -> None:
 
     try:
         goal_tick(root)
+        from rlm.v100.goal_policy import update
+
+        update(root)
     except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
         ActivityLog(root, "controller", "goal-learning").write(
             "errors", "goal-observer-failed", {"detail": str(error)[:400]}

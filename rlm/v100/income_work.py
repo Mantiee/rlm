@@ -123,6 +123,8 @@ def execute(root: Path, job: dict) -> dict:
             ):
                 pending = saved
     index = previous.get("next_source", 0) if same_goal else 0
+    if index > len(STARTING_SOURCES) or not pending and index >= len(STARTING_SOURCES):
+        return execute_goal_work(root, job, goal, previous if same_goal else {})
     domain, url = STARTING_SOURCES[index % len(STARTING_SOURCES)]
     if pending:
         domain, url = previous["domain"], previous["url"]
@@ -254,4 +256,92 @@ def execute(root: Path, job: dict) -> dict:
     value["updated"] = time.time()
     atomic_json(path, value)
     journal.write("steps", "income-work-result", value)
+    return value
+
+
+def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict:
+    """After commissioning sources, let the accepted model select and execute work."""
+    from rlm.v100.income_policy import read as income_policy
+    from rlm.v100.researchers import research_task
+
+    path = root / "research/income-work/status.json"
+    value = {
+        "goal_id": goal["id"],
+        "job_id": job["id"],
+        "updated": time.time(),
+        "mode": "model-selected experiments",
+        "next_source": max(3, previous.get("next_source", 3)),
+        "sources_collected": previous.get("sources_collected", 0),
+        "proposals_registered": previous.get("proposals_registered", 0),
+        "actual_income_pln": None,
+        "scope": "Executed tool receipts are separate from estimates, task correctness, paper P&L and actual revenue. No spending or real orders.",
+    }
+    atomic_json(path, {**value, "state": "selecting next experiment"})
+    try:
+        client = accepted_master(root, job["branch"])
+        client.request_deadline = time.monotonic() + 180
+        client.research_token_ceiling = 2048
+        client.sampling_args = dict(client.sampling_args) | {"max_tokens": 2048}
+        client.research_tool_steps = 6
+        # Available named tools retain their own resource, network and data gates.
+        # The model selects a source, domain and experiment, not a fixed URL rotation.
+        client.research_tool_names = None
+        result = research_task(
+            client,
+            job["branch"],
+            {
+                "role": "researcher",
+                "brief": "Choose and EXECUTE one useful next experiment toward the income goal. Inspect receipts and blockers; revise losing tests. Use legal public WWW, guest code/browser and eligible free compute. Real spendable capital is zero; test allocated PAPER capital after costs. Produce an artifact, commit a forecast or run a test; report exact receipts and missing inputs. No invented income or placeholder work.",
+            },
+            [
+                {
+                    "capital_contract": {
+                        "real_spendable_pln": 0,
+                        "paper_capital": "Read paper_status for the existing A/B virtual balances; do not reset them",
+                        "policy": income_policy(root),
+                    },
+                    "previous_work": {
+                        key: previous.get(key)
+                        for key in ("state", "error", "result_path", "candidate_id", "dossier")
+                    },
+                    "execution_scope": "Public research, local deliverables and hypothetical funded tests are authorized. Respect source terms and resource limits. Exact external submissions use existing operator review; credentials, eligibility or acceptance of new service terms need the operator. No paid compute, real money or impersonation.",
+                }
+            ],
+            root,
+        )
+        if (load_goal(root) or {}).get("id") != goal["id"]:
+            raise ValueError(
+                "Goal changed during work; receipts retained, not current-goal evidence"
+            )
+        trace = result.get("research_trace", [])
+        successful = [
+            row
+            for row in trace
+            if row.get("result", {}).get("status") not in ("failed", "blocked")
+            and row.get("result", {}).get("state") not in ("failed", "blocked")
+            and row.get("result", {}).get("exit_code", 0) == 0
+            and not row.get("result", {}).get("error")
+        ]
+        identity = str(time.time_ns())
+        result_path = root / "research/income-work/experiments" / (identity + ".json")
+        atomic_json(result_path, {"goal_id": goal["id"], "result": result, "scope": value["scope"]})
+        value.update(
+            state="model-selected tool work recorded"
+            if successful
+            else "advisory only; no successful tool receipt",
+            result_path=str(result_path),
+            tool_receipts=len(trace),
+            successful_tool_receipts=len(successful),
+            sources_collected=value["sources_collected"]
+            + sum(row.get("tool") == "observe_goal_source" for row in successful),
+            proposals_registered=value["proposals_registered"]
+            + sum(row.get("tool") == "register_income_opportunity" for row in successful),
+        )
+    except (MasterNotReady, ValueError, OSError, RuntimeError, requests.RequestException) as error:
+        value.update(
+            state="model-selected work blocked", error=str(error)[:400], retry_after_seconds=120
+        )
+    value["updated"] = time.time()
+    atomic_json(path, value)
+    ActivityLog(root, job["branch"], "income-research").write("steps", "goal-work-result", value)
     return value

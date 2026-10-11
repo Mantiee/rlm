@@ -407,7 +407,7 @@ def test_stop_only_signals_verified_mission_session(tmp_path, monkeypatch, owned
     "ceiling, first, selected", [(32768, 32768, 16384), (131072, 131072, 65536)]
 )
 @pytest.mark.parametrize("financial", [False, True])
-def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
+def test_mission_enters_continuous_learning_without_duplicate_startup_research(
     tmp_path, monkeypatch, ceiling, first, selected, financial
 ):
     profile = mission_inputs(tmp_path)
@@ -424,7 +424,6 @@ def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
         yield chosen
 
     monkeypatch.setattr(mission, "managed_server", server)
-    monkeypatch.setattr(mission, "waiting_researcher", server)
     monkeypatch.setattr(mission, "require_idle_gpu", lambda: None)
     monkeypatch.setattr(mission, "gpu_free_gib", lambda: next(capacities))
     monkeypatch.setattr(mission, "helper_client", lambda *args: None)
@@ -452,7 +451,10 @@ def test_mission_researches_before_auto_baseline_then_enters_infinite_learning(
         continuous, "learn_loop", lambda *args, **kwargs: events.append(("learning", kwargs))
     )
     mission.run(tmp_path, profile, directory)
-    assert events.index(("research",)) < events.index(("baseline",))
+    assert ("research",) not in events
+    assert events.index(("baseline",)) < next(
+        i for i, event in enumerate(events) if event[0] == "learning"
+    )
     assert ("serve", first) in events and ("serve", selected) in events
     assert events[-1][0] == "learning"
     assert events[-1][1]["cycles"] == 0 and events[-1][1]["initial_update"] is True

@@ -30,7 +30,7 @@ PAPER_PROMPT = (
     "liquidity or rules make a trade ineligible. Historical knowledge in your pretrained "
     "weights is not proof of historical profitability. Only forward observations count. "
     "Use only the supplied registered instruments. A small fast profit is not evidence "
-    "of a repeatable edge. Explain why your proposal beats holding cash and what could "
+    "of a repeatable edge. Real spendable capital is zero, but the allocated PAPER balance is fully available for eligible simulations. Do not treat lack of real deposits as a reason to skip paper tests. Explain why your proposal beats holding cash and what could "
     "invalidate it. Do not change host risk limits, fees, timestamps, ledger or evaluator."
 )
 
@@ -146,7 +146,7 @@ def paper_round(
                 selected_branch,
                 {
                     "role": "researcher",
-                    "brief": "Read income_opportunities. Seek a concrete zero-deposit income mechanism across domains, including outside markets. Archive primary terms with observe_goal_source, then register_income_opportunity with demand, net costs, labor, eligibility, first-income delay and falsification. Prepare a useful test or deliverable. No UI, placeholder scripts, outreach, accounts, spending or profit claims.",
+                    "brief": "Read income_opportunities. Compare income mechanisms across domains using primary terms, demand, costs, labor and eligibility. Use observe_goal_source and register_income_opportunity, then EXECUTE a useful test or deliverable through public WWW/guest tools. Real capital is zero; existing PAPER balances are usable for funded simulations. No spending, real orders or invented income.",
                 },
                 [
                     {
@@ -172,10 +172,10 @@ def paper_round(
             ]
             if income_research:
                 jobs[0]["brief"] = (
-                    "Read get_plan and income_opportunities. Find a different lawful zero-deposit mechanism, "
-                    "including outside markets. Archive primary terms with observe_goal_source; register_income_opportunity "
-                    "with net estimates, labor, eligibility, demand and a falsifiable test. Prepare a useful deliverable "
-                    "or precommit a future forecast. No UI, sales, accounts, spending or profit claims."
+                    "Read plans and income_opportunities. Compare legal income mechanisms using primary terms, "
+                    "demand, costs, labor and eligibility. Register fresh evidence, then execute a useful test, "
+                    "deliverable or forecast with WWW/guest tools. Real capital is zero; existing PAPER balances "
+                    "are testable. Include free compute when useful. No real orders, spending or invented income."
                 )
                 jobs[1]["brief"] = (
                     "Critique the income or self-upgrade hypothesis: legality, costs, time to "
@@ -203,7 +203,19 @@ def paper_round(
             def work(job, selected_profile=profile, selected_branch=branch, data=observations):
                 worker = helper_client(selected_profile, book.root, selected_branch)
                 available = getattr(worker, "research_tool_names", None)
+                worker.research_tool_steps = 6
                 worker.research_tool_names = {
+                    "capabilities",
+                    "mission_evidence",
+                    "read_tool_result",
+                    "suggest_goal_forecast",
+                    "inspect_trade_costs",
+                    "audit_backtests",
+                    "inspect_web_page",
+                    "open_web_page",
+                    "prepare_web_submission",
+                    "sandbox_run",
+                    "sandbox_status",
                     "goal_learning_status",
                     "income_opportunities",
                     "register_income_opportunity",

@@ -1,7 +1,7 @@
 """Forward-only financial task commissioning, independent of model tool choice.
 
-These are declared uniform-probability reference forecasts, never claimed model
-insight, trading signals, fees verification, or proof of profitable patterns.
+Uniform references and separately identified learned CPU shadow forecasts are
+never claimed Gemma insight, trading signals, fees verification or profit.
 """
 
 import json
@@ -54,7 +54,7 @@ def tick(root: Path) -> dict:
                 "SELECT data FROM forecasts WHERE outcome IS NULL AND due>=?", (now - 300,)
             )
         ]
-        if len(pending) >= 24:
+        if len(pending) > 20:
             return {
                 "state": "waiting",
                 "goal_id": goal["id"],
@@ -65,6 +65,8 @@ def tick(root: Path) -> dict:
             for row in pending
             if row["plan"]["long"]["id"] == goal["id"]
         }
+    from rlm.v100.goal_policy import suggest
+
     results = []
     for offset in range(2):
         product = PRODUCTS[(index + offset) % len(PRODUCTS)]
@@ -91,12 +93,30 @@ def tick(root: Path) -> dict:
                     "probabilities": [1 / 3, 1 / 3, 1 / 3],
                 },
             )
+            learned = suggest(root, observation["id"], 300, max(abs(value) * 0.001, 0.000001))
+            shadow = predict(
+                root,
+                "B",
+                {
+                    "question": f"Controller learned shadow: {product}-USD direction over 300 seconds",
+                    "rationale": "CPU online shadow policy trained on independently settled labels; prospective test, not Gemma skill or a trading instruction. Policy data SHA256: "
+                    + learned["policy_data_sha256"],
+                    "evidence": [observation["id"]],
+                    "target": observation["id"],
+                    "horizon_seconds": 300,
+                    "threshold": max(abs(value) * 0.001, 0.000001),
+                    "probabilities": learned["probabilities"],
+                },
+            )
             results.append(
                 {
                     "product": product,
                     "id": receipt["id"],
                     "state": receipt["state"],
                     "due": receipt["due"],
+                    "shadow_id": shadow["id"],
+                    "shadow_probabilities": learned["probabilities"],
+                    "shadow_trained_outcomes": learned["trained_outcomes"],
                 }
             )
         except Exception as error:

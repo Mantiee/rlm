@@ -79,21 +79,27 @@ def test_financial_references_precommit_and_resolve_real_future_labels(tmp_path,
         result = goal_observer.tick(tmp_path)
         assert result["state"] == "collecting"
         assert len(result["results"]) == 2
-    assert goal_learning.status(tmp_path)["pending_total"] == 8
+    assert goal_learning.status(tmp_path)["pending_total"] == 16
     # No future label exists until a host observation after the committed horizon.
     assert goal_learning.records(tmp_path) == []
     clock[0] = 1301.0
     price[0] = 105.0
-    goal_learning.tick(tmp_path)
-    goal_learning.tick(tmp_path)
+    for _ in range(4):
+        goal_learning.tick(tmp_path)
     records = goal_learning.records(tmp_path)
-    assert len(records) == 8
+    assert len(records) == 16
     assert len({r["group"] for r in records}) == 8
     assert all(r["messages"][-1]["content"] == "up" for r in records)
-    assert goal_learning.status(tmp_path)["resolved_total"] == 8
+    assert goal_learning.status(tmp_path)["resolved_total"] == 16
     with goal_learning.database(tmp_path) as db:
         forecasts = [json.loads(r[0]) for r in db.execute("SELECT data FROM forecasts")]
-    assert all("Uniform controller reference" in f["specification"]["rationale"] for f in forecasts)
+    assert (
+        sum("Uniform controller reference" in f["specification"]["rationale"] for f in forecasts)
+        == 8
+    )
+    assert (
+        sum("CPU online shadow policy" in f["specification"]["rationale"] for f in forecasts) == 8
+    )
 
 
 def test_source_failure_does_not_fabricate_forecast(tmp_path, monkeypatch):
