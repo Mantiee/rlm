@@ -317,10 +317,12 @@ def waiting_researcher(
                     raise
                 attempt += 1
                 event = {
-                    "phase": "waiting-for-remote-helper",
+                    "phase": "research-on-current-master"
+                    if fallback is not None
+                    else "waiting-for-remote-helper",
                     "endpoint": profile["runtime"]["base_url"],
                     "attempt": attempt,
-                    "retry_seconds": 30,
+                    "retry_seconds": 0 if fallback is not None else 30,
                     "error": type(error).__name__,
                     "detail": str(error)[:400],
                     "checkpoints": "retained; no candidate accepted",

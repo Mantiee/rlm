@@ -3,6 +3,7 @@
 import json
 import re
 import threading
+import time
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -105,6 +106,7 @@ class PaperLearning:
         self.settings = load_settings(self.path)
         self.settings_sha = sha(self.settings)
         self.stop_event = threading.Event()
+        self.fee_retry_after = 0.0
         self.failure: Exception | None = None
         self.worker: threading.Thread | None = None
         self.scope = ExitStack()
@@ -155,16 +157,28 @@ class PaperLearning:
                 if kraken:
                     from datetime import UTC, datetime, timedelta
 
-                    from rlm.v100.spot_bootstrap import prepare
+                    from rlm.v100.spot_bootstrap import FeeSourceUnavailable, prepare
 
-                    if any(
+                    if time.time() >= self.fee_retry_after and any(
                         datetime.fromisoformat(
                             state["fee_profiles"][item["fee_profile"]]["valid_until"]
                         )
                         <= datetime.now(UTC) + timedelta(hours=1)
                         for item in kraken
                     ):
-                        prepare(self.root, refresh=True)
+                        try:
+                            prepare(self.root, refresh=True)
+                        except FeeSourceUnavailable as error:
+                            self.fee_retry_after = time.time() + 3600
+                            self.note(
+                                "fee-refresh-blocked",
+                                {
+                                    "error": type(error).__name__,
+                                    "detail": str(error)[:500],
+                                    "retry_at": self.fee_retry_after,
+                                    "scope": "Existing fee expiry and fill gates unchanged. Quotes, research and independent verified learning may continue; no guessed fees or expiry extension.",
+                                },
+                            )
                 poll_crypto(book, self.stop_event.is_set)
             from rlm.v100.provider_registry import poll as poll_registered
             from rlm.v100.reward_policy import train as train_reward

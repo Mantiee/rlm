@@ -7,12 +7,21 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from urllib3.exceptions import HTTPError
+
 from rlm.v100.common import atomic_json
 from rlm.v100.paper import FEE_FIELDS, PaperBook
 from rlm.v100.paper_feeds import poll_crypto, public_json
 from rlm.v100.research_tools import TextOnly, download_page
 
-FEES_URL = "https://www.kraken.com/features/fee-schedule"
+FEES_URL = "https://www.kraken.com/en-us/features/fee-schedule"
+FEE_SOURCE_URLS = {FEES_URL, "https://www.kraken.com/features/fee-schedule"}
+
+
+class FeeSourceUnavailable(ValueError):
+    """An unverified fee publication blocks fills, not unrelated observations."""
+
+
 PAIRS_URL = "https://api.kraken.com/0/public/AssetPairs?pair=XBTUSD,ETHUSD"
 
 
@@ -141,9 +150,24 @@ def prepare(root: Path, refresh: bool = False, pair_codes: list[str] | None = No
                 "status": "existing paper spot configuration retained",
                 "weights_changed": False,
             }
-        url, body = download_page(FEES_URL, max_bytes=2 * 2**20)
-        if url != FEES_URL:
-            raise ValueError("Unexpected fee-source redirect")
+        try:
+            url, body = download_page(FEES_URL, max_bytes=2 * 2**20, language="en-US")
+        except (ValueError, OSError, HTTPError) as error:
+            atomic_json(
+                root / "research/paper/fee-source-status.json",
+                {
+                    "source_url": FEES_URL,
+                    "state": "blocked",
+                    "error": str(error)[:500],
+                    "updated": time.time(),
+                    "scope": "Fee publication unavailable; existing expiry unchanged, no guessed replacement",
+                },
+            )
+            raise FeeSourceUnavailable(
+                "Fee publication unavailable: " + str(error)[:400]
+            ) from error
+        if url not in FEE_SOURCE_URLS:
+            raise FeeSourceUnavailable("Unexpected fee-source redirect")
         digest = hashlib.sha256(body.encode()).hexdigest()
         snapshot = root / "research/paper/sources" / (digest + ".html")
         snapshot.parent.mkdir(parents=True, exist_ok=True)
@@ -162,7 +186,7 @@ def prepare(root: Path, refresh: bool = False, pair_codes: list[str] | None = No
                 root / "research/paper/fee-source-status.json",
                 {**fee_receipt, "state": "blocked", "error": str(error)},
             )
-            raise ValueError(f"{error}; archived source {digest}") from error
+            raise FeeSourceUnavailable(f"{error}; archived source {digest}") from error
         atomic_json(
             root / "research/paper/fee-source-status.json",
             {**fee_receipt, "state": "parsed", "taker_fee_bps": taker},
@@ -177,7 +201,7 @@ def prepare(root: Path, refresh: bool = False, pair_codes: list[str] | None = No
         ):
             raise ValueError("Kraken instrument rules unavailable")
         identity = "kraken-tier1-" + str(time.time_ns())
-        evidence = {"source_url": FEES_URL, "source_sha256": digest, "available_at": observed}
+        evidence = {"source_url": url, "source_sha256": digest, "available_at": observed}
         profile = {
             **dict.fromkeys(FEE_FIELDS, "0"),
             **evidence,

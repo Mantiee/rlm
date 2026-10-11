@@ -1,6 +1,9 @@
 
 ---
 
+Synta v73 keeps paper observations running when the fee publication cannot be verified,
+without extending expired fees or admitting fills. See [SYNTA_V73.md](SYNTA_V73.md).
+
 Synta v72 adds public web/form tools with explicit one-shot operator approval and
 fixes historical trade markers to use execution-time valuations. Read-only questions
 can inspect actual evidence. See [SYNTA_V72.md](SYNTA_V72.md).

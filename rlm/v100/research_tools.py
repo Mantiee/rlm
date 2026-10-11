@@ -513,9 +513,13 @@ def public_origin(url: str) -> tuple[object, str]:
     return origin, sorted(addresses)[0]
 
 
-def download_page(url: str, max_bytes: int = 262144) -> tuple[str, str]:
+def download_page(
+    url: str, max_bytes: int = 262144, *, language: str | None = None
+) -> tuple[str, str]:
     if type(max_bytes) is not int or not 262144 <= max_bytes <= 2 * 2**20:
         raise ValueError("Invalid bounded source read budget")
+    if language is not None and not re.fullmatch(r"[a-z]{2}(?:-[A-Z]{2})?", language):
+        raise ValueError("Invalid source language")
     for _ in range(3):
         origin, address = public_origin(url)
         # Connect to the already checked IP, retaining hostname verification and
@@ -541,6 +545,7 @@ def download_page(url: str, max_bytes: int = 262144) -> tuple[str, str]:
                     "Host": origin.hostname,
                     "User-Agent": "V100-Research/0.1",
                     "Accept-Encoding": "identity",
+                    **({"Accept-Language": language} if language is not None else {}),
                 },
                 redirect=False,
                 retries=False,
