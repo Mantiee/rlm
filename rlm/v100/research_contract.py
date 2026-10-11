@@ -19,7 +19,6 @@ NON_MARKET = re.compile(
     r"micro.?tasks?|micro.?tasking|affiliate|paid (?:studies|surveys)|user.?testing|software bounty|freelanc|mikrozada|ankiet|prolific|data label(?:ing|ling)|outside markets|content or services",
     re.I,
 )
-EXECUTED = {"register_income_opportunity", "predict_goal_pattern"}
 PAPER = re.compile(r"paper[ -]trad|paper (?:profit|simulation|p.?&.?l)|trading simulation", re.I)
 
 
@@ -39,15 +38,23 @@ def assessment(root: Path, result: dict, historical: bool = False) -> dict:
     trace = result.get("research_trace", [])
     evidence = []
     work = []
+    proposals, forecasts, processes = [], [], []
     for receipt in trace:
         value = receipt.get("result", {})
-        if value.get("status") == "failed" or value.get("error"):
+        if value.get("status") in {"failed", "blocked"} or value.get("state") == "blocked" or value.get("error"):
             continue
         identity = value.get("id")
         if receipt.get("tool") == "observe_goal_source" and identity:
             evidence.append(identity)
-        if receipt.get("tool") in EXECUTED and identity:
-            work.append({"tool": receipt["tool"], "id": identity})
+        tool = receipt.get("tool")
+        if tool == "register_income_opportunity" and identity:
+            proposals.append(identity)
+        elif tool == "predict_goal_pattern" and identity:
+            forecasts.append(identity)
+        elif tool == "backtest_prices" and value.get("report") and not value.get("cache_reused"):
+            work.append({"tool": tool, "report": value["report"]})
+        elif tool == "sandbox_run" and value.get("exit_code") == 0:
+            processes.append({"tool": tool, "scope": "Process exit only, not task validation"})
     goal_id = (load_goal(root) or {}).get("id", "no-goal")
     normalized = [re.sub(r"\W+", " ", text.casefold()).strip() for text in (hypothesis, test)]
     identity = hashlib.sha256(json.dumps([goal_id, *normalized]).encode()).hexdigest()
@@ -75,13 +82,19 @@ def assessment(root: Path, result: dict, historical: bool = False) -> dict:
             "rejected test"
             if reason
             else "repeated advisory"
-            if repeated and not work
+            if repeated and not (work or forecasts or processes)
             else "executed research receipt"
             if work
+            else "forecast committed - outcome pending"
+            if forecasts
+            else "process executed - task validation missing"
+            if processes
+            else "proposal registered - no executed test"
+            if proposals
             else "advisory only - no executed test"
         )
         value = {
-            "contract_version": 2,
+            "contract_version": 3,
             "historical_audit": historical,
             "id": identity,
             "goal_id": goal_id,
@@ -92,7 +105,10 @@ def assessment(root: Path, result: dict, historical: bool = False) -> dict:
             "repeated_advisory_test": repeated_test,
             "evidence_ids": evidence,
             "work_receipts": work,
-            "eligible_for_review": reason is None and (not repeated or bool(work)),
+            "proposal_receipts": proposals,
+            "forecast_commitments": forecasts,
+            "process_receipts": processes,
+            "eligible_for_review": reason is None and (not repeated or bool(work or forecasts or processes)),
             "scope": "Lexical category and receipt audit only; no profit, causal or ML-label certification",
         }
         if not historical:
@@ -116,7 +132,7 @@ def repair_history(root: Path) -> dict:
         ).fetchall()
         for sequence, encoded in rows:
             value = json.loads(encoded)
-            if value.get("research_quality", {}).get("contract_version") == 2:
+            if value.get("research_quality", {}).get("contract_version") == 3:
                 continue
             value["research_quality"] = assessment(root, value, historical=True)
             value["status"] = value["research_quality"]["state"]

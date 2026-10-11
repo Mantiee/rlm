@@ -18,6 +18,17 @@ from rlm.v100.income_policy import normalized, read
 PRICE_URL = "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600"
 
 
+def retained(root: Path, previous: dict) -> dict:
+    for row in previous["comparisons"]:
+        source = Path(row["report"]).resolve()
+        if (
+            not source.is_relative_to((root / "research/backtests").resolve())
+            or hashlib.sha256(source.read_bytes()).hexdigest() != row["sha256"]
+        ):
+            raise ValueError("Recorded historical report checksum differs; reuse refused")
+    return {**previous, "cache_reused": True}
+
+
 def requested(message: str) -> bool:
     value = normalized(message)
     return (
@@ -77,14 +88,7 @@ def compare(root: Path) -> dict:
         and previous.get("state") == "completed"
         and 0 <= time.time() - previous["updated"] < 3600
     ):
-        for row in previous["comparisons"]:
-            source = Path(row["report"]).resolve()
-            if (
-                not source.is_relative_to((root / "research/backtests").resolve())
-                or hashlib.sha256(source.read_bytes()).hexdigest() != row["sha256"]
-            ):
-                raise ValueError("Recorded historical report checksum differs; reuse refused")
-        return {**previous, "cache_reused": True}
+        return retained(root, previous)
     log = ActivityLog(root, "A", "market-research")
     log.write("tools", "comparison-start", {"url": PRICE_URL, "goal_id": goal_id})
     value = {
@@ -158,11 +162,20 @@ def commission(root: Path) -> dict:
         previous.get("goal_id") != goal_id or not read(root)["capital_research"]
     ):
         cancel(root, previous["receipt"]["id"])
-    value = {"goal_id": goal_id, "updated": time.time(), "state": "not enabled"}
+    if (
+        previous.get("mode") == "once"
+        and previous.get("receipt", {}).get("id")
+        and previous.get("goal_id") == goal_id
+        and read(root)["capital_research"]
+    ):
+        return previous
+    if previous.get("receipt", {}).get("id") and previous.get("mode") != "once":
+        cancel(root, previous["receipt"]["id"])
+    value = {"goal_id": goal_id, "updated": time.time(), "state": "not enabled", "mode": "once"}
     if read(root)["capital_research"] and goal_id:
         try:
             value.update(
-                state="commissioned", receipt=schedule(root, "A", "market-research", goal_id, 3600)
+                state="commissioned", receipt=schedule(root, "A", "market-research", goal_id, 0)
             )
         except (ValueError, OSError, sqlite3.Error) as error:
             value.update(state="blocked", error=str(error))
@@ -182,4 +195,12 @@ def execute(root: Path, goal_id: str) -> dict:
     profile = json.loads((run / "input-profile.json").read_text())
     if not profile.get("resources", {}).get("paper_research_enabled"):
         return {"state": "blocked", "error": "Income research disabled by operator"}
+    path = root / "research/market-research/status.json"
+    previous = json.loads(path.read_text()) if path.exists() else {}
+    if previous.get("goal_id") == goal_id and previous.get("state") == "completed":
+        return {
+            **retained(root, previous),
+            "commissioning_complete": True,
+            "next_work": "Accepted master selects a different falsifiable experiment from retained failures; fixed commissioning rules are not an hourly strategy search. Explicit backtest tools remain available.",
+        }
     return compare(root)

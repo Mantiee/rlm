@@ -113,11 +113,25 @@ def historical_series(path: Path) -> dict:
         events,
         capture_executions=True,
     )
+    # Hold the original selected rule and lookback fixed. This is a diagnostic
+    # counterfactual, not another parameter search or an attainable free trade.
+    frictionless = simulate(
+        bars,
+        start,
+        len(bars),
+        args["rule"],
+        report["selected_lookback_on_training_only"],
+        0,
+        0,
+        events,
+        capture_executions=True,
+    )
     points = [
         {
             "time": bars[start]["open_time"],
             "equity": 1.0,
             "spot_equity": 1.0,
+            "frictionless_equity": 1.0,
             "price": bars[start]["open"],
             "valuation": "initial capital",
         }
@@ -135,6 +149,12 @@ def historical_series(path: Path) -> dict:
                             "time": execution["time"],
                             "equity": execution["equity_before"],
                             "spot_equity": execution["spot_equity_before"],
+                            "frictionless_equity": next(
+                                t["equity_before"]
+                                for t in frictionless["executions"]
+                                if t["time"] == execution["time"]
+                                and t["action"] == execution["action"]
+                            ),
                             "price": execution["reference_price"],
                             "valuation": "before execution",
                         },
@@ -142,6 +162,12 @@ def historical_series(path: Path) -> dict:
                             "time": execution["time"],
                             "equity": execution["equity_after"],
                             "spot_equity": execution["spot_equity_after"],
+                            "frictionless_equity": next(
+                                t["equity_after"]
+                                for t in frictionless["executions"]
+                                if t["time"] == execution["time"]
+                                and t["action"] == execution["action"]
+                            ),
                             "price": execution["reference_price"],
                             "valuation": "after execution; estimated liquidation value",
                         },
@@ -152,6 +178,7 @@ def historical_series(path: Path) -> dict:
                 "time": bar["available_at"],
                 "equity": point["marked_equity"],
                 "spot_equity": cash + units * bar["close"],
+                "frictionless_equity": frictionless["trace"][i]["marked_equity"],
                 "price": bar["close"],
                 "valuation": "bar close; subsequent price movement and estimated exit costs",
             }
@@ -165,6 +192,7 @@ def historical_series(path: Path) -> dict:
                     "time": execution["time"],
                     "equity": execution["equity_after"],
                     "spot_equity": execution["spot_equity_after"],
+                    "frictionless_equity": 1 + frictionless["net_return"],
                     "price": execution["reference_price"],
                     "valuation": "after sample-end liquidation; exit costs paid",
                 }
@@ -186,6 +214,17 @@ def historical_series(path: Path) -> dict:
             "fee_bps_per_leg": args["fee_bps"],
             "slippage_bps_per_leg": args["slippage_bps"],
             "source": "Archived simulation assumptions, not certified venue fees",
+        },
+        "diagnostics": {
+            "same_signals_without_costs_return": frictionless["net_return"],
+            "cost_drag_return_difference": frictionless["net_return"] - replay["net_return"],
+            "buy_hold_net_return": report.get("buy_hold_baseline", {}).get("net_return"),
+            "state": "losing even without costs"
+            if frictionless["net_return"] <= 0
+            else "positive without costs, losing after costs"
+            if replay["net_return"] <= 0
+            else "positive historical sample only",
+            "scope": "Same archived signals and lookback; zero-cost counterfactual. Difference includes changed capital compounding, not merely paid fee totals. Does not certify future profits or market prices.",
         },
         "scope": "Archived historical development sample, independently replayed. Assumed fees/slippage; not forward paper or actual income. Equity is liquidation value including estimated exit costs. Buy markers are at execution reference prices; close points include subsequent market movement.",
         "report": str(path),

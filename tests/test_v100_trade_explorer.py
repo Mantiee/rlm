@@ -62,6 +62,13 @@ def test_historical_chart_replays_original_metrics_and_retains_losses(tmp_path):
     )
     assert series["points"][-1]["equity"] - 1 == pytest.approx(series["net_pnl"])
     assert series["total_costs"] > 0
+    diagnostic = series["diagnostics"]
+    assert diagnostic["cost_drag_return_difference"] == pytest.approx(
+        diagnostic["same_signals_without_costs_return"] - series["net_pnl"]
+    )
+    assert series["points"][-1]["frictionless_equity"] - 1 == pytest.approx(
+        diagnostic["same_signals_without_costs_return"]
+    )
     (path.parent / "source-0.json").write_text("[]")
     chart = trade_explorer.snapshot(tmp_path)
     assert not chart["series"] and "source changed" in chart["errors"][0]
@@ -145,6 +152,8 @@ def test_execution_friction_is_separate_from_later_price_drop():
     captured = backtesting.simulate(bars, 2, 4, "buy_hold", 1, 50, 10, capture_executions=True)
     assert all(captured[key] == value for key, value in original.items())
     buy = captured["executions"][0]
+    assert buy["signal_available_at"] <= buy["time"]
+    assert buy["signal_change"] == 0
     assert buy["spot_equity_after"] == pytest.approx(1 / (1.001 * 1.005))
     assert 0.005 < 1 - buy["spot_equity_after"] < 0.007
     assert 0.011 < 1 - buy["equity_after"] < 0.013

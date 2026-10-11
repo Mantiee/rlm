@@ -32,7 +32,7 @@ def test_repeated_notes_do_not_count_as_work_but_receipts_survive(tmp_path):
     second = research_contract.assessment(tmp_path, row)
     assert second["state"] == "repeated advisory" and not second["eligible_for_review"]
     row["research_trace"] = [{"tool": "register_income_opportunity", "result": {"id": "candidate"}}]
-    assert research_contract.assessment(tmp_path, row)["state"] == "executed research receipt"
+    assert research_contract.assessment(tmp_path, row)["state"] == "repeated advisory"
     row["research_trace"][0]["result"]["status"] = "failed"
     assert not research_contract.assessment(tmp_path, row)["work_receipts"]
 

@@ -79,6 +79,9 @@ def propose(root: Path, branch: str = "A") -> dict:
             "reason": "Need 8 training and 4 source-disjoint validation outcomes across 2 validation groups",
             "train": len(train),
             "validation": len(validation),
+            "training_groups": len({r["group"] for r in train}),
+            "validation_groups": len({r["group"] for r in validation}),
+            "next_evidence": "Collect genuinely independent outcome series; repeated observations do not create held-out source groups. Do not weaken the split to start a job.",
         }
     # Never shorten a full master example. This independent tiny baseline consumes
     # a documented compact projection and can be rejected by host evaluation.

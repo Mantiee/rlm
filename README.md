@@ -242,4 +242,6 @@ For private phone access, see [SYNTA_REMOTE_ACCESS.md](SYNTA_REMOTE_ACCESS.md).
 The remote dashboard and master chat share mobile navigation; an existing v67/v68
 gateway can receive the [v69 repair](SYNTA_V69.md) without restarting the mission.
 
+Strategy evidence, truthful learning comparisons and dashboard startup recovery: [SYNTA_V76.md](SYNTA_V76.md).
+
 Dashboard v75 navigation, metric definitions and targeted upgrade: [SYNTA_V75.md](SYNTA_V75.md).

@@ -277,6 +277,39 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
         "scope": "Executed tool receipts are separate from estimates, task correctness, paper P&L and actual revenue. No spending or real orders.",
     }
     atomic_json(path, {**value, "state": "selecting next experiment"})
+    previous_evidence = {}
+    if previous.get("result_path"):
+        saved_path = Path(previous["result_path"]).resolve()
+        if not saved_path.is_relative_to((root / "research/income-work/experiments").resolve()):
+            raise ValueError("Previous work receipt escaped its experiment archive")
+        if saved_path.is_file() and saved_path.stat().st_size <= 2 * 2**20:
+            saved = json.loads(saved_path.read_text())
+            if saved.get("goal_id") == goal["id"]:
+                result = saved["result"]
+                previous_evidence = {
+                    key: result.get(key)
+                    for key in ("hypothesis", "suggested_test", "status", "research_quality")
+                }
+                previous_evidence["tools"] = [
+                    {
+                        "tool": row.get("tool"),
+                        "state": row.get("result", {}).get("state"),
+                        "error": row.get("result", {}).get("error"),
+                    }
+                    for row in result.get("research_trace", [])[-8:]
+                ]
+    comparison_path = root / "research/market-research/status.json"
+    comparisons = []
+    if comparison_path.is_file() and comparison_path.stat().st_size <= 2 * 2**20:
+        comparison = json.loads(comparison_path.read_text())
+        if comparison.get("goal_id") == goal["id"]:
+            comparisons = [
+                {
+                    key: row.get(key)
+                    for key in ("report", "parameters", "development_test", "triage")
+                }
+                for row in comparison.get("comparisons", [])[-4:]
+            ]
     try:
         client = accepted_master(root, job["branch"])
         client.request_deadline = time.monotonic() + 180
@@ -304,6 +337,9 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                         key: previous.get(key)
                         for key in ("state", "error", "result_path", "candidate_id", "dossier")
                     },
+                    "previous_experiment_evidence": previous_evidence,
+                    "commissioning_strategy_failures": comparisons,
+                    "experiment_contract": "Do not repeat eligibility summaries, proposal titles or rejected commissioning rules without new evidence. Choose a measurable deliverable or test and execute it. Read previous receipts; name the changed hypothesis and validation method. A cheaper-fee scenario needs venue evidence, not an invented reduction. Never invert signals just to manufacture historical gains.",
                     "execution_scope": "Public research, local deliverables and hypothetical funded tests are authorized. Respect source terms and resource limits. Exact external submissions use existing operator review; credentials, eligibility or acceptance of new service terms need the operator. No paid compute, real money or impersonation.",
                 }
             ],
