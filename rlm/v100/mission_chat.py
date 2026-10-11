@@ -105,7 +105,9 @@ def trade_visualization_requested(message: str) -> bool:
 
     text = normalized(message)
     return bool(
-        re.search(r"wykres|wizualiz|visualiz|chart", text)
+        re.search(r"zrob|dodaj|pokaz|create|show|visualize|wizualizuj", text)
+        and not re.search(r"niemozliwe|blad|glitch|spada|fee|spread|koszt|wrong|error", text)
+        and re.search(r"wykres|wizualiz|visualiz|chart", text)
         and re.search(r"kup|sprzed|buy|sell|transakc|trad|zwrot", text)
     )
 
@@ -502,6 +504,8 @@ def conversational_response(
 
 
 READ_ONLY_TOOLS = {
+    "inspect_trade_costs",
+    "inspect_web_page",
     "read_dashboard",
     "dashboard_status",
     "read_source",
@@ -567,6 +571,16 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    if message.startswith("/approve-web "):
+        from rlm.v100.web_operations import approve
+
+        receipt = approve(root, message.removeprefix("/approve-web ").strip())
+        return {
+            "answer": json.dumps(receipt, ensure_ascii=False),
+            "actions": [],
+            "applied": [receipt],
+            "responder": {"model": "controller-web-approval"},
+        }
     from rlm.v100 import resource_optimization
 
     resource_context = resource_optimization.context(root, request)
@@ -805,7 +819,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
 
     resource_request = chat_resources.instruction(message)
     question_only = quick_question and not resource_request
-    if question_only:
+    if question_only and not profile.get("resources", {}).get("interactive_lab"):
         return conversational_response(
             root,
             client,
@@ -864,7 +878,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 "A plan alone does not implement the request. If blocked, name the exact error and unfinished work. "
                 "read_dashboard returns invalid source for editing; use repair_dashboard to safely repair it with backup. "
                 "Never ask the user to paste guest HTML merely because it failed publication validation. "
-                "Use capabilities to inspect named operations and their scope; never invent missing operations."
+                "Use capabilities to inspect named operations and their scope; never invent missing operations. Public internet reads and guest browser/shell operations are available in the sandbox. Use inspect_trade_costs to investigate execution losses and separate entry friction from later price changes. Use inspect_web_page/open_web_page to inspect public pages and forms, and prepare_web_submission to create a reviewable POST. Only the operator can approve the exact draft with /approve-web ID. Never claim that sandbox isolation means internet actions are impossible, or that a prepared draft was sent."
             ),
         }
     ]
@@ -906,11 +920,15 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         from rlm.v100.dashboard_editor import status as dashboard_status
 
         dashboard_before = dashboard_status(root)
-    if profile.get("resources", {}).get("interactive_lab") and not question_only:
+    if profile.get("resources", {}).get("interactive_lab"):
         from rlm.v100.research_tools import research_turn
 
         client.research_owner = "A"
         client.research_tool_names = {
+            "inspect_trade_costs",
+            "inspect_web_page",
+            "open_web_page",
+            "prepare_web_submission",
             "read_public_page",
             "backtest_prices",
             "audit_backtests",
@@ -946,6 +964,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             "search_memory",
             "read_source",
         }
+        if question_only:
+            client.research_tool_names = READ_ONLY_TOOLS
         if resource_request:
             client.research_tool_names = chat_resources.RESOURCE_TOOLS
             client.resource_only_chat = True

@@ -122,10 +122,11 @@ for(const id of ['trade-series','trade-start','trade-end','trade-metric','trade-
 """
     program += functions
     program += r"""
-const series={id:'real',label:'Forward paper A',currency:'PLN',initial_capital:10000,net_pnl:-10,total_costs:10,scope:'recorded',points:[{time:1,equity:10000},{time:2,equity:9990}],executions:[{time:1,action:'buy',price:100,costs:5,receipt:'buy-proof'},{time:2,action:'close',price:99,costs:5,net_pnl:-10,receipt:'sell-proof'}]};
+const series={id:'real',label:'Forward paper A',currency:'PLN',initial_capital:10000,net_pnl:-10,total_costs:10,scope:'recorded',points:[{time:1,equity:10000},{time:2,equity:9990}],executions:[{time:1,action:'buy',price:100,costs:5,equity_after:9994,receipt:'buy-proof'},{time:2,action:'close',price:99,costs:5,net_pnl:-10,receipt:'sell-proof'}]};
 tradeData={updated:1,series:[series],errors:[]};drawTrades();
 const markers=nodes['trade-plot'].children.filter(n=>n.role==='button');
 if(markers.length!==2)throw Error('Missing first buy or final sell marker');
+if(Math.abs(markers[0].cy-(250-14/30*215))>1e-8)throw Error('Buy marker used nearest close instead of execution equity: '+markers[0].cy+' metric '+tradeMetric);
 markers[1].onclick();if(!nodes['trade-receipt'].open||JSON.parse(nodes['trade-detail'].textContent).net_pnl!==-10)throw Error('Wrong execution receipt');
 const retained=nodes['trade-receipt'];tradeStart=20;tradeEnd=90;tradeData={updated:2,series:[{...series,net_pnl:-20}],errors:[]};drawTrades();
 if(tradeChoice!=='real'||tradeStart!==20||tradeEnd!==90||nodes['trade-receipt']!==retained||!retained.open||tradeSelected!=='sell-proof')throw Error('Selection or expanded receipt reset');
@@ -133,3 +134,27 @@ if(!nodes['trade-summary'].textContent.includes('-20.0000'))throw Error('Live P&
 """
     result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
     assert result.returncode == 0, result.stderr
+
+
+def test_execution_friction_is_separate_from_later_price_drop():
+    bars = [
+        {"open_time": i, "available_at": i + 1, "open": 100, "close": 100 if i < 2 else 97}
+        for i in range(4)
+    ]
+    original = backtesting.simulate(bars, 2, 4, "buy_hold", 1, 50, 10)
+    captured = backtesting.simulate(bars, 2, 4, "buy_hold", 1, 50, 10, capture_executions=True)
+    assert all(captured[key] == value for key, value in original.items())
+    buy = captured["executions"][0]
+    assert buy["spot_equity_after"] == pytest.approx(1 / (1.001 * 1.005))
+    assert 0.005 < 1 - buy["spot_equity_after"] < 0.007
+    assert 0.011 < 1 - buy["equity_after"] < 0.013
+    assert captured["trace"][0]["marked_equity"] < buy["equity_after"] * 0.98
+    assert buy["equity_after"] - buy["spot_equity_after"] == pytest.approx(
+        -buy["estimated_exit_cost"]
+    )
+
+
+def test_cost_complaint_is_not_a_visualization_command(tmp_path):
+    complaint = "niemozliwe ze dobrze dzialaja testy bo na wykresie przy kupowaniu instant spada zwrot o kilka procent przez fee"
+    assert not mission_chat.trade_visualization_requested(complaint)
+    assert mission_chat.direct_facts(tmp_path, complaint) is None

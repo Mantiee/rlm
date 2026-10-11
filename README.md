@@ -1,6 +1,10 @@
 
 ---
 
+Synta v72 adds public web/form tools with explicit one-shot operator approval and
+fixes historical trade markers to use execution-time valuations. Read-only questions
+can inspect actual evidence. See [SYNTA_V72.md](SYNTA_V72.md).
+
 Synta v71 executes resource optimization directly, keeps follow-ups on the operator task,
 and rejects empty/failed work as successful chat completion. CPU concurrency adapts to
 affinity, quota and RAM. See [SYNTA_V71.md](SYNTA_V71.md).

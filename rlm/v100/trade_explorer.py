@@ -42,6 +42,14 @@ def paper_series(root: Path) -> list[dict]:
                 trades.append(
                     {
                         **trade,
+                        **(
+                            {
+                                "equity_after": float(payload["equity"][trade["branch"]]),
+                                "valuation": "After the recorded ledger event; several fills may share this event",
+                            }
+                            if trade.get("branch") in payload.get("equity", {})
+                            else {}
+                        ),
                         "time": row["time"],
                         "sequence": row["sequence"],
                         "receipt": f"{row['sequence']}:{index}:{row['event_hash']}",
@@ -105,20 +113,48 @@ def historical_series(path: Path) -> dict:
         events,
         capture_executions=True,
     )
+    points = [
+        {
+            "time": bars[start]["open_time"],
+            "equity": 1.0,
+            "price": bars[start]["open"],
+            "valuation": "initial capital",
+        }
+    ]
+    for i, point in enumerate(replay["trace"]):
+        bar = bars[start + i]
+        for execution in replay["executions"]:
+            if execution["time"] == bar["open_time"]:
+                points.extend(
+                    [
+                        {
+                            "time": execution["time"],
+                            "equity": execution["equity_before"],
+                            "price": execution["reference_price"],
+                            "valuation": "before execution",
+                        },
+                        {
+                            "time": execution["time"],
+                            "equity": execution["equity_after"],
+                            "price": execution["reference_price"],
+                            "valuation": "after execution; estimated liquidation value",
+                        },
+                    ]
+                )
+        points.append(
+            {
+                "time": bar["available_at"],
+                "equity": point["marked_equity"],
+                "price": bar["close"],
+                "valuation": "bar close; subsequent price movement and estimated exit costs",
+            }
+        )
     return {
         "id": path.parent.name,
         "label": "Historical " + args["rule"] + " / " + path.parent.name,
         "currency": "normalized capital units",
         "initial_capital": 1,
-        "points": [{"time": bars[start]["open_time"], "equity": 1.0, "price": bars[start]["open"]}]
-        + [
-            {
-                "time": bars[start + i]["available_at"],
-                "equity": point["marked_equity"],
-                "price": bars[start + i]["close"],
-            }
-            for i, point in enumerate(replay["trace"])
-        ],
+        "points": points,
         "executions": [
             {**row, "receipt": path.parent.name + ":" + str(i)}
             for i, row in enumerate(replay["executions"])
@@ -126,7 +162,7 @@ def historical_series(path: Path) -> dict:
         "net_pnl": replay["net_return"],
         "total_costs": replay["total_costs"],
         "max_drawdown": replay["max_sampled_drawdown"],
-        "scope": "Archived historical development sample, independently replayed. Assumed fees/slippage; not forward paper or actual income.",
+        "scope": "Archived historical development sample, independently replayed. Assumed fees/slippage; not forward paper or actual income. Equity is liquidation value including estimated exit costs. Buy markers are at execution reference prices; close points include subsequent market movement.",
         "report": str(path),
     }
 
@@ -152,4 +188,24 @@ def snapshot(root: Path) -> dict:
         "series": series,
         "errors": errors,
         "scope": "Recorded executions only. Historical and forward paper series are separate.",
+    }
+
+
+def inspect_costs(root: Path) -> dict:
+    """Bounded execution evidence; not independent market-price verification."""
+    chart = snapshot(root)
+    return {
+        "reports": [
+            {
+                "id": row["id"],
+                "report": row["report"],
+                "executions": row["executions"][:12],
+                "net_return": row["net_pnl"],
+                "scope": row["scope"],
+            }
+            for row in chart["series"]
+            if row.get("report")
+        ],
+        "errors": chart["errors"],
+        "valuation": "Execution points use the opening reference price. Close points include later market movement. Estimated exit costs reduce liquidation equity but are not yet paid. Basis points divided by 10000; 50 bps is 0.5%, not 5%.",
     }

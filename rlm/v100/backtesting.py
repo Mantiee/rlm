@@ -147,6 +147,15 @@ def simulate(
                     "total_costs": total_costs,
                     "cash_before": before_cash,
                     "cash_after": cash,
+                    "reference_price": price,
+                    "fee_bps": fee_bps,
+                    "slippage_bps": slippage_bps,
+                    "equity_before": before_cash + before_units * price * (1 - slip) * (1 - fee),
+                    "equity_after": cash + units * price * (1 - slip) * (1 - fee),
+                    "spot_equity_before": before_cash + before_units * price,
+                    "spot_equity_after": cash + units * price,
+                    "estimated_exit_cost": units * price * (slip + (1 - slip) * fee),
+                    "valuation": "Execution reference price; equity includes estimated exit costs; spot equity excludes them",
                     "net_pnl": cash - entry_capital if action == "sell" else None,
                 }
             )
@@ -173,6 +182,15 @@ def simulate(
                     "costs": costs,
                     "total_costs": total_costs,
                     "reason": "sample-end liquidation",
+                    "reference_price": last["close"],
+                    "fee_bps": fee_bps,
+                    "slippage_bps": slippage_bps,
+                    "equity_before": units * last["close"] * (1 - slip) * (1 - fee),
+                    "equity_after": units * last["close"] * (1 - slip) * (1 - fee),
+                    "spot_equity_before": units * last["close"],
+                    "spot_equity_after": units * last["close"] * (1 - slip) * (1 - fee),
+                    "estimated_exit_cost": 0,
+                    "valuation": "Sample-end liquidation; estimated exit costs become realized costs",
                     "net_pnl": units * last["close"] * (1 - slip) * (1 - fee) - entry_capital,
                 }
             )
