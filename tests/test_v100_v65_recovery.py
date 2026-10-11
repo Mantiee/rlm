@@ -89,6 +89,7 @@ def test_local_drones_admit_only_measured_headroom(monkeypatch, cpu, ram, slots)
     import psutil
 
     monkeypatch.setattr(psutil, "cpu_percent", lambda interval: cpu)
+    monkeypatch.setattr(resource_budget, "available_cpus", lambda: 8)
     monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=ram * 2**30))
     assert resource_budget.local_budget()["cpu_slots"] == slots
 

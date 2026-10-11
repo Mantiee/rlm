@@ -95,12 +95,22 @@ def command(root: Path, source: Path, work: Path, broker: Path) -> list[str]:
     ]
 
 
-def run(root: Path, branch: str, code: str, seconds: int = 60) -> dict:
+def run(
+    root: Path, branch: str, code: str, seconds: int = 60, cpu_affinity: list[int] | None = None
+) -> dict:
     if branch not in ("A", "B") or not isinstance(code, str) or not 1 <= len(code) <= 12000:
         raise ValueError("CPU experiment needs A/B and 1-12000 code characters")
     if type(seconds) is not int or not 1 <= seconds <= 60:
         raise ValueError("CPU experiment timeout must be 1-60 seconds")
     compile(code, "experiment.py", "exec")
+    available = os.sched_getaffinity(0)
+    affinity = sorted(available)[:2] if cpu_affinity is None else cpu_affinity
+    if (
+        not 1 <= len(affinity) <= 2
+        or any(type(cpu) is not int or cpu not in available for cpu in affinity)
+        or len(set(affinity)) != len(affinity)
+    ):
+        raise ValueError("CPU experiment affinity must select 1-2 distinct allowed CPUs")
     # Verify the namespace runtime BEFORE executing any model-generated code.
     runtime(root)
     import shutil
@@ -155,7 +165,7 @@ def run(root: Path, branch: str, code: str, seconds: int = 60) -> dict:
                         start_new_session=True,
                     )
                     try:
-                        os.sched_setaffinity(process.pid, sorted(os.sched_getaffinity(0))[:2])
+                        os.sched_setaffinity(process.pid, affinity)
                         deadline = time.monotonic() + seconds
                         while process.poll() is None:
                             used = sum(
@@ -186,6 +196,7 @@ def run(root: Path, branch: str, code: str, seconds: int = 60) -> dict:
         "directory": str(folder),
         "exit_code": process.returncode,
         "timed_out": timed_out,
+        "cpu_affinity": affinity,
         "seconds": time.monotonic() - started,
         "output": (folder / "output.log").read_text(errors="replace")[-12000:],
         "sources": observations,

@@ -145,6 +145,8 @@ def save_direct_reply(root: Path, message: str, response: dict) -> dict:
         raise ValueError("Chat needs 1-8000 characters")
     if response.get("actions") or response.get("applied"):
         raise ValueError("Direct replies must be read-only facts")
+    if not isinstance(response.get("answer"), str) or not response["answer"].strip():
+        raise ValueError("Empty direct chat reply rejected")
     identity = uuid.uuid4().hex
     with connect(root) as db:
         db.execute(
@@ -565,6 +567,11 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    from rlm.v100 import resource_optimization
+
+    resource_context = resource_optimization.context(root, request)
+    if resource_context is not None:
+        return resource_optimization.apply(root, message, resource_context)
     from rlm.v100 import chat_progress
 
     if chat_progress.requested(message):
@@ -1009,6 +1016,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     result["execution_receipts"] = execution_receipts(tool_receipts)
     if tool_receipts and all(receipt_failed(row) for row in tool_receipts):
         result["actions"] = []
+        result["execution_status"] = "failed"
         result["answer"] = "Requested work failed: " + "; ".join(
             str(row.get("result")) for row in tool_receipts
         )
@@ -1084,13 +1092,24 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
                 if accepted_cpu is not None
                 else respond(root, directory, request)
             )
+            if not isinstance(response.get("answer"), str) or not response["answer"].strip():
+                raise ValueError("Empty chat reply rejected; request not completed")
+            failed = response.get("execution_status") == "failed"
             with connect(root) as db:
                 db.execute(
-                    "UPDATE requests SET state='completed',response=?,error=NULL,updated=? WHERE id=? AND state='queued'",
-                    (json.dumps(response, ensure_ascii=False), time.time(), request["id"]),
+                    "UPDATE requests SET state=?,response=?,error=?,updated=? WHERE id=? AND state='queued'",
+                    (
+                        "failed" if failed else "completed",
+                        json.dumps(response, ensure_ascii=False),
+                        response["answer"][:500] if failed else None,
+                        time.time(),
+                        request["id"],
+                    ),
                 )
             ActivityLog(root, "controller", "chat").write(
-                "decisions", "user-command-completed", {"id": request["id"], **response}
+                "errors" if failed else "decisions",
+                "user-command-failed" if failed else "user-command-completed",
+                {"id": request["id"], **response},
             )
         except BackendNotReady as error:
             started = request.get("wait_started") or time.time()

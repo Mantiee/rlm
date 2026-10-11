@@ -28,14 +28,16 @@ RESOURCE_TOOLS = {
 
 def instruction(message: str) -> bool:
     text = normalized(message)
-    if "?" in text or re.match(r"^(?:czy|jak|why|how|is|are)\b", text):
+    action = re.search(r"uzyw|wykorzyst|przydz|deleg|udostep|wspoldziel|shared", text)
+    if not action or (
+        re.match(r"^(?:czy|jak|why|how|is|are)\b", text)
+        and not re.search(r"zrob|wykonaj|allocate|use", text)
+    ):
         return False
     if re.search(r"dashboard|\bhtml\b|pulpit|(?:ustaw|zmien)\w*\s+(?:cel|plan)", text):
         return False
     resource = re.findall(r"\b(?:rtx|windows\w*|cpu|ram\w*|dysk\w*|worker\w*|dron\w*)\b", text)
-    return len(set(resource)) >= 2 and bool(
-        re.search(r"uzyw|wykorzyst|przydz|deleg|udostep|wspoldziel|shared", text)
-    )
+    return len(set(resource)) >= 2
 
 
 def filter_actions(actions: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -50,8 +52,10 @@ def status(root: Path) -> dict:
     from rlm.v100.distributed_compute import inspect
     from rlm.v100.drones import inspect as drone_status
     from rlm.v100.remote_helper import remote_profile, selected_helper
+    from rlm.v100.resource_budget import local_budget
 
     value = {
+        "local": local_budget(root),
         "external_compute": inspect(root),
         "drones": drone_status(root),
         "scope": "Owned job execution only. Windows RAM/disk are worker-local resources, not pooled Debian RAM or shared VRAM. No arbitrary Windows shell is exposed.",

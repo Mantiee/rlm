@@ -1,8 +1,10 @@
 
 ---
 
-Synta v70 avoids repeated full artifact reads within the same process, detects changed file
-identities, and bounds native startup verification. See [SYNTA_V70.md](SYNTA_V70.md).
+Synta v71 executes resource optimization directly, keeps follow-ups on the operator task,
+and rejects empty/failed work as successful chat completion. CPU concurrency adapts to
+affinity, quota and RAM. See [SYNTA_V71.md](SYNTA_V71.md).
+The startup verification fix from [v70](SYNTA_V70.md) is retained.
 
 > **V100 fork, v100.14:** the local workflow uses your own llama.cpp server, no paid API.
 > v100.14 fixes CPU research request budgets and one-slot job scheduling, trims

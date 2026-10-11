@@ -609,6 +609,14 @@ class ResearchTools:
             ):
                 raise ValueError("Invalid archive identity or byte offset")
             path = self.root / "research/tool-results" / f"{digest}.json"
+            if not path.exists():
+                return {
+                    "status": "failed",
+                    "code": "archive_not_found",
+                    "sha256": digest,
+                    "error": "Tool archive unavailable. Use only full_result_sha256 returned by a tool in this task. Do not invent an ID or infer the missing content; rerun the original read-only tool if known.",
+                    "retryable": False,
+                }
             if path.is_symlink() or path.stat().st_size > 8 * 2**20:
                 raise ValueError("Archive exceeds its read budget or is a symlink")
             raw = path.read_bytes()

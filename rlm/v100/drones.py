@@ -155,7 +155,7 @@ def execute(root: Path, job: dict) -> dict:
     if job["kind"] == "python":
         from rlm.v100.research_sandbox import run
 
-        return run(root, job["branch"], job["payload"])
+        return run(root, job["branch"], job["payload"], cpu_affinity=job.get("cpu_affinity"))
     if job["kind"] == "source":
         from rlm.v100.research_tools import ResearchTools
 
@@ -277,10 +277,11 @@ def finish(root: Path, identity: str, value: dict) -> None:
 
 
 def service(root: Path, stop: threading.Event) -> None:
-    # A single RTX job plus two CPU/network jobs. RTX requests share the global
+    # One model job plus up to four CPU/network jobs and one observer. RTX requests share the global
     # existing helper pacing lock with foreground researchers and benchmark clients.
-    with ThreadPoolExecutor(max_workers=4) as workers:
+    with ThreadPoolExecutor(max_workers=6) as workers:
         active = {}
+        affinities = {}
         goal_future = None
         goal_due = 0
         while not stop.is_set():
@@ -317,10 +318,11 @@ def service(root: Path, stop: threading.Event) -> None:
                         }
                     finish(root, identity, result)
                     del active[identity]
+                    affinities.pop(identity, None)
             with connect(root) as db:
                 from rlm.v100.resource_budget import local_budget
 
-                budget = local_budget()
+                budget = local_budget(root)
                 jobs = db.execute(
                     "SELECT * FROM jobs WHERE state='queued' AND due<=? ORDER BY due LIMIT 16",
                     (time.time(),),
@@ -333,12 +335,22 @@ def service(root: Path, stop: threading.Event) -> None:
                     )
                     if used >= (min(1, budget["cpu_slots"]) if llm else budget["cpu_slots"]):
                         continue
+                    job = dict(row)
+                    if job["kind"] == "python":
+                        from rlm.v100.resource_budget import cpu_assignment
+
+                        assignment = cpu_assignment(list(affinities.values()))
+                        if not assignment:
+                            continue
+                        job["cpu_affinity"] = assignment
                     updated = db.execute(
                         "UPDATE jobs SET state='running',updated=? WHERE id=? AND state='queued'",
                         (time.time(), row["id"]),
                     )
                     if updated.rowcount:
-                        active[row["id"]] = (workers.submit(execute, root, dict(row)), row["kind"])
+                        if job["kind"] == "python":
+                            affinities[row["id"]] = assignment
+                        active[row["id"]] = (workers.submit(execute, root, job), row["kind"])
             atomic_json(
                 root / "research/drones-status.json",
                 {
@@ -347,6 +359,7 @@ def service(root: Path, stop: threading.Event) -> None:
                     "active": list(active),
                     "cpu_slots": budget["cpu_slots"],
                     "budget": budget,
+                    "cpu_affinities": affinities,
                     "rtx_slots": 0 if gpu_disabled(root) else 1,
                     "local_model_slots": 1 if gpu_disabled(root) else 0,
                 },
