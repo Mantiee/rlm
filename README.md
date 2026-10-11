@@ -241,3 +241,5 @@ Persistent goals, A/B lineages, bounded research drones, concurrent chat, privat
 For private phone access, see [SYNTA_REMOTE_ACCESS.md](SYNTA_REMOTE_ACCESS.md).
 The remote dashboard and master chat share mobile navigation; an existing v67/v68
 gateway can receive the [v69 repair](SYNTA_V69.md) without restarting the mission.
+
+Dashboard v75 navigation, metric definitions and targeted upgrade: [SYNTA_V75.md](SYNTA_V75.md).

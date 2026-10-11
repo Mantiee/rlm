@@ -117,25 +117,31 @@ def historical_series(path: Path) -> dict:
         {
             "time": bars[start]["open_time"],
             "equity": 1.0,
+            "spot_equity": 1.0,
             "price": bars[start]["open"],
             "valuation": "initial capital",
         }
     ]
+    cash, units = 1.0, 0.0
     for i, point in enumerate(replay["trace"]):
         bar = bars[start + i]
         for execution in replay["executions"]:
             if execution["time"] == bar["open_time"]:
+                cash = execution["cash_after"]
+                units = execution["quantity"] if execution["action"] == "buy" else 0.0
                 points.extend(
                     [
                         {
                             "time": execution["time"],
                             "equity": execution["equity_before"],
+                            "spot_equity": execution["spot_equity_before"],
                             "price": execution["reference_price"],
                             "valuation": "before execution",
                         },
                         {
                             "time": execution["time"],
                             "equity": execution["equity_after"],
+                            "spot_equity": execution["spot_equity_after"],
                             "price": execution["reference_price"],
                             "valuation": "after execution; estimated liquidation value",
                         },
@@ -145,10 +151,24 @@ def historical_series(path: Path) -> dict:
             {
                 "time": bar["available_at"],
                 "equity": point["marked_equity"],
+                "spot_equity": cash + units * bar["close"],
                 "price": bar["close"],
                 "valuation": "bar close; subsequent price movement and estimated exit costs",
             }
         )
+    # The last close precedes forced liquidation at the same timestamp.
+    # Include its paid exit friction in the spot curve, too.
+    for execution in replay["executions"]:
+        if execution.get("reason") == "sample-end liquidation":
+            points.append(
+                {
+                    "time": execution["time"],
+                    "equity": execution["equity_after"],
+                    "spot_equity": execution["spot_equity_after"],
+                    "price": execution["reference_price"],
+                    "valuation": "after sample-end liquidation; exit costs paid",
+                }
+            )
     return {
         "id": path.parent.name,
         "label": "Historical " + args["rule"] + " / " + path.parent.name,
@@ -162,6 +182,11 @@ def historical_series(path: Path) -> dict:
         "net_pnl": replay["net_return"],
         "total_costs": replay["total_costs"],
         "max_drawdown": replay["max_sampled_drawdown"],
+        "cost_assumptions": {
+            "fee_bps_per_leg": args["fee_bps"],
+            "slippage_bps_per_leg": args["slippage_bps"],
+            "source": "Archived simulation assumptions, not certified venue fees",
+        },
         "scope": "Archived historical development sample, independently replayed. Assumed fees/slippage; not forward paper or actual income. Equity is liquidation value including estimated exit costs. Buy markers are at execution reference prices; close points include subsequent market movement.",
         "report": str(path),
     }

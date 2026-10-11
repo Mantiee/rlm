@@ -90,6 +90,7 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
                 }
             for name, filename in (
                 ("cached", "research/goal-learning/status.json"),
+                ("cpu_shadow_policy", "research/goal-policy/status.json"),
                 ("observer", "research/goal-observer/status.json"),
                 ("owned_cpu_dispatch", "research/goal-compute/status.json"),
             ):
