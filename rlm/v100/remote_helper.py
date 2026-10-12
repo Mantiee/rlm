@@ -53,10 +53,19 @@ def helper_boot_id() -> str:
     return value
 
 
-def validate_workload(batch_tokens: int, duty_percent: int, dedicated_host: bool = False) -> None:
-    if type(batch_tokens) is not int or batch_tokens not in (16, 32, 64):
+def validate_workload(
+    batch_tokens: int,
+    duty_percent: int,
+    dedicated_host: bool = False,
+    throughput_mode: bool = False,
+) -> None:
+    if type(throughput_mode) is not bool:
+        raise ValueError("Throughput mode must be an explicit boolean")
+    if type(batch_tokens) is not int or batch_tokens not in (
+        (16, 32, 64, 256) if throughput_mode else (16, 32, 64)
+    ):
         raise ValueError("Remote helper batch must be 16, 32 or 64 tokens")
-    maximum = 100 if dedicated_host is True else 65
+    maximum = 100 if dedicated_host is True or throughput_mode else 65
     if (
         type(dedicated_host) is not bool
         or type(duty_percent) is not int
@@ -98,6 +107,7 @@ def validate_remote(profile: dict) -> None:
         resources.get("helper_batch_tokens", 64),
         resources.get("helper_duty_percent", 65),
         resources.get("dedicated_host", False),
+        resources.get("throughput_mode", False),
     )
     if (
         resources.get("dedicated_host")
@@ -199,10 +209,11 @@ class OllamaResearchClient(LlamaCppClient):
         on_demand: bool = False,
         allow_cpu_offload: bool = False,
         dedicated_host: bool = False,
+        throughput_mode: bool = False,
         **kwargs: Any,
     ):
         origin = private_origin(base_url)
-        validate_workload(helper_batch_tokens, helper_duty_percent, dedicated_host)
+        validate_workload(helper_batch_tokens, helper_duty_percent, dedicated_host, throughput_mode)
         if dedicated_host and origin != "http://192.168.0.9:11435":
             raise ValueError("Dedicated capacity requires the explicitly registered 3060 Ti host")
         self.dedicated_host = dedicated_host

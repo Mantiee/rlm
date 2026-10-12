@@ -417,6 +417,7 @@ def helper_client(
     extras = (
         {
             "model_digest": profile["resources"]["model_digest"],
+            "throughput_mode": profile["resources"].get("throughput_mode", False),
             "metadata_sha256": profile["resources"]["metadata_sha256"],
             "metadata_hash_scheme": profile["resources"].get(
                 "metadata_hash_scheme", "ollama-full-v1"

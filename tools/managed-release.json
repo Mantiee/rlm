@@ -31,7 +31,7 @@
     "rlm/v100/windows_resource_proxy.py": "b808132e454f855ad7f956dc2ef9d474c0368f9251e4783b2954c16c37a6cd53",
     "tools/update-synta-v90.sh": "df3c3b83934ac140f2962a5773576ebd9cf18df0c9869e18f189e3dc67235250",
     "rlm/v100/model_policy.py": "a947f096d8d3be1869d72b3a038fe2fd6d3e8e64f00da2dd7e00f9884fea1ac9",
-    "rlm/v100/remote_helper.py": "198d7f256ea2f99625793b1df45a77f1615829be0286484281017219937749af"
+    "rlm/v100/remote_helper.py": "0bbc8be27ab98d54dea1aea7ac37a3f19f8b03a379a1bbc1c6a96c35b8f440e9"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

@@ -215,6 +215,9 @@ def qualify(root: Path) -> dict:
         )
         profile["server"]["context_per_slot"] = 32768
         profile["resources"].update(
+            throughput_mode=True,
+            helper_batch_tokens=256,
+            helper_duty_percent=100,
             max_vram_gib=ROLE_MODELS[model][1],
             on_demand=True,
             allow_cpu_offload=model == "gemma4:26b-a4b-it-q4_K_M",

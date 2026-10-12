@@ -19,6 +19,14 @@ def test_failed_quality_cannot_admit_a_new_name():
     assert model_policy.admitted_panel({"passed": 20, "critical_passed": True})
 
 
+def test_full_windows_throughput_requires_explicit_opt_in():
+    with pytest.raises(ValueError):
+        remote_helper.validate_workload(256, 100)
+    remote_helper.validate_workload(256, 100, throughput_mode=True)
+    with pytest.raises(ValueError):
+        remote_helper.validate_workload(256, 100, throughput_mode="true")
+
+
 def test_retired_remote_production_routes_to_unavailability(tmp_path):
     atomic_json(tmp_path / "research/model-roles/model-policy.json", {"version": 90})
     profile = {"runtime": {"model_name": "qwen3.5:9b-q8_0"}, "resources": {"device": "remote"}}
