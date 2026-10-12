@@ -5,6 +5,15 @@ $root = Join-Path $env:USERPROFILE 'ai-v100-helper'
 $receipt = Join-Path $root 'logs\managed-helper.json'
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $Bundle 'release.json') | ConvertFrom-Json
 $expected = $manifest.files.'rlm/v100/windows_resource_proxy.py'
+if ($expected -notmatch '^[0-9a-f]{64}$') { throw 'Release inventory omits the proxy; existing helper retained.' }
+# Validate every declared artifact before maintenance or stopping any owned process.
+foreach ($entry in $manifest.files.PSObject.Properties) {
+    $artifact = Join-Path $Bundle $entry.Name
+    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) { throw "Incomplete release: $($entry.Name); existing helper retained." }
+    if ((Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.Value) {
+        throw "Release checksum mismatch: $($entry.Name); existing helper retained."
+    }
+}
 $origin = 'http://192.168.0.61:11435'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $guard = $null
@@ -70,3 +79,4 @@ do {
     Start-Sleep -Seconds 3
 } while ((Get-Date) -lt $deadline)
 throw 'Windows proxy did not return a fresh matching heartbeat; inspect autostart.log and resource-proxy.stderr.log.'
+

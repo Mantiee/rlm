@@ -21,13 +21,14 @@
     "rlm/v100/compute_worker.py": "67c71aa00b8612c1ccdaac6be29dd58f99b2ddc1b4a645a7a807f373a48bff7a",
     "tools/install-synta-watchdog.sh": "61a73b76a327828f45472d15b975dd46bc32a824e960bce03e5846f4e664b0ac",
     "rlm/v100/mission_watchdog.py": "b37816bbb0989b338cb9ae978f3788c376297ef3577f6cadbc10a2b9a60dbe2f",
-    "tools/refresh-synta-windows.ps1": "3fe5d50452aed23355f1913da7ed2b8ada38390099c276bcdb01d2267605d4f4",
+    "tools/refresh-synta-windows.ps1": "329666de03eb22a649813f91771ab48451a85a711b6409e6e6cae9bfb3ec450d",
     "tools/install-rtx3090-autostart.ps1": "4c9251e38f68bcf91b1e1d6cf976f9f3d953bcbe377ea4b2eedaf4eb66b9054b",
     "tools/start-rtx3090-helper.ps1": "f6797bddc2dfef068f2a1c0e760a6ae324192312ffa07c268bd813e64c4341b8",
     "tools/watch-rtx3090-helper.ps1": "cb2dadd98b4f1a4a6d5ddc269b33d15799351adcda26ba59c8e7c9a4fe03b547",
     "tools/update-synta-v89.sh": "7b0ae94ce1480d527ceadf79bac820f0e725ef1110b72ebeace9f87420389b36",
-    "tools/bootstrap-synta-windows.ps1": "0fa41a55ab749711a0d5a41c83aec698f7b4dba97d90902aaffa6839a5e78650",
-    "rlm/v100/autonomous_planning.py": "0b3781c2e275e5b078e6337c54cd2a65621c9c5a4ca4b28d886e94408c68b4fd"
+    "tools/bootstrap-synta-windows.ps1": "7603019cda1a268d1a82c098d891dd6a75f366d0dd5a5b06b3f5cf32eda1edc5",
+    "rlm/v100/autonomous_planning.py": "0b3781c2e275e5b078e6337c54cd2a65621c9c5a4ca4b28d886e94408c68b4fd",
+    "rlm/v100/windows_resource_proxy.py": "d215cf1d9996628154a1579d94f2562790c53163f811604489cacdfd789e9a9c"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

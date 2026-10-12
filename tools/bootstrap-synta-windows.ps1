@@ -34,10 +34,14 @@ $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -Execution
 Register-ScheduledTask -TaskName 'Synta-Managed-Update' -Action $action -Trigger $trigger -Principal $identity -Settings $settings -Force | Out-Null
 # Repair serving in this console, independently of a previous model downloader.
 $bundle = Join-Path $root ("tools\managed-releases\" + $Revision)
-& $python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from managed_bootstrap import release,materialize; rev,manifest=release(sys.argv[3]); materialize(Path(sys.argv[2]),rev,manifest)' $dir $bundle $Revision
-if ($LASTEXITCODE -ne 0) { throw "Release acquisition failed. Inspect $log" }
+& $python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from managed_bootstrap import release,materialize; rev,manifest=release(sys.argv[3]); materialize(Path(sys.argv[2]),rev,manifest)' $dir $bundle $Revision *>> $log
+if ($LASTEXITCODE -ne 0) {
+    Get-Content -LiteralPath $log -Tail 30
+    throw "Release acquisition failed before helper changes. Inspect $log"
+}
 & (Join-Path $bundle 'tools\refresh-synta-windows.ps1') -Revision $Revision -Bundle $bundle
 Start-ScheduledTask -TaskName 'Synta-Managed-Update'
 Write-Host "Updater stdout/stderr: $log"
 if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 8 }
 Write-Host 'Automatic current-user updater registered. Inspect ai-v100-helper\logs\managed-update.json. No ChatGPT remote shell is created.'
+
