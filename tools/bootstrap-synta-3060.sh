@@ -240,7 +240,11 @@ for attempt in range(60):
     except OSError:
         if attempt==59: raise
         time.sleep(1)
+with urllib.request.urlopen('http://127.0.0.1:11436/api/tags',timeout=5) as r: existing={row['name'] for row in json.load(r)['models']}
 for model in ('gemma4:e2b-it-q4_K_M','gemma4:e4b-it-q4_K_M'):
+    if model in existing:
+        print(json.dumps({'retained':model,'scope':'Existing digest retained; no tag repull'}),flush=True)
+        continue
     data=json.dumps({'model':model,'stream':False}).encode()
     req=urllib.request.Request('http://127.0.0.1:11436/api/pull',data=data,headers={'Content-Type':'application/json'})
     with urllib.request.urlopen(req,timeout=3600) as r:

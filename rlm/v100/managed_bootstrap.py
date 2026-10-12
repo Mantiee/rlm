@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -17,6 +18,111 @@ else:
 
 REPOSITORY = "Mantiee/rlm"
 BRANCH = "v100-rtx-reconnect"
+
+
+def active_learning_cycle(root: Path) -> bool:
+    from rlm.v100.mission import status
+
+    current = status(root)
+    learning = current.get("learning", {})
+    return (
+        current.get("running") is True
+        and learning.get("stage")
+        in (
+            "candidate-training-and-independent-tests",
+            "scratch-architecture-training-and-tests",
+            "alternative-architecture-training-and-tests",
+        )
+        and (learning.get("cycle_in_progress") or 0) > (learning.get("completed_cycles") or 0)
+    )
+
+
+def dashboard_update(root: Path, folder: Path, revision: str) -> dict:
+    """Upgrade the passive UI in a separate code directory, never the trainer."""
+    python = root / "venvs/v100-continual/bin/python"
+    uv = root.parent / ".local/bin/uv"
+    if not uv.is_file():
+        uv = Path(shutil.which("uv") or "/unavailable")
+    if not python.is_file() or not uv.is_file():
+        return {"stage": "blocked", "reason": "Existing Python/uv unavailable"}
+    path = root / "research/dashboard-deployment.json"
+    if path.exists():
+        previous = json.loads(path.read_text())
+        if previous.get("revision") == revision and previous.get("stage") == "ready":
+            return previous
+    target = root / "tools/dashboard-runtime" / revision
+    override = Path.home() / ".config/systemd/user/v100-dashboard.service.d/20-code.conf"
+    old_override = override.read_bytes() if override.exists() else None
+    entrypoint = root / "bin/serve-v100-dashboard.py"
+    old_entrypoint = entrypoint.read_bytes() if entrypoint.exists() else None
+    changed = False
+    try:
+        subprocess.run(
+            [
+                str(uv),
+                "--no-config",
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--target",
+                str(target),
+                "--no-deps",
+                f"git+https://github.com/{REPOSITORY}.git@{revision}",
+            ],
+            check=True,
+            timeout=180,
+        )
+        entrypoint.parent.mkdir(parents=True, exist_ok=True)
+        temporary = entrypoint.with_suffix(".new")
+        temporary.write_bytes((folder / "tools/serve-v100-dashboard.py").read_bytes())
+        os.replace(temporary, entrypoint)
+        changed = True
+        override.parent.mkdir(parents=True, exist_ok=True)
+        override.write_text(f'[Service]\nEnvironment="PYTHONPATH={target}"\n')
+        changed = True
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=15)
+        subprocess.run(
+            ["systemctl", "--user", "restart", "v100-dashboard.service"], check=True, timeout=30
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-c",
+                "import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from rlm.v100.dashboard_health import wait;wait(root=Path(sys.argv[2]))",
+                str(target),
+                str(root),
+            ],
+            check=True,
+            timeout=90,
+        )
+        result = {
+            "stage": "ready",
+            "revision": revision,
+            "code_path": str(target),
+            "scope": "Passive renderer upgraded separately; accepted trainer package and active cycle unchanged",
+        }
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        rollback_error = None
+        if changed:
+            try:
+                if old_override is None:
+                    override.unlink(missing_ok=True)
+                else:
+                    override.write_bytes(old_override)
+                if old_entrypoint is not None:
+                    entrypoint.write_bytes(old_entrypoint)
+                subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, timeout=15)
+                subprocess.run(
+                    ["systemctl", "--user", "restart", "v100-dashboard.service"],
+                    check=False,
+                    timeout=30,
+                )
+            except (OSError, subprocess.SubprocessError) as rollback:
+                rollback_error = str(rollback)[:400]
+        result = {"stage": "blocked", "error": str(error)[:400], "rollback_error": rollback_error}
+    save(path, {**result, "updated": time.time()})
+    return result
 
 
 def fetch(url: str) -> bytes:
@@ -72,6 +178,7 @@ def materialize(folder: Path, revision: str, manifest: dict) -> None:
 
 def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     python = root / "venvs/v100-continual/bin/python"
+    dashboard = dashboard_update(root, folder, revision) if manifest["version"] >= 91 else {}
     watchdog = folder / "rlm/v100/mission_watchdog.py"
     if watchdog.is_file():
         subprocess.run([str(python), str(watchdog), "--root", str(root)], check=True, timeout=120)
@@ -92,6 +199,15 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     if not match or int(match[1]) > manifest["version"]:
         raise ValueError("Managed updater refuses an unknown package or a downgrade")
     if installed != target:
+        if manifest["version"] >= 91 and active_learning_cycle(root):
+            return {
+                "stage": "deferred-active-learning-cycle",
+                "installed": installed,
+                "target": target,
+                "revision": revision,
+                "dashboard": dashboard,
+                "scope": "Training and independent evaluation complete before a package switch",
+            }
         if exclusive:
             return {
                 "stage": "deferred-training",
@@ -161,7 +277,22 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     except (OSError, subprocess.SubprocessError) as error:
         source_receipt = {"stage": "blocked", "error": str(error)}
     # Prepare assets and remote roles without pausing the active master for native maintenance.
-    subprocess.run([str(python), "-m", "rlm.v100.managed_prepare", "--root", str(root)], check=True)
+    if manifest["version"] >= 91:
+        unit = Path.home() / ".config/systemd/user/synta-model-preparation.service"
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text(
+            f"[Unit]\nDescription=Synta optional model preparation\n[Service]\nType=oneshot\nExecStart={python} -u -m rlm.v100.managed_prepare --root {root}\nNice=10\nTimeoutStartSec=30min\n"
+        )
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=15)
+        subprocess.run(
+            ["systemctl", "--user", "start", "--no-block", "synta-model-preparation.service"],
+            check=True,
+            timeout=15,
+        )
+    else:
+        subprocess.run(
+            [str(python), "-m", "rlm.v100.managed_prepare", "--root", str(root)], check=True
+        )
     preparation = root / "research/managed-update/preparation.json"
     observed = json.loads(preparation.read_text()) if preparation.exists() else {"stage": "unknown"}
     return {
@@ -171,6 +302,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
         "wiki": wiki_receipt,
         "source": source_receipt,
         "preparation_stage": observed.get("stage"),
+        "dashboard": dashboard,
         "version": target,
         "revision": revision,
         "scope": "Roles require successful host qualification; accepted learning weights retained",

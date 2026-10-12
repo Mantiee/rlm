@@ -82,7 +82,22 @@ def qualify(root: Path, resources: dict) -> dict:
     winners = []
     folder = root / "research/owned-node"
     folder.mkdir(parents=True, exist_ok=True)
-    for model in NODE_MODELS:
+    lock_path = folder / "selection-lock.json"
+    locked = json.loads(lock_path.read_text()) if lock_path.exists() else {}
+    if locked:
+        if locked.get("model") not in NODE_MODELS:
+            raise ValueError("Unknown locked owned-node model")
+        if not any(
+            row.get("name") == locked["model"] and row.get("digest") == locked["digest"]
+            for row in rows
+        ):
+            return {
+                "admitted": False,
+                "phase": "locked-model-unavailable",
+                "model": locked["model"],
+                "reason": "Pinned model digest changed or disappeared; CPU jobs remain independent",
+            }
+    for model in (locked["model"],) if locked else NODE_MODELS:
         matching = [
             r
             for r in rows
@@ -195,6 +210,16 @@ def qualify(root: Path, resources: dict) -> dict:
             "reason": "No downloaded candidate passed every panel case",
         }
     _, path, profile = min(winners, key=lambda row: row[0])
+    if not locked:
+        atomic_json(
+            lock_path,
+            {
+                "model": profile["runtime"]["model_name"],
+                "digest": profile["resources"]["model_digest"],
+                "metadata_sha256": profile["resources"]["metadata_sha256"],
+                "scope": "Fixed foundation identity; code updates do not reselect this role",
+            },
+        )
     return {
         "admitted": True,
         "phase": "qualified",

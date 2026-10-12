@@ -373,6 +373,7 @@ def test_unchanged_qualified_inventory_does_not_repeat_gpu_panel(tmp_path, monke
     monkeypatch.setattr(model_roles, "load_profile", lambda *a: copy.deepcopy(profile))
     models = [{"name": name, "digest": "a" * 64} for name in model_roles.ROLE_MODELS]
     client = SimpleNamespace(
+        timeout=120,
         remote_request=lambda endpoint: {"models": models},
         identity=lambda: {"template": "owned template"},
     )
@@ -391,4 +392,4 @@ def test_unchanged_qualified_inventory_does_not_repeat_gpu_panel(tmp_path, monke
     assert len(calls) == count
     models[-1]["digest"] = "b" * 64
     model_roles.qualify(tmp_path)
-    assert len(calls) > count
+    assert len(calls) == count  # Admission locks the role despite unrelated inventory changes

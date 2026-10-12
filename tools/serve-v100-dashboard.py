@@ -8,6 +8,7 @@ import ipaddress
 import json
 import math
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -288,7 +289,17 @@ class DashboardState:
 
         chart = self.data.get("trades", {})
         if time.time() - chart.get("updated", 0) > 30:
-            chart = trade_snapshot(self.root)
+            try:
+                chart = trade_snapshot(self.root)
+            except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
+                chart = {
+                    **chart,
+                    "stale": True,
+                    "errors": ["Chart refresh failed: " + str(error)[:240]],
+                }
+                errors.append(
+                    "Trading charts unavailable; current mission snapshot still refreshed"
+                )
         self.data = {
             "trades": chart,
             "live": live,

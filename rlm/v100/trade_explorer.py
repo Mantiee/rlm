@@ -9,7 +9,7 @@ from rlm.v100.financial_snapshot import read_object
 
 
 def paper_series(root: Path) -> list[dict]:
-    from rlm.v100.paper import PaperBook, sha
+    from rlm.v100.paper import PaperBook, sha, timestamp
 
     if not (root / "research/paper/ledger.sqlite3").exists():
         return []
@@ -58,6 +58,13 @@ def paper_series(root: Path) -> list[dict]:
         if rows and json.loads(rows[0]["payload"]).get("state_sha256") != sha(state):
             raise ValueError("Paper state checksum differs from chart tail")
         result = []
+        quote_times = [
+            timestamp(q["available_at"])
+            for q in state.get("quotes", {}).values()
+            if q.get("available_at")
+        ]
+        oldest_quote = min(quote_times) if quote_times else None
+        quote_age = (book.clock() - oldest_quote).total_seconds() if oldest_quote else None
         for branch, portfolio in state["branches"].items():
             branch_points = [point for point in points if point["branch"] == branch]
             # Initial capital is the actual ledger value; never fabricate a fill.
@@ -68,6 +75,12 @@ def paper_series(root: Path) -> list[dict]:
                 {
                     "id": "paper-" + branch,
                     "label": "Forward paper " + branch,
+                    "ledger_updated_at": rows[0]["time"],
+                    "quote_updated_at": oldest_quote.isoformat() if oldest_quote else None,
+                    "quote_age_seconds": quote_age,
+                    "quote_fresh": 0 <= quote_age <= state["risk"]["quote_age_seconds"]
+                    if quote_age is not None
+                    else None,
                     "currency": state["currency"],
                     "initial_capital": float(state["initial_capital"]),
                     "points": branch_points,

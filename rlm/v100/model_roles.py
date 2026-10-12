@@ -187,6 +187,13 @@ def qualify(root: Path) -> dict:
     )
     cache = root / "research/model-roles/qualification-cache.json"
     active = root / "research/model-roles/active.json"
+    locked = {}
+    if active.is_file():
+        for role in ("fast", "planner"):
+            if selected_profile(root, role) is not None:
+                locked[role] = json.loads(active.read_text())["roles"][role]
+        if len(locked) == 2:
+            return json.loads(active.read_text())
     if cache.is_file() and active.is_file():
         prior_cache = json.loads(cache.read_text())
         if (
@@ -208,6 +215,8 @@ def qualify(root: Path) -> dict:
     roles = {}
     reports = []
     for role, model in WINDOWS_ROLES:
+        if role in locked:
+            continue
         profile = copy.deepcopy(baseline_profile)
         profile["resources"].pop("calibration_only", None)
         profile["runtime"].update(
@@ -240,6 +249,8 @@ def qualify(root: Path) -> dict:
             info = client.identity()
             profile["resources"]["metadata_sha256"] = metadata_sha(info, STABLE_METADATA)
             client = helper_client(profile, root)
+            client.timeout = min(client.timeout, 30)
+            client.request_deadline = time.monotonic() + 180
             measurement = evaluate(client)
             report.update(
                 model_digest=profile["resources"]["model_digest"],
@@ -290,6 +301,7 @@ def qualify(root: Path) -> dict:
             del prior["roles"][role]
     prior["roles"].update(roles)
     prior.update(
+        selection_policy="Pinned after admission; code updates do not change this foundation or tokenizer",
         updated=time.time(),
         latest_qualification=str(folder / "qualification.json"),
         scope="Admitted role profiles only; Gemma learner and accepted weights retained",

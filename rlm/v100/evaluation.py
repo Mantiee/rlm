@@ -53,7 +53,14 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
             "passed": sum(case["passed"] for case in report["cases"]),
             "current_case": row["id"],
             "case_index": index,
+            "updated": time.time(),
         }
+        if report["cases"]:
+            previous = report["cases"][-1]
+            progress["last_case"] = {
+                key: previous.get(key)
+                for key in ("id", "passed", "finish_reason", "error", "seconds")
+            }
         atomic_json(progress_path, progress)
         print(json.dumps({"phase": "evaluation", **progress}), flush=True)
         error = None
@@ -109,6 +116,14 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
             completed=index,
             passed=sum(case["passed"] for case in report["cases"]),
             state="finished" if index == len(rows) else "running",
+            updated=time.time(),
+            last_case={
+                "id": row["id"],
+                "passed": passed,
+                "finish_reason": response_info.get("finish_reason"),
+                "error": error,
+                "seconds": round(time.perf_counter() - started, 2),
+            },
         )
         atomic_json(progress_path, progress)
         print(
@@ -120,6 +135,8 @@ def evaluate_suite(client, profile: dict, suite: Path, output: Path) -> dict:
                     "completed": index,
                     "total": len(rows),
                     "seconds": round(time.perf_counter() - started, 2),
+                    "finish_reason": response_info.get("finish_reason"),
+                    "error": error,
                 }
             ),
             flush=True,

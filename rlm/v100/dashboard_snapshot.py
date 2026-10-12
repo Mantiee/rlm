@@ -105,4 +105,7 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
             result["mission_evidence"] = evidence
     except (OSError, ValueError) as error:
         errors.append("Goal snapshot unavailable: " + str(error)[:200])
+    from rlm.v100.mission_view import snapshot
+
+    result["current_activity"] = snapshot(root, mission, result)
     return result

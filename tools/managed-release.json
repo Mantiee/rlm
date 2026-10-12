@@ -1,19 +1,19 @@
 {
   "schema": "synta-managed-release-v1",
-  "version": 90,
-  "linux_installer": "tools/update-synta-v90.sh",
+  "version": 91,
+  "linux_installer": "tools/update-synta-v91.sh",
   "windows_prepare": "tools/prepare-managed-windows.ps1",
   "files": {
     "tools/prepare-managed-windows.ps1": "714caf9e678b42ad0a723c125de594d31ae21819247ee96bba25e3055dc5dbfe",
     "tools/benchmark-synta-windows.ps1": "7875d9ce54f534bf3596e36e53e25f05c024d9900e83ef9cfef97ee995441c38",
-    "tools/serve-v100-dashboard.py": "8a479e7d196adcda6600f7b331dd5d0d5b8f2e1c5f961f731ab64cc3a5649fca",
+    "tools/serve-v100-dashboard.py": "3358925176c2b2eb4cbeceb5fc1ea29af1a959f1bd7e00347f94a0ad545b050f",
     "tools/qualify-synta-models-debian.sh": "6ad0254352f4f888e255721b7900b26239da71a741e418018f88b77e25f0d0dd",
-    "rlm/v100/managed_bootstrap.py": "45bc0d6929607b44f487d3d181def248bded90b89cd9ef20560b1b853c20abe4",
+    "rlm/v100/managed_bootstrap.py": "f9a5b419a0d920e35b190311352fc904c7412fec4be3909af1bea89ea33ff6ac",
     "rlm/v100/inference_benchmark.py": "5b88c362446974bc287371e4ede606ef21e5b07dc088ec6f5e38d2c9f293661f",
     "rlm/v100/wikimedia_exports.py": "f3788e5ab9e2e6d9551b005d1a356052c26d565dc0c9a290d5f9762e521f2ab5",
     "rlm/v100/knowledge_rag.py": "5655fd939d3201b9abd58e84401ed94dcf33c3c3a1a23a27317e2aa309db18e0",
     "rlm/v100/source_sync.py": "e315e1bd6e62ff0ce6a0c235ed857d89ab4ea12bb979322e53ec1e23f2c5ee38",
-    "tools/bootstrap-synta-3060.sh": "97257d0d55db1f1fa7ecbf79e7ff7cd1d8a3a31d57e940c7055bcca42fde1e2a",
+    "tools/bootstrap-synta-3060.sh": "4d2b53e217a92df49e52e582e4b4549bb46ab29226ff33f730eae7b49d7e6797",
     "tools/attach-synta-3060.sh": "b16079c4a9f66fee567740e41012877d0e90e9708bfa9b475da2fc5db5e51fbf",
     "rlm/v100/owned_node.py": "a979eacba304ad5c034a9141299b6b1b25c5462abee5da43772f80b9f971f866",
     "rlm/v100/owned_node_update.py": "9f7ee2c0c7659e481e2e431284e9f48af8219ee8c4fe3d58d7bd603973cbf2a4",
@@ -31,7 +31,9 @@
     "rlm/v100/windows_resource_proxy.py": "b808132e454f855ad7f956dc2ef9d474c0368f9251e4783b2954c16c37a6cd53",
     "tools/update-synta-v90.sh": "df3c3b83934ac140f2962a5773576ebd9cf18df0c9869e18f189e3dc67235250",
     "rlm/v100/model_policy.py": "a947f096d8d3be1869d72b3a038fe2fd6d3e8e64f00da2dd7e00f9884fea1ac9",
-    "rlm/v100/remote_helper.py": "0bbc8be27ab98d54dea1aea7ac37a3f19f8b03a379a1bbc1c6a96c35b8f440e9"
+    "rlm/v100/remote_helper.py": "0bbc8be27ab98d54dea1aea7ac37a3f19f8b03a379a1bbc1c6a96c35b8f440e9",
+    "tools/update-synta-v91.sh": "693bfcbe13cff24e6fbea8607568b5d742d0ae19576896456490478f1bcae3c0",
+    "rlm/v100/mission_view.py": "7ff94783ff0c883136be5551839076b0d71b898fed5fbab23a06a88593997a98"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
