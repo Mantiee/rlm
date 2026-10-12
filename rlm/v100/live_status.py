@@ -398,6 +398,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         )
     except (ValueError, OSError, RuntimeError, requests.RequestException) as error:
         if enabled:
+            rtx["state"] = "unavailable"
             rtx["detail"] += "; " + str(error)[:150]
     if "client" in locals():
         import hashlib

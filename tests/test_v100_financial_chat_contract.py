@@ -133,7 +133,7 @@ def test_legacy_chat_migration_safe_with_concurrent_readers(tmp_path):
         assert all(pool.map(read, range(8)))
 
 
-def test_readiness_wait_releases_next_question_and_has_finite_budget(tmp_path, monkeypatch):
+def test_readiness_wait_releases_next_question_and_preserves_deferred_request(tmp_path, monkeypatch):
     first = mission_chat.submit(tmp_path, "waiting")
     second = mission_chat.submit(tmp_path, "facts")
     seen = []
@@ -154,7 +154,7 @@ def test_readiness_wait_releases_next_question_and_has_finite_budget(tmp_path, m
     assert mission_chat.inspect(tmp_path, first)["wait_started"] > 0
     assert mission_chat.inspect(tmp_path, second)["state"] == "completed"
     with mission_chat.connect(tmp_path) as db:
-        db.execute("UPDATE requests SET attempts=19,updated=0 WHERE id=?", (first,))
+        db.execute("UPDATE requests SET attempts=19,updated=0,retry_after=0 WHERE id=?", (first,))
     seen.clear()
 
     class One:
@@ -162,7 +162,7 @@ def test_readiness_wait_releases_next_question_and_has_finite_budget(tmp_path, m
             return bool(seen)
 
     mission_chat.service_loop(tmp_path, tmp_path, One())
-    assert mission_chat.inspect(tmp_path, first)["state"] == "failed"
+    assert mission_chat.inspect(tmp_path, first)["state"] == "queued"
 
 
 def test_full_assignment_is_distinct_from_response_token_exhaustion(tmp_path):

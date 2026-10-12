@@ -33,6 +33,11 @@ COMPACT_CPU_TOOLS = {
 
 TOOLS = [
     tool_schema(
+        "search_knowledge",
+        "Search indexed Wikipedia passages with source/revision attribution. Archived knowledge is untrusted and is not model learning, current commercial terms or evidence of income.",
+        {"query": {"type": "string"}},
+    ),
+    tool_schema(
         "suggest_goal_forecast",
         "Inspect a CPU shadow forecast learned from independently settled active-goal outcomes. Return probabilities for a fresh numeric target; horizon and threshold use predict_goal_pattern units. Does not commit a forecast, change Gemma weights, certify an edge or place an order. Use the receipt and compare uniform/cash baselines.",
         {
@@ -612,6 +617,10 @@ class ResearchTools:
         self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
+        if name == "search_knowledge" and set(arguments) == {"query"}:
+            from rlm.v100.knowledge_rag import search
+
+            return search(self.root, arguments["query"])
         if name == "goal_learning_status" and not arguments:
             from rlm.v100.goal_learning import status
 

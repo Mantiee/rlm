@@ -36,10 +36,15 @@ def connect(root: Path):
         id TEXT PRIMARY KEY, created TEXT NOT NULL, message TEXT NOT NULL,
         state TEXT NOT NULL, response TEXT, attempts INTEGER NOT NULL DEFAULT 0,
         error TEXT, updated REAL NOT NULL DEFAULT 0)""")
-    if "wait_started" not in {row[1] for row in db.execute("PRAGMA table_info(requests)")}:
+    fields = ("wait_started", "retry_after")
+    if any(
+        field not in {row[1] for row in db.execute("PRAGMA table_info(requests)")}
+        for field in fields
+    ):
         db.execute("BEGIN IMMEDIATE")
-        if "wait_started" not in {row[1] for row in db.execute("PRAGMA table_info(requests)")}:
-            db.execute("ALTER TABLE requests ADD COLUMN wait_started REAL NOT NULL DEFAULT 0")
+        for field in fields:
+            if field not in {row[1] for row in db.execute("PRAGMA table_info(requests)")}:
+                db.execute(f"ALTER TABLE requests ADD COLUMN {field} REAL NOT NULL DEFAULT 0")
     db.commit()
     try:
         with db:
@@ -51,6 +56,27 @@ def connect(root: Path):
 def submit(root: Path, message: str) -> str:
     if not isinstance(message, str) or not message.strip() or len(message) > 8000:
         raise ValueError("Chat needs 1-8000 characters")
+    if re.fullmatch(r"/cancel-chat [a-f0-9]{32}", message.strip()):
+        identity = message.strip().split()[1]
+        with connect(root) as db:
+            row = db.execute("SELECT state FROM requests WHERE id=?", (identity,)).fetchone()
+            if row is None:
+                raise ValueError("Unknown chat request to cancel")
+            if row["state"] not in ("queued", "cancelled"):
+                raise ValueError("Only pending chat requests can be cancelled")
+            db.execute(
+                "UPDATE requests SET state='cancelled',error='Cancelled by operator',updated=? WHERE id=? AND state='queued'",
+                (time.time(), identity),
+            )
+        ActivityLog(root, "controller", "chat").write(
+            "decisions",
+            "user-command-cancelled",
+            {
+                "id": identity,
+                "scope": "Pending attempts cancelled; prior receipts retained. An already in-flight call may finish.",
+            },
+        )
+        return identity
     identity = uuid.uuid4().hex
     with connect(root) as db:
         db.execute("BEGIN IMMEDIATE")
@@ -504,6 +530,7 @@ def conversational_response(
 
 
 READ_ONLY_TOOLS = {
+    "search_knowledge",
     "inspect_trade_costs",
     "inspect_web_page",
     "read_dashboard",
@@ -795,16 +822,20 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         if not cpu_master:
             from rlm.v100.remote_helper import remote_profile, selected_helper
 
-            helper = load_profile(selected_helper(root), root)
-            if not remote_profile(helper):
-                raise requests.ConnectionError(
-                    "Master busy; no independent remote chat helper"
-                ) from None
-            client = helper_client(helper, root)
-            client.request_deadline = request.get("deadline", time.monotonic() + 180)
-            generation_timeout = min(client.timeout, 60)
-            client.timeout = min(generation_timeout, 20)
-            client.identity()
+            try:
+                helper = load_profile(selected_helper(root), root)
+                if not remote_profile(helper):
+                    raise RuntimeError("No independent remote chat helper configured")
+                client = helper_client(helper, root)
+                client.request_deadline = request.get("deadline", time.monotonic() + 180)
+                generation_timeout = min(client.timeout, 60)
+                client.timeout = min(generation_timeout, 20)
+                client.identity()
+            except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
+                raise BackendNotReady(
+                    "Accepted local backend unavailable; remote helper unavailable: "
+                    + str(error)[:240]
+                ) from error
             client.sampling_args["max_tokens"] = 2048
             client.enable_thinking = False
             client.activity_actor = "chat-delegate"
@@ -961,6 +992,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             "sandbox_run",
             "read_master_code",
             "sandbox_gui",
+            "search_knowledge",
             "search_memory",
             "read_source",
         }
@@ -1089,8 +1121,8 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
             accepted_cpu.maintain()
         with connect(root) as db:
             row = db.execute(
-                "SELECT * FROM requests WHERE state='queued' AND updated<? ORDER BY rowid LIMIT 1",
-                (time.time() - 15,),
+                "SELECT * FROM requests WHERE state='queued' AND updated<? AND retry_after<=? ORDER BY rowid LIMIT 1",
+                (time.time() - 15, time.time()),
             ).fetchone()
         if row is None:
             continue
@@ -1133,22 +1165,28 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
             )
         except BackendNotReady as error:
             started = request.get("wait_started") or time.time()
-            expired = time.time() - started >= 600 or request["attempts"] >= 19
+            retry_seconds = min(60, 15 * 2 ** min(request["attempts"], 2))
             with connect(root) as db:
                 db.execute(
-                    "UPDATE requests SET state=?,wait_started=?,attempts=attempts+1,error=?,updated=? WHERE id=? AND state='queued'",
+                    "UPDATE requests SET state='queued',wait_started=?,attempts=attempts+1,error=?,updated=?,retry_after=? WHERE id=? AND state='queued'",
                     (
-                        "failed" if expired else "queued",
                         started,
                         str(error)[:300],
                         time.time(),
+                        time.time() + retry_seconds,
                         request["id"],
                     ),
                 )
             ActivityLog(root, "controller", "chat").write(
                 "errors",
-                "serving-wait-expired" if expired else "serving-wait",
-                {"id": request["id"], "error": str(error), "started": started},
+                "serving-wait",
+                {
+                    "id": request["id"],
+                    "error": str(error),
+                    "started": started,
+                    "retry_seconds": retry_seconds,
+                    "scope": "Saved pending request; no tool execution started. Other requests may proceed.",
+                },
             )
         except (requests.ConnectionError, requests.Timeout) as error:
             expired = (

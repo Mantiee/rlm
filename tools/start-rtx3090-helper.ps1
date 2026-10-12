@@ -196,7 +196,9 @@ $Worker = $null
 $CreatedAllowRule = $false
 $CreatedBlockRule = $false
 $CreatedProxyRule = $false
+$CreatedActualProxyRule = $false
 $ProxyRule = "v100-helper-proxy-$Port-from-$DebianIp"
+$ActualProxyRule = "$ProxyRule-actual-python"
 Remove-Item -LiteralPath $OwnerPath -ErrorAction SilentlyContinue
 try {
 if (-not (Confirm-HelperRule $BlockRule 'Block' $Ranges '')) {
@@ -216,6 +218,22 @@ if ($ResourceProxyPython -and -not (Confirm-HelperRule $ProxyRule 'Allow' @($Deb
         -Protocol TCP -LocalPort $Port -LocalAddress $WindowsIp -RemoteAddress $DebianIp `
         -Program $ResourceProxyPython -Profile Any | Out-Null
     $CreatedProxyRule = $true
+}
+
+# Windows venv python.exe redirects to the base executable used by the TCP owner.
+# Preserve the legacy launcher rule and authorize only the actual owned interpreter.
+if ($ResourceProxyPython) {
+    $ResolvedProxyPython = (& $ResourceProxyPython -c 'import sys; print(sys._base_executable)').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $ResolvedProxyPython -PathType Leaf) -or
+        [IO.Path]::GetFileName($ResolvedProxyPython) -ine 'python.exe') {
+        throw 'Cannot resolve the owned proxy base interpreter; no additional rule created.'
+    }
+    if ($ResolvedProxyPython -ine $ResourceProxyPython -and -not (Confirm-HelperRule $ActualProxyRule 'Allow' @($DebianIp) $ResolvedProxyPython)) {
+        New-NetFirewallRule -Name $ActualProxyRule -DisplayName $ActualProxyRule -Direction Inbound -Action Allow `
+            -Protocol TCP -LocalPort $Port -LocalAddress $WindowsIp -RemoteAddress $DebianIp `
+            -Program $ResolvedProxyPython -Profile Any | Out-Null
+        $CreatedActualProxyRule = $true
+    }
 }
 
 $WorkerScript = Join-Path $Root 'serve-worker.ps1'
@@ -429,6 +447,7 @@ $Ready = $false
         $candidate = Get-Process -Id $owner.pid -ErrorAction SilentlyContinue
         if ($candidate -and $candidate.Path -eq $owner.path -and $candidate.StartTime.ToUniversalTime().ToString('o') -eq $owner.started) { Stop-Process -Id $candidate.Id -Force }
     }
+    if ($CreatedActualProxyRule) { Remove-NetFirewallRule -Name $ActualProxyRule -ErrorAction SilentlyContinue }
     if ($CreatedProxyRule) { Remove-NetFirewallRule -Name $ProxyRule -ErrorAction SilentlyContinue }
     if ($CreatedAllowRule) { Remove-NetFirewallRule -Name $Rule -ErrorAction SilentlyContinue }
     if ($CreatedBlockRule) { Remove-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue }

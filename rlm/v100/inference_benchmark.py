@@ -251,12 +251,13 @@ def pressure_reason(preflight: bool = False) -> str | None:
     temperature, free, watts = map(float, telemetry.stdout.splitlines()[0].split(","))
     if not all(math.isfinite(value) for value in (temperature, free, watts)):
         return "GPU resource sensors are not finite"
-    if (
-        temperature >= 75
-        or free < (12288 if preflight and os.name == "nt" else 3072)
-        or watts > 250
-    ):
-        return "GPU temperature, free VRAM or board load exceeds admission budget"
+    minimum = 12288 if preflight and os.name == "nt" else 3072
+    if temperature >= 75:
+        return f"GPU temperature {temperature:.1f} C exceeds admission threshold 75 C"
+    if free < minimum:
+        return f"Free VRAM {free:.0f} MiB is below admission requirement {minimum} MiB"
+    if watts > 250:
+        return f"GPU board draw {watts:.1f} W exceeds admission threshold 250 W"
     if os.name != "nt":
         return None
     import psutil
@@ -295,6 +296,31 @@ def pressure_stop(process, interrupted: threading.Event, finished: threading.Eve
             if process.poll() is None:
                 process.terminate()
             return
+
+
+def wait_admission(seconds: int = 60) -> str | None:
+    deadline = time.monotonic() + seconds
+    reported = None
+    while True:
+        reason = pressure_reason(preflight=True)
+        if reason is None:
+            return None
+        if reason != reported:
+            print(
+                json.dumps(
+                    {
+                        "phase": "between-variants-cooldown",
+                        "reason": reason,
+                        "scope": "No next native process started; existing host work has priority",
+                    }
+                ),
+                flush=True,
+            )
+            reported = reason
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return reason
+        time.sleep(min(2, remaining))
 
 
 def run(profile: dict, output: Path, port: int = 8097) -> dict:
@@ -355,9 +381,18 @@ def run(profile: dict, output: Path, port: int = 8097) -> dict:
         ]
     )
     for variant in supported:
-        reason = pressure_reason(preflight=True)
+        reason = wait_admission()
         if reason:
-            raise RuntimeError(reason + "; next variant not started")
+            rows.append(
+                {**variant, "state": "blocked", "error": reason + "; next variant not started"}
+            )
+            selection = select(rows)
+            selection["benchmark_complete"] = False
+            save(
+                output / "results.json",
+                {"variants": rows, "selection": selection, "model_sha256": model_hash},
+            )
+            return json.loads((output / "results.json").read_text())
         record = {**variant, "state": "starting"}
         save(output / "progress.json", record)
         environment = {
@@ -416,9 +451,13 @@ def run(profile: dict, output: Path, port: int = 8097) -> dict:
                         process.wait(timeout=5)
                 monitor.join(timeout=5)
         rows.append(record)
+        selection = select(rows)
+        selection["benchmark_complete"] = len(
+            [row for row in rows if row["state"] == "measured"]
+        ) == len(supported)
         save(
             output / "results.json",
-            {"variants": rows, "selection": select(rows), "model_sha256": model_hash},
+            {"variants": rows, "selection": selection, "model_sha256": model_hash},
         )
         print(
             json.dumps(
