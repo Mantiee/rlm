@@ -15,7 +15,7 @@ $runner = Join-Path $dir 'managed_bootstrap.py'
 & $python -m py_compile $runner
 if ($LASTEXITCODE -ne 0) { throw 'Bootstrap Python failed syntax validation; no updater task started.' }
 $action = New-ScheduledTaskAction -Execute $python -Argument "-u `"$runner`" --root `"$root`""
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Hours 6)
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 15)
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $identity = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 5) -StartWhenAvailable

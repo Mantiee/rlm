@@ -44,6 +44,13 @@ def accepted_master(root: Path, branch: str):
             client = helper_client(load_profile(planner, root), root, branch)
             client.timeout = min(client.timeout, 10)
             client.identity()
+            # The short identity probe is not the generation deadline, especially for cold MoE loading.
+            client.timeout = 120
+            client.request_deadline = time.monotonic() + 150
+            client.enable_thinking = False
+            client.sampling_args = dict(client.sampling_args) | {"max_tokens": 2048}
+            client.research_token_ceiling = 2048
+            client.research_thinking_allowed = False
             client.activity_actor = "income-research-planner"
             return client
         except requests.RequestException:

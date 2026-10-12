@@ -114,7 +114,9 @@ def test_native_maintenance_restores_profile_after_failed_benchmark(tmp_path, mo
 
     folder = tmp_path / "research/mission/run-current"
     folder.mkdir(parents=True)
-    profile = {"runtime": {}, "server": {"model": "existing.gguf"}}
+    model = folder / "existing.gguf"
+    model.write_bytes(b"owned model fixture")
+    profile = {"runtime": {}, "server": {"model": str(model)}}
     atomic_json(folder / "input-profile.json", profile)
     monkeypatch.setattr(managed_native, "load_profile", lambda *a: profile)
     monkeypatch.setattr(managed_native.subprocess, "check_output", lambda *a, **k: "")
@@ -223,3 +225,105 @@ def test_only_recorded_owned_windows_tailnet_peer_is_considered(tmp_path, monkey
     monkeypatch.setattr(managed_prepare.requests, "Session", Session)
     assert managed_prepare.helper_endpoint(tmp_path) is None
     assert queried == ["http://192.168.0.61:11435/api/tags"]
+
+
+def test_wikipedia_start_failure_keeps_model_preparation_running(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        updater.subprocess,
+        "check_output",
+        lambda args, **kw: "" if args[0] == "ps" else "0.1.3+v100.84",
+    )
+    calls = []
+
+    def launch(args, **kwargs):
+        calls.append(args)
+        if args[0] == "systemd-run":
+            raise subprocess.CalledProcessError(1, args)
+        atomic_json(tmp_path / "research/managed-update/preparation.json", {"stage": "prepared"})
+
+    monkeypatch.setattr(updater.subprocess, "run", launch)
+    result = updater.linux(tmp_path, tmp_path, "a" * 40, {"version": 84})
+    assert result["wiki"]["stage"] == "blocked"
+    assert any("rlm.v100.managed_prepare" in args for args in calls)
+    assert result["stage"] == "package-ready-preparation-partial"
+
+
+def test_malformed_helper_inventory_is_unavailable_not_task_crash(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from rlm.v100 import managed_prepare
+
+    monkeypatch.setattr(managed_prepare.subprocess, "check_output", lambda *a, **k: "{}")
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, *a, **k):
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: [])
+
+    monkeypatch.setattr(managed_prepare.requests, "Session", Session)
+    assert managed_prepare.helper_endpoint(tmp_path) is None
+
+
+def test_helper_is_prepared_before_bulk_assets_and_failed_cpu_pilot_is_isolated(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import huggingface_hub
+
+    from rlm.v100 import foundation, managed_native, managed_prepare, model_roles
+
+    ordered = []
+
+    def endpoint(root):
+        ordered.append("helper")
+        return "http://192.168.0.61:11435"
+
+    def asset(root, native, role, context):
+        ordered.append("asset-" + role)
+        return {"server": {}}, {"bytes": 1}
+
+    monkeypatch.setattr(managed_prepare, "helper_endpoint", endpoint)
+    monkeypatch.setattr(managed_prepare, "prepare", asset)
+    monkeypatch.setattr(model_roles, "qualify", lambda root: {"roles": {"fast": {}}})
+    monkeypatch.setattr(
+        huggingface_hub,
+        "HfApi",
+        lambda: SimpleNamespace(model_info=lambda *a: SimpleNamespace(sha="a" * 40)),
+    )
+    monkeypatch.setattr(foundation, "propose", lambda *a: {"state": "queued"})
+    monkeypatch.setattr(
+        managed_prepare,
+        "memory_pilot",
+        lambda root: (_ for _ in ()).throw(subprocess.CalledProcessError(1, ["owned-pilot"])),
+    )
+    monkeypatch.setattr(managed_native, "run", lambda root: {"state": "measured"})
+    result = managed_prepare.run(tmp_path)
+    assert ordered == ["helper", "asset-fast", "asset-planner"]
+    assert result["memory_pilot"]["state"] == "blocked"
+    assert result["native_optimization"]["state"] == "measured"
+    assert result["stage"] == "partially-blocked"
+
+
+def test_planner_identity_probe_does_not_leave_ten_second_generation_budget(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from rlm.v100 import competition, income_work, mission_chat, model_roles
+
+    observed = []
+    client = SimpleNamespace(
+        timeout=900, sampling_args={}, identity=lambda: observed.append(client.timeout)
+    )
+    monkeypatch.setattr(model_roles, "selected_profile", lambda *a: tmp_path / "admitted.json")
+    monkeypatch.setattr(mission_chat, "preferences", lambda root: {"remote_helper_enabled": True})
+    monkeypatch.setattr(income_work, "load_profile", lambda *a: {})
+    monkeypatch.setattr(competition, "helper_client", lambda *a: client)
+    assert income_work.accepted_master(tmp_path, "A") is client
+    assert observed == [10]
+    assert client.timeout == 120
+    assert client.research_token_ceiling == 2048

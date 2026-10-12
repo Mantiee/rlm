@@ -90,10 +90,6 @@ def maintenance(root: Path) -> dict:
     from rlm.v100.supervisor import install
 
     receipt = root / "research/managed-update/native-qualification.json"
-    if receipt.exists():
-        previous = json.loads(receipt.read_text())
-        if previous.get("state") == "measured":
-            return previous
     processes = subprocess.check_output(["ps", "-eo", "args="], text=True)
     if exclusive(processes):
         return {"state": "deferred-training", "scope": "No mission or training stopped"}
@@ -106,11 +102,29 @@ def maintenance(root: Path) -> dict:
     profile = load_profile(Path(source), root)
     if profile["runtime"].get("backend"):
         return {"state": "deferred-non-native-master"}
+    from rlm.v100.model_roles import json_hash
+    from rlm.v100.protection import file_hash
+
+    identity = {
+        "profile_sha256": json_hash(profile),
+        "model_sha256": file_hash(Path(profile["server"]["model"])),
+    }
+    if receipt.exists():
+        previous = json.loads(receipt.read_text())
+        if previous.get("state") == "measured" and all(
+            previous.get(k) == v for k, v in identity.items()
+        ):
+            return previous
     folder = root / "research/performance" / ("managed-" + str(time.time_ns()))
     folder.mkdir(parents=True)
     preserved = folder / "accepted-profile.json"
     atomic_json(preserved, profile)
-    result = {"state": "maintenance-starting", "profile": str(preserved), "updated": time.time()}
+    result = {
+        "state": "maintenance-starting",
+        "profile": str(preserved),
+        "updated": time.time(),
+        **identity,
+    }
     atomic_json(receipt, result)
     resume_profile = preserved
     try:
@@ -128,10 +142,17 @@ def maintenance(root: Path) -> dict:
             "Native n-gram/cache/offload/thread/Flash Attention comparison on the accepted GGUF; "
             "measurement proposal only. Independent protected quality gates precede changed serving settings."
         )
-        promoted, admission = qualify_settings(root, profile, measurement["selection"], folder)
-        result["settings_admission"] = admission
-        if promoted is not None:
-            resume_profile = promoted
+        try:
+            promoted, admission = qualify_settings(root, profile, measurement["selection"], folder)
+            result["settings_admission"] = admission
+            if promoted is not None:
+                resume_profile = promoted
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            result["settings_admission"] = {
+                "activated": False,
+                "state": "blocked",
+                "error": str(error),
+            }
         candidates = {}
         for role in ("fast", "planner"):
             path = root / f"research/model-roles/candidates/{role}.json"
@@ -175,6 +196,8 @@ def maintenance(root: Path) -> dict:
                     result["rollback_resume"] = install(root, preserved)
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as recovery:
                     result["rollback_error"] = str(recovery)
+        if resume_profile != preserved:
+            result["profile_sha256"] = json_hash(json.loads(resume_profile.read_text()))
         result["updated"] = time.time()
         atomic_json(receipt, result)
     return result

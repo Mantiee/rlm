@@ -10,6 +10,8 @@ $python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Existing owned compute Python required.' }
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null
 # The existing proxy remains the only admission controller. Tailscale is a scoped forwarding path.
+$network = @{state='not-configured';error='Tailscale executable unavailable'}
+try {
 $tailscale = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
 if (Test-Path -LiteralPath $tailscale) {
     $state = (& $tailscale status --json | ConvertFrom-Json)
@@ -34,28 +36,63 @@ if (Test-Path -LiteralPath $tailscale) {
     Start-Service iphlpsvc
     & netsh.exe interface portproxy add v4tov4 listenaddress=$($selfIp[0]) listenport=11437 connectaddress=192.168.0.61 connectport=11435
     if ($LASTEXITCODE -ne 0) { throw 'Scoped tailnet forwarding failed.' }
-    @{endpoint="http://$($selfIp[0]):11437";owner=$owner[0];revision=$Revision} | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root 'logs\tailnet-helper.json')
+    $network = @{state='configured';endpoint="http://$($selfIp[0]):11437";owner=$owner[0];revision=$Revision}
 }
-# Download only public local model tags. The preserved 9B baseline is never pulled/rebound.
-$models = @('qwen3.5:2b-q4_K_M','qwen3.5:4b-q4_K_M','qwen3.5:35b-a3b-q4_K_M')
- $available = @( (Invoke-RestMethod 'http://127.0.0.1:11436/api/tags' -TimeoutSec 10).models.name )
-foreach ($model in $models) {
-    if ($available -contains $model) { Write-Host "Retaining existing model identity: $model"; continue }
-    $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($root).Substring(0,1))
-    if ($drive.Free -lt 32GB) { throw 'Model preparation needs at least 32 GiB free disk; existing models retained.' }
-    Write-Host "Preparing owned local model: $model"
-    Invoke-RestMethod 'http://127.0.0.1:11436/api/pull' -Method Post -ContentType 'application/json' `
-        -Body (@{model=$model;stream=$false} | ConvertTo-Json) -TimeoutSec 3600 | ConvertTo-Json -Depth 4
-}
-Invoke-RestMethod 'http://127.0.0.1:11436/api/tags' -TimeoutSec 10 | ConvertTo-Json -Depth 5 |
-    Set-Content -Encoding UTF8 (Join-Path $root 'logs\managed-models.json')
-$benchmark = Join-Path $Bundle 'tools\benchmark-synta-windows.ps1'
-try {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $benchmark -Revision $Revision -Bundle $Bundle
-    if ($LASTEXITCODE -ne 0) { throw 'Native benchmark deferred or blocked; inspect performance logs.' }
-    @{state='measured';revision=$Revision} | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root 'logs\managed-native.json')
 } catch {
-    @{state='blocked';error=$_.Exception.Message;revision=$Revision} | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root 'logs\managed-native.json')
+    $network = @{state='blocked';error=$_.Exception.Message;revision=$Revision}
     Write-Warning $_.Exception.Message
 }
-Write-Host 'Owned model assets prepared. Debian must independently qualify each role before activation.'
+$network | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root 'logs\tailnet-helper.json')
+# Download only public local model tags. The preserved 9B baseline is never pulled/rebound.
+$models = @('qwen3.5:2b-q4_K_M','qwen3.5:4b-q4_K_M','qwen3.5:35b-a3b-q4_K_M')
+$failures = @()
+$available = @()
+try {
+    $available = @((Invoke-RestMethod 'http://127.0.0.1:11436/api/tags' -TimeoutSec 10).models.name)
+} catch { Write-Warning $_.Exception.Message }
+foreach ($model in $models) {
+    try {
+        if ($available -contains $model) { Write-Host "Retaining existing model identity: $model"; continue }
+        $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($root).Substring(0,1))
+        if ($drive.Free -lt 32GB) { throw 'Model preparation needs at least 32 GiB free disk; existing models retained.' }
+        Write-Host "Preparing owned local model: $model"
+        Invoke-RestMethod 'http://127.0.0.1:11436/api/pull' -Method Post -ContentType 'application/json' `
+            -Body (@{model=$model;stream=$false} | ConvertTo-Json) -TimeoutSec 3600 | ConvertTo-Json -Depth 4
+    } catch {
+        $failures += @{model=$model;error=$_.Exception.Message}
+        Write-Warning $_.Exception.Message
+    }
+}
+$inventory = @()
+try { $inventory = @((Invoke-RestMethod 'http://127.0.0.1:11436/api/tags' -TimeoutSec 10).models) }
+catch { $failures += @{model='inventory';error=$_.Exception.Message} }
+$stage = 'prepared'
+if ($failures.Count -gt 0 -or $network.state -ne 'configured') { $stage = 'partially-blocked' }
+@{stage=$stage;models=$inventory;errors=$failures;network=$network;revision=$Revision} | ConvertTo-Json -Depth 7 |
+    Set-Content -Encoding UTF8 (Join-Path $root 'logs\managed-models.json')
+$benchmark = Join-Path $Bundle 'tools\benchmark-synta-windows.ps1'
+$nativeReceipt = Join-Path $root 'logs\managed-native.json'
+$previous = $null
+if (Test-Path -LiteralPath $nativeReceipt) {
+    try { $previous = Get-Content -Raw -LiteralPath $nativeReceipt | ConvertFrom-Json }
+    catch { Write-Warning 'Previous native receipt malformed; new attempt will use checked artifacts.' }
+}
+$now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+if ($null -eq $previous -or ($previous.revision -ne $Revision) -or
+    ($previous.state -ne 'measured' -and ($now - $previous.updated) -ge 3600)) {
+    try {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $benchmark -Revision $Revision -Bundle $Bundle
+        if ($LASTEXITCODE -ne 0) { throw 'Native benchmark deferred or blocked; inspect performance logs.' }
+        @{state='measured';revision=$Revision;updated=$now} | ConvertTo-Json | Set-Content -Encoding UTF8 $nativeReceipt
+    } catch {
+        @{state='blocked';error=$_.Exception.Message;revision=$Revision;updated=$now} | ConvertTo-Json | Set-Content -Encoding UTF8 $nativeReceipt
+        Write-Warning $_.Exception.Message
+    }
+}
+$task = Get-ScheduledTask -TaskName 'Synta-Managed-Update' -ErrorAction SilentlyContinue
+$runner = Join-Path $root 'tools\managed-bootstrap\managed_bootstrap.py'
+if ($task -and $task.Actions.Count -eq 1 -and $task.Actions[0].Execute -eq $python -and $task.Actions[0].Arguments.Contains($runner)) {
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(15) -RepetitionInterval (New-TimeSpan -Minutes 15)
+    Set-ScheduledTask -TaskName 'Synta-Managed-Update' -Trigger $trigger | Out-Null
+}
+Write-Host "Owned model preparation: $stage. Debian independently qualifies roles; blocked steps remain recorded."

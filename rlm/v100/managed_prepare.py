@@ -19,6 +19,8 @@ def helper_endpoint(root: Path) -> str | None:
         peers = json.loads(
             subprocess.check_output(["tailscale", "status", "--json"], text=True, timeout=10)
         )
+        if not isinstance(peers, dict) or not isinstance(peers.get("Peer", {}), dict):
+            raise ValueError("Tailnet peer inventory malformed")
         hosts = [
             item
             for item in peers.get("Peer", {}).values()
@@ -35,7 +37,7 @@ def helper_endpoint(root: Path) -> str | None:
                 response = session.get(origin + "/api/tags", timeout=(3, 5), allow_redirects=False)
                 response.raise_for_status()
                 value = response.json()
-                if not isinstance(value.get("models"), list):
+                if not isinstance(value, dict) or not isinstance(value.get("models"), list):
                     raise ValueError("Helper identity inventory malformed")
                 return origin
             except (ValueError, requests.RequestException):
@@ -90,40 +92,7 @@ def run(root: Path) -> dict:
         "scope": "Asset preparation only; no accepted weights replaced",
     }
     path = root / "research/managed-update/preparation.json"
-    native = root / "src/llama-v0.6.0/build-v100/bin/llama-server"
-    for role in ("fast", "planner"):
-        try:
-            profile, artifact = prepare(root, native, role, 32768)
-            atomic_json(root / f"research/model-roles/candidates/{role}.json", profile)
-            record["assets"].append({"role": role, "state": "downloaded-hash-verified", **artifact})
-        except (OSError, ValueError, RuntimeError) as error:
-            record["assets"].append({"role": role, "state": "blocked", "error": str(error)})
-        atomic_json(path, record)
-    try:
-        from huggingface_hub import HfApi
-
-        from rlm.v100.foundation import propose
-
-        identity = HfApi().model_info("Qwen/Qwen3.5-4B").sha
-        record["debian_foundation"] = propose(
-            root,
-            "A",
-            "Qwen/Qwen3.5-4B",
-            identity,
-            "Compare a separate Qwen3.5 foundation against the accepted learner using retained quality gates; preserve predecessor and reject regressions. Faster small-model serving is a hypothesis requiring measurement.",
-        )
-    except (OSError, ValueError, RuntimeError) as error:
-        record["debian_foundation"] = {"state": "blocked", "error": str(error)}
-    try:
-        record["memory_pilot"] = memory_pilot(root)
-    except (OSError, ValueError, RuntimeError) as error:
-        record["memory_pilot"] = {"state": "blocked", "error": str(error)}
-    try:
-        from rlm.v100.managed_native import run as native_qualification
-
-        record["native_optimization"] = native_qualification(root)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        record["native_optimization"] = {"state": "blocked", "error": str(error)}
+    # Restore helper communication and qualify already downloaded roles before bulk native assets.
     record["stage"] = "qualifying-roles"
     atomic_json(path, record)
     endpoint = helper_endpoint(root)
@@ -139,14 +108,53 @@ def run(root: Path) -> dict:
             from rlm.v100.model_roles import qualify
 
             record["roles"] = qualify(root)
-        except (OSError, ValueError, RuntimeError) as error:
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             record["roles"] = {"state": "blocked", "error": str(error)}
+    record["stage"] = "preparing-assets"
+    atomic_json(path, record)
+    native = root / "src/llama-v0.6.0/build-v100/bin/llama-server"
+    for role in ("fast", "planner"):
+        try:
+            profile, artifact = prepare(root, native, role, 32768)
+            atomic_json(root / f"research/model-roles/candidates/{role}.json", profile)
+            record["assets"].append({"role": role, "state": "downloaded-hash-verified", **artifact})
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            record["assets"].append({"role": role, "state": "blocked", "error": str(error)})
+        atomic_json(path, record)
+    try:
+        from huggingface_hub import HfApi
+
+        from rlm.v100.foundation import propose
+
+        identity = HfApi().model_info("Qwen/Qwen3.5-4B").sha
+        record["debian_foundation"] = propose(
+            root,
+            "A",
+            "Qwen/Qwen3.5-4B",
+            identity,
+            "Compare a separate Qwen3.5 foundation against the accepted learner using retained quality gates; preserve predecessor and reject regressions. Faster small-model serving is a hypothesis requiring measurement.",
+        )
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        record["debian_foundation"] = {"state": "blocked", "error": str(error)}
+    try:
+        record["memory_pilot"] = memory_pilot(root)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        record["memory_pilot"] = {"state": "blocked", "error": str(error)}
+    try:
+        from rlm.v100.managed_native import run as native_qualification
+
+        record["native_optimization"] = native_qualification(root)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        record["native_optimization"] = {"state": "blocked", "error": str(error)}
     roles = record["roles"]
     record["stage"] = (
         "prepared"
         if isinstance(roles, dict)
         and roles.get("roles")
         and all(item["state"] == "downloaded-hash-verified" for item in record["assets"])
+        and record.get("native_optimization", {}).get("state") == "measured"
+        and record.get("memory_pilot", {}).get("state") not in ("blocked", "interrupted-pilot")
+        and record.get("debian_foundation", {}).get("state") != "blocked"
         else "partially-blocked"
     )
     record["updated"] = time.time()

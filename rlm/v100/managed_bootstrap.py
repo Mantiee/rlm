@@ -104,34 +104,53 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
         "wikimedia_exports.py" in line or "rlm.v100.wiki_ingest" in line
         for line in processes.splitlines()
     )
-    complete = (
-        knowledge_status.exists()
-        and json.loads(knowledge_status.read_text()).get("stage") == "complete"
-    )
+    wiki_error = None
+    try:
+        complete = (
+            knowledge_status.exists()
+            and json.loads(knowledge_status.read_text()).get("stage") == "complete"
+        )
+    except (OSError, ValueError) as error:
+        complete = False
+        wiki_error = str(error)
+    wiki_receipt = {
+        "stage": "already-running" if importing else "complete" if complete else "queued"
+    }
+    if wiki_error:
+        wiki_receipt["previous_status_error"] = wiki_error
     if not importing and not complete:
         wiki = folder / "rlm/v100/wikimedia_exports.py"
-        subprocess.run(
-            [
-                "systemd-run",
-                "--user",
-                "--unit=synta-managed-wikipedia",
-                "--collect",
-                "--property=Type=exec",
-                "--property=Nice=10",
-                str(python),
-                "-u",
-                str(wiki),
-                "--root",
-                str(root),
-                "--language",
-                "en",
-            ],
-            check=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    "systemd-run",
+                    "--user",
+                    "--unit=synta-managed-wikipedia",
+                    "--collect",
+                    "--property=Type=exec",
+                    "--property=Nice=10",
+                    str(python),
+                    "-u",
+                    str(wiki),
+                    "--root",
+                    str(root),
+                    "--language",
+                    "en",
+                ],
+                check=True,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            wiki_receipt = {"stage": "blocked", "error": str(error)}
     # Preparation acquires assets, then qualifies owned roles and schedules a guarded native window.
     subprocess.run([str(python), "-m", "rlm.v100.managed_prepare", "--root", str(root)], check=True)
+    preparation = root / "research/managed-update/preparation.json"
+    observed = json.loads(preparation.read_text()) if preparation.exists() else {"stage": "unknown"}
     return {
-        "stage": "package-ready-preparation-recorded",
+        "stage": "package-ready-preparation-recorded"
+        if observed.get("stage") == "prepared" and wiki_receipt["stage"] != "blocked"
+        else "package-ready-preparation-partial",
+        "wiki": wiki_receipt,
+        "preparation_stage": observed.get("stage"),
         "version": target,
         "revision": revision,
         "scope": "Roles require successful host qualification; accepted learning weights retained",
@@ -155,8 +174,11 @@ def windows(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
         ],
         check=True,
     )
+    receipt = root / "logs/managed-models.json"
+    models = json.loads(receipt.read_text(encoding="utf-8-sig")) if receipt.exists() else {}
     return {
-        "stage": "windows-prepared",
+        "stage": "windows-prepared" if models.get("stage") == "prepared" else "windows-partial",
+        "preparation_stage": models.get("stage", "unknown"),
         "revision": revision,
         "scope": "Prepared owned models and scoped connection; Debian independently validates role quality",
     }

@@ -1,4 +1,4 @@
-# Synta managed rollout (v83)
+# Synta managed rollout (v84)
 
 The bootstraps install an operator-authorized updater on each existing owned host. They fetch the `v100-rtx-reconnect` GitHub channel, resolve it to an immutable commit, verify the release artifact SHA256 values and preserve model/goal/accounting evidence. They do not create a remote shell for ChatGPT.
 
@@ -6,13 +6,13 @@ The bootstraps install an operator-authorized updater on each existing owned hos
 
 Run the Windows bootstrap first, in elevated PowerShell under the existing helper account. Run the Debian bootstrap second under `marek`, without sudo. Both require the existing Synta Python environments. The Windows task runs under the current interactive user and requires that user to be signed in. Debian uses a user systemd timer. A disconnected SSH session does not stop its task. Existing linger/boot policies are not changed.
 
-Automatic checks occur every six hours on Windows. Debian checks every 15 minutes and avoids repeating a successfully prepared release within six hours. An active exclusive train causes a deferred package update. The dashboard shows updater, asset preparation, RAG, admitted roles and native qualification receipts.
+Automatic checks occur every 15 minutes on both hosts. Both avoid repeating a successfully prepared release within six hours. Partial preparation is retried after fifteen minutes. A Wikipedia or helper failure does not abort the other preparations. An active exclusive train causes a deferred package update. The dashboard shows updater, asset preparation, RAG, admitted roles and native qualification receipts.
 
 ## What executes
 
 * Windows keeps the pinned 9B baseline and downloads Qwen3.5 2B Q4, 4B Q4 and 35B-A3B Q4, retaining already downloaded identities. Pulls use the owned loopback Ollama, not a paid provider.
 * The existing Tailscale peer named `debian1` can reach the existing Windows admission proxy through port 11437, restricted to the discovered Debian tailnet address. The proxy remains the resource admission controller. LAN rules are retained. Failure remains visible; no general firewall/VPN disabling occurs.
-* Debian installs v83, preserves its profile and resumes the mission. It resumes/starts the hash-verified English Wikipedia importer unless an importer is already running or complete. The importer has two download/prefetch slots and one index writer. Indexed batches become queryable during the remaining import.
+* Debian installs v84, preserves its profile and resumes the mission. It resumes/starts the hash-verified English Wikipedia importer unless an importer is already running or complete. The importer has two download/prefetch slots and one index writer. Indexed batches become queryable during the remaining import.
 * RAG automatically contributes at most two 800-character excerpts to research tasks. These are archived data with source/revision references, not training approval or current market pricing.
 * Debian acquires hash-pinned native 4B/35B GGUF candidates. A library-supported Qwen4B foundation trial is queued for the continuous learner, with a separate adapter and retained task/fresh/public gates. A different foundation never inherits a Gemma adapter.
 * Windows roles are evaluated against the pinned 9B with twenty arithmetic, accounting and evidence cases. Fast roles need no measured accuracy loss, every critical case passing, and at least ten percent faster responses. The planner needs no regression and a measured accuracy or speed improvement. This is a limited admission panel, not broad intelligence certification. The report contains every observed answer and elapsed time.
