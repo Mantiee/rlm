@@ -11,6 +11,22 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_every_release_file_downloads_with_its_published_hash(tmp_path, monkeypatch):
+    manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
+    payloads = {}
+    for name, expected in manifest["files"].items():
+        content = (ROOT / name).read_bytes()
+        assert hashlib.sha256(content).hexdigest() == expected, name
+        payloads[name] = content
+    module = bootstrap(monkeypatch)
+    prefix = "https://raw.githubusercontent.com/Mantiee/rlm/" + "a" * 40 + "/"
+    monkeypatch.setattr(module, "fetch", lambda url: payloads[url.removeprefix(prefix)])
+    module.materialize(tmp_path, "a" * 40, manifest)
+    for name, expected in manifest["files"].items():
+        assert hashlib.sha256((tmp_path / name).read_bytes()).hexdigest() == expected
+    assert json.loads((tmp_path / "release.json").read_text())["revision"] == "a" * 40
+
+
 def bootstrap(monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / "rlm/v100"))
     spec = importlib.util.spec_from_file_location(

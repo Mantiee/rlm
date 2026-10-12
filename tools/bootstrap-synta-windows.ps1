@@ -34,8 +34,17 @@ $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -Execution
 Register-ScheduledTask -TaskName 'Synta-Managed-Update' -Action $action -Trigger $trigger -Principal $identity -Settings $settings -Force | Out-Null
 # Repair serving in this console, independently of a previous model downloader.
 $bundle = Join-Path $root ("tools\managed-releases\" + $Revision)
-& $python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from managed_bootstrap import release,materialize; rev,manifest=release(sys.argv[3]); materialize(Path(sys.argv[2]),rev,manifest)' $dir $bundle $Revision *>> $log
-if ($LASTEXITCODE -ne 0) {
+# Windows PowerShell 5.1 turns native stderr into error records. Capture the
+# complete traceback, restore the caller policy, then inspect the process exit.
+$previousErrorPolicy = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    & $python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from managed_bootstrap import release,materialize; rev,manifest=release(sys.argv[3]); materialize(Path(sys.argv[2]),rev,manifest)' $dir $bundle $Revision *>> $log
+    $acquisitionExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorPolicy
+}
+if ($acquisitionExit -ne 0) {
     Get-Content -LiteralPath $log -Tail 30
     throw "Release acquisition failed before helper changes. Inspect $log"
 }

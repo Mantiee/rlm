@@ -26,9 +26,9 @@
     "tools/start-rtx3090-helper.ps1": "f6797bddc2dfef068f2a1c0e760a6ae324192312ffa07c268bd813e64c4341b8",
     "tools/watch-rtx3090-helper.ps1": "cb2dadd98b4f1a4a6d5ddc269b33d15799351adcda26ba59c8e7c9a4fe03b547",
     "tools/update-synta-v89.sh": "7b0ae94ce1480d527ceadf79bac820f0e725ef1110b72ebeace9f87420389b36",
-    "tools/bootstrap-synta-windows.ps1": "7603019cda1a268d1a82c098d891dd6a75f366d0dd5a5b06b3f5cf32eda1edc5",
+    "tools/bootstrap-synta-windows.ps1": "423d397dcfad9ca18af8edc1b064e753a6568c811b07c02f4026ca939093dd10",
     "rlm/v100/autonomous_planning.py": "0b3781c2e275e5b078e6337c54cd2a65621c9c5a4ca4b28d886e94408c68b4fd",
-    "rlm/v100/windows_resource_proxy.py": "d215cf1d9996628154a1579d94f2562790c53163f811604489cacdfd789e9a9c"
+    "rlm/v100/windows_resource_proxy.py": "0e873414200e09e692c367294bf97739d0fcc7b1a367bed49562593a3a5ef00f"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
