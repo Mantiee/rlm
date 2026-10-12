@@ -1181,6 +1181,23 @@ def bounded_tool_result(root: Path, result: dict, limit: int = 4096) -> str:
     )
 
 
+def compact_research_messages(root: Path, messages: list[dict]) -> list[dict]:
+    """Bound untrusted result data while retaining every call ID and operator instruction."""
+    compacted = [dict(row) for row in messages]
+    tool_indices = [index for index, row in enumerate(compacted) if row.get("role") == "tool"]
+    for index in tool_indices:
+        row = compacted[index]
+        limit = 2048 if index == tool_indices[-1] else 1024
+        try:
+            value = json.loads(row.get("content", ""))
+        except (ValueError, TypeError):
+            value = {"untrusted_result_text": row.get("content", "")}
+        if not isinstance(value, dict):
+            value = {"untrusted_result_data": value}
+        row["content"] = bounded_tool_result(root, value, limit)
+    return compacted
+
+
 def route_research_tool(client, messages: list[dict], tools: list[dict], journal) -> dict:
     """One correction of rejected JSON arguments, before any tool is executed."""
     json_protocol = getattr(client, "tool_protocol", "native") == "json"
@@ -1241,6 +1258,7 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
     if type(tool_steps) is not int or not 1 <= tool_steps <= 8:
         raise ValueError("Research tool budget must be 1-8 steps")
     for _ in range(tool_steps):
+        messages = compact_research_messages(root, messages)
         available_tools = copy.deepcopy(selected_tools)
         for tool in available_tools:
             if tool["function"]["name"] == "read_source":
@@ -1309,6 +1327,7 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
                 ),
             },
         ]
+    messages = compact_research_messages(root, messages)
     result = (
         tool_turn(
             client,

@@ -586,6 +586,16 @@ def execution_receipts(rows: list[dict]) -> list[dict]:
     return receipts
 
 
+def operator_context(root: Path, message: str, state: dict) -> dict:
+    """Keep authenticated instructions verbatim; archive oversized host snapshots."""
+    from rlm.v100.research_tools import bounded_tool_result
+
+    result = {"message": message}
+    for key, value in state.items():
+        result[key] = json.loads(bounded_tool_result(root, value, 2048))
+    return result
+
+
 def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
@@ -931,14 +941,17 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         {
             "role": "user",
             "content": json.dumps(
-                {
-                    "message": request["message"],
-                    "mission": mission,
-                    "mission_evidence": collect_evidence(root),
-                    "settings": settings(root),
-                    "preferences": preferences(root),
-                    "plans": read_plans(root),
-                },
+                operator_context(
+                    root,
+                    request["message"],
+                    {
+                        "mission": mission,
+                        "mission_evidence": collect_evidence(root),
+                        "settings": settings(root),
+                        "preferences": preferences(root),
+                        "plans": read_plans(root),
+                    },
+                ),
                 ensure_ascii=False,
             ),
         }
@@ -975,6 +988,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             "compute_resources",
             "schedule_drone",
             "cancel_drone",
+            "propose_colab_trial",
             "propose_compute_trial",
             "compute_trial_status",
             "cancel_compute_trial",

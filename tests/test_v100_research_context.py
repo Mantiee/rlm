@@ -124,3 +124,38 @@ def test_parallel_workers_archive_identical_evidence_without_partial_reads(tmp_p
         )
     assert len({row["full_result_sha256"] for row in previews}) == 1
     assert len(list((tmp_path / "research/tool-results").glob("*.json"))) == 1
+
+
+def test_large_chat_state_preserves_operator_and_archives_snapshots(tmp_path):
+    from pathlib import Path
+
+    from rlm.v100.mission_chat import operator_context
+
+    instruction = "Zrób sobie free compute bez wydawania pieniędzy."
+    state = {"mission_evidence": {"rows": ["archive" * 50000]}, "plans": {"goal": "Current goal"}}
+    result = operator_context(tmp_path, instruction, state)
+    assert result["message"] == instruction
+    assert result["plans"] == state["plans"]
+    preview = result["mission_evidence"]
+    assert preview["truncated"] is True
+    assert json.loads(Path(preview["full_result_path"]).read_text()) == state["mission_evidence"]
+    assert len(json.dumps(result)) < 4000
+
+
+def test_compacted_tool_history_retains_pairs_and_original_receipts(tmp_path):
+    from pathlib import Path
+
+    original = {"receipt_id": "execution-1", "text": "data" * 30000}
+    messages = [
+        {"role": "system", "content": "Trusted system"},
+        {"role": "user", "content": "Authenticated operator"},
+        {"role": "assistant", "tool_calls": [{"id": "call1"}]},
+        {"role": "tool", "tool_call_id": "call1", "content": json.dumps(original)},
+    ]
+    compacted = research_tools.compact_research_messages(tmp_path, messages)
+    assert compacted[:3] == messages[:3]
+    assert compacted[3]["tool_call_id"] == "call1"
+    preview = json.loads(compacted[3]["content"])
+    assert preview["truncated"]
+    assert json.loads(Path(preview["full_result_path"]).read_text()) == original
+    assert messages[3]["content"] == json.dumps(original)
