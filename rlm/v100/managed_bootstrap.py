@@ -72,6 +72,9 @@ def materialize(folder: Path, revision: str, manifest: dict) -> None:
 
 def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     python = root / "venvs/v100-continual/bin/python"
+    watchdog = folder / "rlm/v100/mission_watchdog.py"
+    if watchdog.is_file():
+        subprocess.run([str(python), str(watchdog), "--root", str(root)], check=True, timeout=120)
     processes = subprocess.check_output(["ps", "-eo", "args="], text=True)
     exclusive = any(
         "rlm.v100.cli" in line

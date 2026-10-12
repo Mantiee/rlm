@@ -31,6 +31,8 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+curl -fL --retry 3 "https://raw.githubusercontent.com/Mantiee/rlm/$REV/tools/install-synta-watchdog.sh" -o "$ROOT/install-synta-watchdog.sh"
+bash "$ROOT/install-synta-watchdog.sh" "$REV"
 systemctl --user daemon-reload
 systemctl --user enable --now synta-managed-update.timer
 systemctl --user start --no-block synta-managed-update.service

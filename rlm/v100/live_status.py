@@ -369,7 +369,8 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
     from rlm.v100.common import load_profile
     from rlm.v100.competition import helper_client
     from rlm.v100.mission_chat import preferences
-    from rlm.v100.remote_helper import remote_profile, selected_helper
+    from rlm.v100.model_roles import selected_profile
+    from rlm.v100.remote_helper import remote_profile
 
     enabled = preferences(root).get("remote_helper_enabled", True) is not False
     if not enabled:
@@ -384,11 +385,23 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
     try:
         if not enabled:
             raise RuntimeError("Operator disabled helper probes")
-        profile = load_profile(selected_helper(root), root)
+        profile = load_profile(
+            selected_profile(root, "planner") or root / "research/researcher-rtx3090.json", root
+        )
         if not remote_profile(profile):
             raise ValueError("Remote helper is not configured")
         client = helper_client(profile, root)
         client.timeout = 3
+        guard = client.remote_request("/api/synta-resources")
+        age = time.time() - guard.get("updated", 0)
+        if guard.get("contract") != "synta-adaptive-windows-v1" or not 0 <= age <= 10:
+            raise RuntimeError("Windows resource monitor heartbeat stale or unavailable")
+        rtx["metrics"] = guard
+        rtx["detail"] = (
+            guard.get("reason", "Fresh Windows resource sample")
+            + "; active inference: "
+            + str(guard.get("generating", False))
+        )
         info = client.remote_request("/api/ps")
         loaded = [
             model for model in info.get("models", []) if model.get("digest") == client.model_digest
@@ -447,7 +460,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
                         else ""
                     ),
                     "metrics": value.get("resources", {}),
-                    "stale": age > 90,
+                    "stale": age > 90 or value.get("phase") == "unavailable",
                     "model": value.get("model"),
                     "receipt": str(owned),
                     "jobs": [],
@@ -468,6 +481,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         ("knowledge", "Wikipedia / RAG", "research/knowledge/import-status.json"),
         ("knowledge-index", "Live Wikipedia index", "research/knowledge/index-progress.json"),
         ("managed-update", "Automatic GitHub updates", "research/managed-update/status.json"),
+        ("mission-watchdog", "Mission recovery", "research/mission-watchdog/status.json"),
         ("model-roles", "Qualified model roles", "research/model-roles/active.json"),
         (
             "native-qualification",

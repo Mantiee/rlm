@@ -175,6 +175,26 @@ def qualify(root: Path) -> dict:
     baseline_profile = load_profile(original, root)
     if baseline_profile["runtime"]["model_name"] != MODEL:
         raise ValueError("Role qualification requires the preserved pinned 9B baseline")
+    inventory = helper_client(baseline_profile, root).remote_request("/api/tags")
+    fingerprint = json_hash(
+        {
+            "profile": baseline_profile,
+            "models": sorted((m["name"], m["digest"]) for m in inventory["models"]),
+            "panel": cases(),
+            "revision": "roles-v88",
+        }
+    )
+    cache = root / "research/model-roles/qualification-cache.json"
+    active = root / "research/model-roles/active.json"
+    if cache.is_file() and active.is_file():
+        prior_cache = json.loads(cache.read_text())
+        if (
+            prior_cache.get("fingerprint") == fingerprint
+            and time.time() - prior_cache.get("updated", 0) < 21600
+        ):
+            selected_profile(root, "fast")
+            selected_profile(root, "planner")
+            return json.loads(active.read_text())
     folder = root / "research/model-roles" / str(time.time_ns())
     folder.mkdir(parents=True)
     production_output = baseline_profile["runtime"]["max_output_tokens"]
@@ -272,6 +292,11 @@ def qualify(root: Path) -> dict:
         scope="Admitted role profiles only; Gemma learner and accepted weights retained",
     )
     atomic_json(active, prior)
+    # Transport failures retry; stable scored outcomes need no repeated GPU exercise.
+    if all(
+        "error" not in r or r["error"] == "Candidate not downloaded on Windows" for r in reports
+    ):
+        atomic_json(cache, {"fingerprint": fingerprint, "updated": time.time()})
     return prior
 
 

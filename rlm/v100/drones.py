@@ -311,12 +311,23 @@ def finish(root: Path, identity: str, value: dict) -> None:
     )
 
 
+def inference_lane(root: Path, kind: str) -> str:
+    if kind == "income":
+        return "accepted-master"
+    if gpu_disabled(root):
+        return "accepted-master"
+    if kind != "critic" and selected_node(root) is not None:
+        return "debian-3060ti"
+    return "windows-helper"
+
+
 def service(root: Path, stop: threading.Event) -> None:
     # One model job plus up to four CPU/network jobs and one observer. RTX requests share the global
     # existing helper pacing lock with foreground researchers and benchmark clients.
     with ThreadPoolExecutor(max_workers=6) as workers:
         active = {}
         affinities = {}
+        lanes = {}
         goal_future = None
         goal_due = 0
         while not stop.is_set():
@@ -354,6 +365,7 @@ def service(root: Path, stop: threading.Event) -> None:
                     finish(root, identity, result)
                     del active[identity]
                     affinities.pop(identity, None)
+                    lanes.pop(identity, None)
             with connect(root) as db:
                 from rlm.v100.resource_budget import local_budget
 
@@ -373,6 +385,9 @@ def service(root: Path, stop: threading.Event) -> None:
                     )
                     if used >= (llm_slots if llm else budget["cpu_slots"]):
                         continue
+                    lane = inference_lane(root, row["kind"]) if llm else None
+                    if lane is not None and lane in lanes.values():
+                        continue
                     job = dict(row)
                     if job["kind"] == "python":
                         from rlm.v100.resource_budget import cpu_assignment
@@ -388,6 +403,8 @@ def service(root: Path, stop: threading.Event) -> None:
                     if updated.rowcount:
                         if job["kind"] == "python":
                             affinities[row["id"]] = assignment
+                        if lane is not None:
+                            lanes[row["id"]] = lane
                         active[row["id"]] = (workers.submit(execute, root, job), row["kind"])
             atomic_json(
                 root / "research/drones-status.json",
@@ -398,6 +415,7 @@ def service(root: Path, stop: threading.Event) -> None:
                     "cpu_slots": budget["cpu_slots"],
                     "budget": budget,
                     "cpu_affinities": affinities,
+                    "inference_lanes": lanes,
                     "rtx_slots": 0
                     if gpu_disabled(root)
                     else 1 + int(selected_node(root) is not None),

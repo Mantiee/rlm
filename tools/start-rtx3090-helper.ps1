@@ -30,6 +30,11 @@ if ($Port -ne 11435 -or $Context -notin @(8192, 16384, 32768, 65536, 131072)) {
     throw 'Use the isolated port 11435 and context 8192, 16384, 32768, 65536 or 131072.'
 }
 $Root = Join-Path $env:USERPROFILE 'ai-v100-helper'
+$Throughput = $false
+$ThroughputFile = Join-Path $Root 'throughput-settings.json'
+if (Test-Path -LiteralPath $ThroughputFile) {
+    $Throughput = (Get-Content -Raw -LiteralPath $ThroughputFile | ConvertFrom-Json).enabled -eq $true
+}
 $RuntimeVersion = '0.40.0'
 $RuntimeRoot = Join-Path $Root "runtime\ollama-$RuntimeVersion"
 $Ollama = Join-Path $RuntimeRoot 'ollama.exe'
@@ -315,7 +320,7 @@ $Settings = @{
     OLLAMA_KEEP_ALIVE = '-1'
     HELPER_BATCH_TOKENS = "$BatchTokens"
     # Reserve the other half as a scheduler hint, not a hard VRAM partition.
-    OLLAMA_GPU_OVERHEAD = "$([int64][Math]::Max(0, ($FreeMiB - 12288)) * 1048576)"
+    OLLAMA_GPU_OVERHEAD = $(if ($Throughput) { '1073741824' } else { "$([int64][Math]::Max(0, ($FreeMiB - 12288)) * 1048576)" })
 }
 if ($DebugLogs) { $Settings['OLLAMA_DEBUG'] = '1' }
 foreach ($key in $Settings.Keys) { $Info.EnvironmentVariables[$key] = $Settings[$key] }

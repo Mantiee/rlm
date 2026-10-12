@@ -14,11 +14,16 @@ while ($true) {
         $loaded = Invoke-RestMethod -Uri ($Endpoint.TrimEnd('/') + '/api/ps') -TimeoutSec 2
         $loaded.models | Select-Object name,context_length,@{Name='VRAM_GiB';Expression={[math]::Round($_.size_vram/1GB,2)}} | Format-Table -AutoSize
     } catch { Write-Host 'Helper unavailable or paused by game guard.' }
-    $status = Join-Path $dir 'logs\resource-status.json'
-    if (Test-Path -LiteralPath $status) {
-        Write-Host 'ADAPTIVE ADMISSION (browser allowed):'
-        Get-Content -LiteralPath $status -Raw
-    }
+    try {
+        $guard = Invoke-RestMethod -Uri ($Endpoint.TrimEnd('/') + '/api/synta-resources') -TimeoutSec 3
+        $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $guard.updated
+        if ($age -lt 0 -or $age -gt 10 -or $guard.stale) {
+            Write-Host 'RESOURCE MONITOR STALE: admission disabled; inspect managed-helper.json.' -ForegroundColor Red
+        } else {
+            Write-Host 'FRESH ADMISSION (browser allowed):'
+            $guard | ConvertTo-Json -Depth 6
+        }
+    } catch { Write-Host 'RESOURCE MONITOR UNAVAILABLE' -ForegroundColor Red }
     $log = Join-Path $dir 'logs\server.stderr.log'
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 8 }
     $cpuLog = Join-Path $dir 'logs\cpu-native.stdout.log'

@@ -1,6 +1,7 @@
 """Owned Ollama admission/pacing proxy. Does not modify device power or clocks."""
 
 import argparse
+import hashlib
 import http.client
 import json
 import math
@@ -34,6 +35,7 @@ def budget(
     watts: float,
     decoder: float,
     game: bool,
+    throughput: bool = False,
 ) -> dict:
     values = (cpu, ram, temperature, free_vram, watts, decoder)
     if not all(math.isfinite(v) for v in values):
@@ -47,16 +49,20 @@ def budget(
         reasons.append("free host RAM below 6 GiB")
     if temperature >= 75:
         reasons.append("GPU temperature at least 75 C")
-    if free_vram < 3:
-        reasons.append("free VRAM below 3 GiB")
-    if watts > 250:
-        reasons.append("board power above 250 W; stopping only owned inference")
+    if free_vram < (1 if throughput else 3):
+        reasons.append("free VRAM below admission reserve")
+    if watts > (330 if throughput else 250):
+        reasons.append("board power above admission budget; stopping only owned inference")
     duty = 20 if cpu > 50 else 35 if cpu > 35 or decoder > 20 else 65
+    if throughput and cpu <= 35 and decoder <= 20 and ram >= 8 and temperature < 68:
+        duty = 100
     return {
+        "throughput_enabled": throughput,
+        "cpu_threads": max(2, min(16, (os.cpu_count() or 4) // 2)) if duty == 100 else 2,
         "ready": not reasons,
         "reason": "; ".join(reasons) or "spare headroom",
         "duty_percent": duty,
-        "batch_tokens": 16 if duty < 35 else 32 if duty < 65 else 64,
+        "batch_tokens": 16 if duty < 35 else 32 if duty < 65 else 256 if duty == 100 else 64,
         "cpu_percent": cpu,
         "free_ram_gib": ram,
         "temperature_c": temperature,
@@ -75,6 +81,8 @@ class Pressure:
         self.not_before = 0.0
         self.generating = False
         self.workload = {}
+        self.maintenance = False
+        self.code_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
     def stop_owned_runner(self) -> None:
         import psutil
@@ -97,7 +105,7 @@ class Pressure:
         result = subprocess.run(
             [
                 executable,
-                "--query-gpu=temperature.gpu,memory.free,power.draw,utilization.decoder",
+                "--query-gpu=temperature.gpu,memory.free,power.draw,utilization.decoder,utilization.gpu",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -106,10 +114,10 @@ class Pressure:
             check=True,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        temperature, vram, watts, decoder = map(
+        temperature, vram, watts, decoder, utilization = map(
             float, result.stdout.strip().splitlines()[0].split(",")
         )
-        return budget(
+        state = budget(
             psutil.cpu_percent(interval=0.2),
             psutil.virtual_memory().available / 2**30,
             temperature,
@@ -117,7 +125,39 @@ class Pressure:
             watts,
             decoder,
             bool(names & GAMES),
+            self.throughput_enabled(),
         )
+        if not math.isfinite(utilization):
+            raise ValueError("Non-finite GPU utilization sensor")
+        return {**state, "gpu_utilization_percent": utilization}
+
+    def throughput_enabled(self) -> bool:
+        path = self.root / "throughput-settings.json"
+        return (
+            path.is_file()
+            and json.loads(path.read_text(encoding="utf-8-sig")).get("enabled") is True
+        )
+
+    def fresh_state(self) -> dict:
+        state = dict(self.state)
+        age = time.time() - state.get("updated", 0)
+        if not 0 <= age <= 10:
+            state.update(ready=False, reason="Resource monitor heartbeat stale", stale=True)
+        return state
+
+    def publish(self) -> None:
+        # A sharing violation or a full disk must not terminate the sensor thread.
+        path = self.root / "logs/resource-status.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(f"resource-status.{os.getpid()}.new")
+            temporary.write_text(json.dumps(self.state), encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError as error:
+            print(
+                json.dumps({"telemetry_write_error": str(error), "updated": time.time()}),
+                flush=True,
+            )
 
     def monitor(self) -> None:
         while True:
@@ -137,15 +177,12 @@ class Pressure:
                 **state,
                 "updated": time.time(),
                 "contract": "synta-adaptive-windows-v1",
+                "proxy_code_sha256": self.code_sha256,
                 "cooldown_seconds": round(max(0, self.not_before - time.monotonic()), 1),
                 "generating": self.generating,
                 "workload": self.workload,
             }
-            path = self.root / "logs/resource-status.json"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_suffix(".new")
-            temporary.write_text(json.dumps(self.state), encoding="utf-8")
-            os.replace(temporary, path)
+            self.publish()
             time.sleep(2)
 
 
@@ -167,7 +204,22 @@ class Proxy(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         if self.path == "/api/synta-resources" and self.command == "GET":
-            self.send_json(200, pressure.state)
+            self.send_json(
+                200, pressure.fresh_state() if hasattr(pressure, "fresh_state") else pressure.state
+            )
+            return
+        if self.path == "/api/synta-maintenance" and self.command == "POST":
+            if self.client_address[0] != self.server.server_address[0]:
+                self.send_error(403)
+                return
+            if not pressure.lock.acquire(blocking=False):
+                self.send_json(503, {"error": "Owned inference active; update deferred"})
+                return
+            try:
+                pressure.maintenance = True
+                self.send_json(200, {"ready": True, "maintenance": True})
+            finally:
+                pressure.lock.release()
             return
         if self.path not in {
             "/api/chat",
@@ -189,7 +241,13 @@ class Proxy(BaseHTTPRequestHandler):
                 raise ValueError("Request exceeds 2 MiB")
             body = self.rfile.read(length)
             if generating:
-                if not pressure.state["ready"] or time.monotonic() < pressure.not_before:
+                state = (
+                    pressure.fresh_state() if hasattr(pressure, "fresh_state") else pressure.state
+                )
+                if getattr(pressure, "maintenance", False):
+                    self.send_json(503, {"error": "Owned helper maintenance"})
+                    return
+                if not state["ready"] or time.monotonic() < pressure.not_before:
                     reason = (
                         pressure.state["reason"]
                         if not pressure.state["ready"]
@@ -203,13 +261,22 @@ class Proxy(BaseHTTPRequestHandler):
                 if not acquired:
                     self.send_json(503, {"error": "One owned GPU inference already active"})
                     return
+                if getattr(pressure, "maintenance", False):
+                    self.send_json(503, {"error": "Owned helper maintenance"})
+                    return
                 data = json.loads(body)
                 options = data.setdefault("options", {})
                 options["num_batch"] = max(
                     1, min(int(options.get("num_batch", 64)), pressure.state["batch_tokens"])
                 )
-                options["num_thread"] = 2
-                options["num_predict"] = max(1, min(int(options.get("num_predict", 1024)), 2048))
+                options["num_thread"] = pressure.state.get("cpu_threads", 2)
+                options["num_predict"] = max(
+                    1,
+                    min(
+                        int(options.get("num_predict", 1024)),
+                        4096 if pressure.state.get("throughput_enabled") else 2048,
+                    ),
+                )
                 body = json.dumps(data).encode()
                 pressure.generating = True
                 pressure.workload = {

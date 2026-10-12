@@ -290,7 +290,8 @@ class OllamaResearchClient(LlamaCppClient):
             yield quota
 
     def reserve_helper_idle(self, quota: dict, request_seconds: float) -> None:
-        idle = request_seconds * (100 - self.helper_duty_percent) / self.helper_duty_percent
+        duty = quota.get("adaptive_duty_percent", self.helper_duty_percent)
+        idle = request_seconds * (100 - duty) / duty
         state = {"boot_id": quota["boot_id"], "not_before": time.monotonic() + idle}
         if quota["path"] is not None:
             atomic_json(quota["path"], state)
@@ -306,7 +307,7 @@ class OllamaResearchClient(LlamaCppClient):
                 {
                     "endpoint": self.base_url,
                     "batch_tokens": self.helper_batch_tokens,
-                    "active_wall_time_target_percent": self.helper_duty_percent,
+                    "active_wall_time_target_percent": duty,
                     "request_seconds": request_seconds,
                     "planned_idle_seconds_before_next_turn": idle,
                     "waited_seconds_before_this_turn": quota["waited_seconds"],
@@ -486,6 +487,13 @@ class OllamaResearchClient(LlamaCppClient):
                         + " adaptive guard unavailable: "
                         + str(guard.get("reason", "unknown"))
                     )
+                if guard.get("throughput_enabled") is True and not self.dedicated_host:
+                    duty = guard.get("duty_percent")
+                    if type(duty) is int and 1 <= duty <= 100:
+                        quota["adaptive_duty_percent"] = duty
+                    batch = guard.get("batch_tokens")
+                    if type(batch) is int and batch in (16, 32, 64, 128, 256):
+                        payload["options"]["num_batch"] = batch
             self.identity()
             if not self.on_demand:
                 self.loaded()

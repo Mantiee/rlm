@@ -9,6 +9,7 @@ $root = Join-Path $env:USERPROFILE 'ai-v100-helper'
 $python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Existing owned compute Python required.' }
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null
+& (Join-Path $Bundle 'tools\refresh-synta-windows.ps1') -Revision $Revision -Bundle $Bundle
 try {
     & $python (Join-Path $Bundle 'rlm\v100\source_sync.py') --root $root --revision $Revision
     if ($LASTEXITCODE -ne 0) { throw 'Public source snapshot acquisition failed; remaining preparations continue.' }
@@ -71,10 +72,15 @@ $inventory = @()
 try { $inventory = @((Invoke-RestMethod 'http://127.0.0.1:11436/api/tags' -TimeoutSec 10).models) }
 catch { $failures += @{model='inventory';error=$_.Exception.Message} }
 $stage = 'prepared'
-if ($failures.Count -gt 0 -or $network.state -ne 'configured') { $stage = 'partially-blocked' }
+$helper = Get-Content -Raw -LiteralPath (Join-Path $root 'logs\managed-helper.json') | ConvertFrom-Json
+if ($failures.Count -gt 0 -or $network.state -ne 'configured' -or $helper.stage -ne 'verified') { $stage = 'partially-blocked' }
 @{stage=$stage;models=$inventory;errors=$failures;network=$network;revision=$Revision} | ConvertTo-Json -Depth 7 |
     Set-Content -Encoding UTF8 (Join-Path $root 'logs\managed-models.json')
-$benchmark = Join-Path $Bundle 'tools\benchmark-synta-windows.ps1'
+if ($helper.stage -ne 'verified') {
+    Write-Host 'Helper refresh deferred; another managed pass will retry. Native benchmark skipped.'
+    return
+}
+$benchmark = Join-Path $Bundle 'tools\benchmark-synta-windows.ps1' 
 $nativeReceipt = Join-Path $root 'logs\managed-native.json'
 $previous = $null
 if (Test-Path -LiteralPath $nativeReceipt) {

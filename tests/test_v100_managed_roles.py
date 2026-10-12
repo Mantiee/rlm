@@ -356,3 +356,39 @@ def test_operator_exclusion_overrides_previously_admitted_role(tmp_path, model):
     atomic_json(folder / "active.json", {"roles": {"planner": entry}})
     assert selected_profile(tmp_path, "planner") is None
     assert json.loads((folder / "report.json").read_text())["admitted"] is True
+
+
+def test_unchanged_qualified_inventory_does_not_repeat_gpu_panel(tmp_path, monkeypatch):
+    import copy
+    from types import SimpleNamespace
+
+    from rlm.v100 import competition, model_roles
+
+    profile = {
+        "runtime": {"model_name": model_roles.MODEL, "max_output_tokens": 1024},
+        "server": {},
+        "resources": {},
+        "memory": {"chunk_tokens": 256, "fanout": 2, "retrieve_count": 2},
+    }
+    monkeypatch.setattr(model_roles, "load_profile", lambda *a: copy.deepcopy(profile))
+    models = [{"name": name, "digest": "a" * 64} for name in model_roles.ROLE_MODELS]
+    client = SimpleNamespace(
+        remote_request=lambda endpoint: {"models": models},
+        identity=lambda: {"template": "owned template"},
+    )
+    monkeypatch.setattr(competition, "helper_client", lambda *a: client)
+    calls = []
+    monkeypatch.setattr(
+        model_roles,
+        "evaluate",
+        lambda client: calls.append(1)
+        or {"passed": 20, "critical_passed": True, "seconds": 10 if len(calls) == 1 else 5},
+    )
+    first = model_roles.qualify(tmp_path)
+    count = len(calls)
+    assert first["roles"] and count == 5
+    assert model_roles.qualify(tmp_path) == first
+    assert len(calls) == count
+    models[-1]["digest"] = "b" * 64
+    model_roles.qualify(tmp_path)
+    assert len(calls) > count

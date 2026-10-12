@@ -102,6 +102,7 @@ def run(root: Path) -> dict:
         if profile.exists():
             value = json.loads(profile.read_text())
             value["runtime"]["base_url"] = endpoint
+            value["resources"]["require_adaptive_windows_guard"] = True
             # This changes only transport to the explicitly owned peer; pinned model/template remains.
             atomic_json(profile, value)
         try:

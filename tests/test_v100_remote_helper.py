@@ -949,3 +949,36 @@ def test_explicit_tailnet_origin_is_supported():
 def test_excluded_gpt_oss_cannot_create_a_client(model):
     with pytest.raises(ValueError, match="declared local model"):
         remote_helper.OllamaResearchClient(base_url=URL, model_name=model, model_digest=DIGEST)
+
+
+def test_fresh_opted_in_windows_guard_removes_idle_and_uses_adaptive_batch(transport, monkeypatch):
+    instance = client(require_adaptive_windows_guard=True)
+    original = instance.remote_request
+
+    def guarded(endpoint, data=None):
+        if endpoint == "/api/synta-resources":
+            return {
+                "contract": "synta-adaptive-windows-v1",
+                "ready": True,
+                "updated": remote_helper.time.time(),
+                "throughput_enabled": True,
+                "duty_percent": 100,
+                "batch_tokens": 256,
+            }
+        return original(endpoint, data)
+
+    monkeypatch.setattr(instance, "remote_request", guarded)
+    instance.http_request(
+        "/v1/chat/completions",
+        {
+            "model": remote_helper.MODEL,
+            "messages": [{"role": "user", "content": "2+2?"}],
+            "max_tokens": 128,
+        },
+    )
+    payload = next(data for endpoint, data in transport[0] if endpoint == "/api/chat")
+    assert payload["options"]["num_batch"] == 256
+    assert (
+        remote_helper.HELPER_PACING[instance.base_url]["not_before"]
+        <= remote_helper.time.monotonic()
+    )
