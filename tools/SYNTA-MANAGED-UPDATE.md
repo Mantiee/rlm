@@ -1,4 +1,4 @@
-# Synta managed rollout (v86)
+# Synta managed rollout (v87)
 
 The bootstraps install an operator-authorized updater on each existing owned host. They fetch the `v100-rtx-reconnect` GitHub channel, resolve it to an immutable commit, verify the release artifact SHA256 values and preserve model/goal/accounting evidence. They do not create a remote shell for ChatGPT.
 
@@ -12,7 +12,7 @@ Automatic checks occur every 15 minutes on both hosts. Both avoid repeating a su
 
 * Windows keeps the pinned 9B baseline and downloads Qwen3.5 2B Q4, 4B Q4 and Qwen3.6 35B-A3B Q4, retaining already downloaded identities. Pulls use the owned loopback Ollama, not a paid provider.
 * The existing Tailscale peer named `debian1` can reach the existing Windows admission proxy through port 11437, restricted to the discovered Debian tailnet address. The proxy remains the resource admission controller. LAN rules are retained. Failure remains visible; no general firewall/VPN disabling occurs.
-* Debian installs v86, preserves its profile and resumes the mission. It resumes/starts the hash-verified English Wikipedia importer unless an importer is already running or complete. The importer has two download/prefetch slots and one index writer. Indexed batches become queryable during the remaining import.
+* Debian installs v87, preserves its profile and resumes the mission. It resumes/starts the hash-verified English Wikipedia importer unless an importer is already running or complete. The importer has two download/prefetch slots and one index writer. Indexed batches become queryable during the remaining import.
 * RAG automatically contributes at most two 800-character excerpts to research tasks. These are archived data with source/revision references, not training approval or current market pricing.
 * Debian acquires hash-pinned native Qwen3.5 4B/Qwen3.6 35B GGUF candidates. A library-supported Qwen4B foundation trial is queued for the continuous learner, with a separate adapter and retained task/fresh/public gates. A different foundation never inherits a Gemma adapter.
 * Windows roles are evaluated against the pinned 9B with twenty arithmetic, accounting and evidence cases. Fast roles need no measured accuracy loss, every critical case passing, and at least ten percent faster responses. The planner needs no regression and a measured accuracy or speed improvement. This is a limited admission panel, not broad intelligence certification. The report contains every observed answer and elapsed time.
@@ -27,7 +27,7 @@ Automatic checks occur every 15 minutes on both hosts. Both avoid repeating a su
 
 ## Recover a currently paused mission
 
-`tools/recover-synta-live.sh REV` stops only the owned managed updater, resumes the preserved accepted mission when no exclusive training is active, installs v86 and restores the updater. It also retires the explicitly named old standalone Wikipedia units so the managed importer can resume their archived parts and committed index with the new code. It preserves checkpoints and does not kill an active train. Use it under the existing Debian operator account. It is a recovery/update operation, not evidence that model generation or remote networking passed.
+`tools/recover-synta-live.sh REV` stops only the owned managed updater, resumes the preserved accepted mission when no exclusive training is active, installs v87 and restores the updater. It also retires the explicitly named old standalone Wikipedia units so the managed importer can resume their archived parts and committed index with the new code. It preserves checkpoints and does not kill an active train. Use it under the existing Debian operator account. It is a recovery/update operation, not evidence that model generation or remote networking passed.
 
 ## Receipts
 
@@ -55,3 +55,7 @@ From Synta chat, `managed_upgrade_status` reads receipts and `request_model_prep
 ## Material limits
 
 No speedup, profitable strategy, accepted new weights, complete Wikipedia import or working tailnet route is certified before the host receipts exist. Free external computing still requires the provider's authorized access and quota. This updater does not acquire third-party accounts, bypass quotas, pool RTX/V100 VRAM over LAN or supply credentials to ChatGPT. Existing web drafts and account-specific operations remain subject to their concrete authorization mechanism.
+
+## Dedicated Debian RTX 3060 Ti
+
+The operator-owned `192.168.0.9` node has its own protected system services, code updater and fixed CPU job pool. Setup and verification are documented in `tools/SYNTA-3060-NODE.md`. Controller registration does not stop training; its worker coordinator starts after the deferred v87 package installation. Source is shared by immutable GitHub revision; private data, sessions and GPU memory are not pooled.

@@ -33,6 +33,7 @@ ROLE_MODELS = {
 }
 BACKEND = "ollama-research"
 HELPER_WORKLOAD_LOCK = threading.Lock()
+DEDICATED_WORKLOAD_LOCKS: dict[str, threading.Lock] = {}
 HELPER_PACING: dict[str, dict] = {}
 FULL_METADATA = "ollama-full-v1"
 STABLE_METADATA = "ollama-stable-v2"
@@ -47,11 +48,16 @@ def helper_boot_id() -> str:
     return value
 
 
-def validate_workload(batch_tokens: int, duty_percent: int) -> None:
+def validate_workload(batch_tokens: int, duty_percent: int, dedicated_host: bool = False) -> None:
     if type(batch_tokens) is not int or batch_tokens not in (16, 32, 64):
         raise ValueError("Remote helper batch must be 16, 32 or 64 tokens")
-    if type(duty_percent) is not int or not 1 <= duty_percent <= 65:
-        raise ValueError("Remote helper active wall-time target must be 1-65 percent")
+    maximum = 100 if dedicated_host is True else 65
+    if (
+        type(dedicated_host) is not bool
+        or type(duty_percent) is not int
+        or not 1 <= duty_percent <= maximum
+    ):
+        raise ValueError(f"Remote helper active wall-time target must be 1-{maximum} percent")
 
 
 def private_origin(value: str) -> str:
@@ -84,8 +90,15 @@ def validate_remote(profile: dict) -> None:
     runtime, server, resources = profile["runtime"], profile["server"], profile["resources"]
     private_origin(runtime["base_url"])
     validate_workload(
-        resources.get("helper_batch_tokens", 64), resources.get("helper_duty_percent", 65)
+        resources.get("helper_batch_tokens", 64),
+        resources.get("helper_duty_percent", 65),
+        resources.get("dedicated_host", False),
     )
+    if (
+        resources.get("dedicated_host")
+        and private_origin(runtime["base_url"]) != "http://192.168.0.9:11435"
+    ):
+        raise ValueError("Dedicated capacity requires the explicitly registered 3060 Ti host")
     if (
         runtime.get("backend") != BACKEND
         or runtime.get("tool_protocol") != "json"
@@ -159,10 +172,14 @@ class OllamaResearchClient(LlamaCppClient):
         require_adaptive_windows_guard: bool = False,
         on_demand: bool = False,
         allow_cpu_offload: bool = False,
+        dedicated_host: bool = False,
         **kwargs: Any,
     ):
         origin = private_origin(base_url)
-        validate_workload(helper_batch_tokens, helper_duty_percent)
+        validate_workload(helper_batch_tokens, helper_duty_percent, dedicated_host)
+        if dedicated_host and origin != "http://192.168.0.9:11435":
+            raise ValueError("Dedicated capacity requires the explicitly registered 3060 Ti host")
+        self.dedicated_host = dedicated_host
         if metadata_hash_scheme not in (FULL_METADATA, STABLE_METADATA, ORDERED_METADATA):
             raise ValueError("Unknown remote metadata hash scheme")
         if kwargs.get("model_name", MODEL) not in ROLE_MODELS or not re.fullmatch(
@@ -208,15 +225,20 @@ class OllamaResearchClient(LlamaCppClient):
         if type(wait) is not bool:
             raise ValueError("Helper wait must be boolean")
         with ExitStack() as scope:
+            lock = (
+                DEDICATED_WORKLOAD_LOCKS.setdefault(self.base_url, threading.Lock())
+                if self.dedicated_host
+                else HELPER_WORKLOAD_LOCK
+            )
             deadline_bound = getattr(self, "request_deadline", None)
             acquired = (
-                HELPER_WORKLOAD_LOCK.acquire(timeout=self.remaining_timeout())
+                lock.acquire(timeout=self.remaining_timeout())
                 if wait and deadline_bound is not None
-                else HELPER_WORKLOAD_LOCK.acquire(blocking=wait)
+                else lock.acquire(blocking=wait)
             )
             if not acquired:
                 raise TimeoutError("Helper busy; optional work deferred")
-            scope.callback(HELPER_WORKLOAD_LOCK.release)
+            scope.callback(lock.release)
             path = None
             boot = helper_boot_id()
             pacing_root = self.activity_root or getattr(self, "pacing_root", None)
@@ -450,12 +472,19 @@ class OllamaResearchClient(LlamaCppClient):
             if self.require_adaptive_windows_guard:
                 guard = self.remote_request("/api/synta-resources")
                 if (
-                    guard.get("contract") != "synta-adaptive-windows-v1"
+                    guard.get("contract")
+                    != (
+                        "synta-dedicated-linux-v1"
+                        if self.dedicated_host
+                        else "synta-adaptive-windows-v1"
+                    )
                     or guard.get("ready") is not True
                     or time.time() - guard.get("updated", 0) > 10
                 ):
                     raise requests.ConnectionError(
-                        "Windows adaptive guard unavailable: " + str(guard.get("reason", "unknown"))
+                        ("Dedicated Linux" if self.dedicated_host else "Windows")
+                        + " adaptive guard unavailable: "
+                        + str(guard.get("reason", "unknown"))
                     )
             self.identity()
             if not self.on_demand:
@@ -622,6 +651,11 @@ def migrate_remote_metadata(root: Path) -> dict:
 
 def selected_helper(root: Path, role: str = "fast") -> Path:
     from rlm.v100.model_roles import selected_profile
+    from rlm.v100.remote_nodes import selected_node
+
+    node = selected_node(root)
+    if node is not None and role == "fast":
+        return node
 
     selected = selected_profile(root, role)
     if selected is not None:

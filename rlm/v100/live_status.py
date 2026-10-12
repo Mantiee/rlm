@@ -423,6 +423,47 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
             if remaining and not rtx["stale"]:
                 rtx["state"] = "cooldown"
     actors.append(rtx)
+    owned = root / "research/owned-node/status.json"
+    if (root / "research/owned-node.json").exists():
+        try:
+            value = (
+                json.loads(owned.read_text())
+                if owned.exists()
+                else {"phase": "waiting for controller service"}
+            )
+            age = time.time() - value.get("updated", 0)
+            actors.append(
+                {
+                    "id": "debian-3060ti",
+                    "label": "Debian RTX 3060 Ti / CPU",
+                    "state": value.get("phase", "unknown"),
+                    "detail": value.get(
+                        "reason",
+                        "Dedicated owned advisory inference and fixed-kernel CPU trials; remote metrics require local validation",
+                    )
+                    + (
+                        "; CPU: " + json.dumps(value["cpu_errors"])
+                        if value.get("cpu_errors")
+                        else ""
+                    ),
+                    "metrics": value.get("resources", {}),
+                    "stale": age > 90,
+                    "model": value.get("model"),
+                    "receipt": str(owned),
+                    "jobs": [],
+                }
+            )
+        except (OSError, ValueError) as error:
+            actors.append(
+                {
+                    "id": "debian-3060ti",
+                    "label": "Debian RTX 3060 Ti / CPU",
+                    "state": "unavailable",
+                    "detail": str(error)[:300],
+                    "stale": True,
+                    "jobs": [],
+                }
+            )
     for identity, label, relative in (
         ("knowledge", "Wikipedia / RAG", "research/knowledge/import-status.json"),
         ("knowledge-index", "Live Wikipedia index", "research/knowledge/index-progress.json"),

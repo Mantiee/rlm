@@ -411,6 +411,7 @@ def helper_client(
             "max_vram_gib": profile["resources"]["max_vram_gib"],
             "helper_batch_tokens": profile["resources"].get("helper_batch_tokens", 64),
             "helper_duty_percent": profile["resources"].get("helper_duty_percent", 65),
+            "dedicated_host": profile["resources"].get("dedicated_host", False),
             "on_demand": profile["resources"].get("on_demand", False),
             "allow_cpu_offload": profile["resources"].get("allow_cpu_offload", False),
             "require_adaptive_windows_guard": profile["resources"].get(
@@ -436,7 +437,9 @@ def helper_client(
         if profile.get("resources", {}).get("device") in ("cpu", "remote")
         else "model",
         activity_context={
-            "device": profile.get("resources", {}).get("device", "local GPU"),
+            "device": profile.get("resources", {}).get(
+                "worker_name", profile.get("resources", {}).get("device", "local GPU")
+            ),
             "endpoint": settings["base_url"],
             "model_version": settings["model_version"],
             "target": profile["server"]["model"],

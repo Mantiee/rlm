@@ -31,6 +31,31 @@ class MasterNotReady(RuntimeError):
     """Transient serving startup, shutdown or unavailable protected receipt."""
 
 
+def owned_advisor(root: Path, branch: str, reason: str):
+    """Use an independently qualified advisory node while protected serving is unavailable."""
+    from rlm.v100.competition import helper_client
+    from rlm.v100.mission_chat import preferences
+    from rlm.v100.remote_nodes import selected_node
+
+    path = selected_node(root) if preferences(root).get("remote_helper_enabled", True) else None
+    if path is None:
+        raise MasterNotReady(reason)
+    client = helper_client(load_profile(path, root), root, branch)
+    client.timeout = 5
+    try:
+        client.identity()
+    except requests.RequestException as error:
+        raise MasterNotReady(reason) from error
+    client.timeout = 120
+    client.request_deadline = time.monotonic() + 150
+    client.enable_thinking = False
+    client.sampling_args = dict(client.sampling_args) | {"max_tokens": 2048}
+    client.research_token_ceiling = 2048
+    client.research_thinking_allowed = False
+    client.activity_actor = "income-owned-advisor"
+    return client
+
+
 def accepted_master(root: Path, branch: str):
     """Reuse a protected serving master, never launch a model or use a candidate."""
     from rlm.v100.competition import helper_client
@@ -65,7 +90,9 @@ def accepted_master(root: Path, branch: str):
     paths.append(run / f"profile-{state.get('context_window')}.json")
     path = next((candidate for candidate in paths if candidate.is_file()), None)
     if path is None:
-        raise MasterNotReady("Accepted master profile not ready; collected evidence retained")
+        return owned_advisor(
+            root, branch, "Accepted master profile not ready; collected evidence retained"
+        )
     startup = run / f"server-{state.get('context_window')}.startup.json"
     # The initial server is stopped when continuous learning starts its own
     # protected server. Its old startup file must not block the live profile.
@@ -74,7 +101,9 @@ def accepted_master(root: Path, branch: str):
         and startup.exists()
         and json.loads(startup.read_text()).get("stage") != "ready"
     ):
-        raise MasterNotReady("Accepted V100 serving startup not ready; evidence retained")
+        return owned_advisor(
+            root, branch, "Accepted V100 serving startup not ready; evidence retained"
+        )
     profile = load_profile(path, root)
     client = helper_client(profile, root, branch)
     client.timeout = min(10, client.timeout)
@@ -82,8 +111,8 @@ def accepted_master(root: Path, branch: str):
     # candidate temporarily occupying the same endpoint is never used.
     try:
         assert_served_expert(client, profile, root)
-    except (FileNotFoundError, ProcessLookupError, requests.RequestException) as error:
-        raise MasterNotReady("Accepted serving process or endpoint not ready") from error
+    except (FileNotFoundError, ProcessLookupError, requests.RequestException):
+        return owned_advisor(root, branch, "Accepted serving process or endpoint not ready")
     client.timeout = 40
     client.request_deadline = time.monotonic() + 60
     client.enable_thinking = False

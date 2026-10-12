@@ -16,6 +16,7 @@ import requests
 
 from rlm.v100.activity import ActivityLog
 from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.remote_nodes import selected_node
 
 
 @contextmanager
@@ -174,9 +175,8 @@ def execute(root: Path, job: dict) -> dict:
     if preferences(root).get("remote_helper_enabled", True) is False:
         client = accepted_master(root, job["branch"])
     else:
-        profile = load_profile(
-            selected_helper(root, "planner" if job["kind"] == "critic" else "fast"), root
-        )
+        chosen_path = selected_helper(root, "planner" if job["kind"] == "critic" else "fast")
+        profile = load_profile(chosen_path, root)
         if not remote_profile(profile):
             raise ValueError(
                 "Resident research requires an explicitly selected remote or accepted master"
@@ -186,15 +186,25 @@ def execute(root: Path, job: dict) -> dict:
         try:
             client.identity()
         except requests.RequestException as error:
+            node = selected_node(root)
+            alternative = None
+            if node is not None and node.resolve() != chosen_path.resolve():
+                try:
+                    alternative = helper_client(load_profile(node, root), root, job["branch"])
+                    alternative.identity()
+                except requests.RequestException:
+                    alternative = None
+            client = (
+                alternative if alternative is not None else accepted_master(root, job["branch"])
+            )
             ActivityLog(root, job["branch"], "resident-" + job["kind"]).write(
                 "steps",
-                "local-master-fallback",
+                "owned-node-fallback" if alternative is not None else "local-master-fallback",
                 {
                     "reason": str(error)[:300],
-                    "scope": "Remote transport unavailable; accepted local master only, no changed-identity fallback",
+                    "scope": "Unavailable transport replaced before generation by a qualified owned helper or the protected accepted master; no changed-identity fallback",
                 },
             )
-            client = accepted_master(root, job["branch"])
     client.research_tool_steps = 6
     client.activity_actor = "resident-" + job["kind"]
     client.research_tool_names = {
@@ -358,7 +368,10 @@ def service(root: Path, stop: threading.Event) -> None:
                         (kind in ("researcher", "critic", "benchmark", "income")) == llm
                         for _, kind in active.values()
                     )
-                    if used >= (min(1, budget["cpu_slots"]) if llm else budget["cpu_slots"]):
+                    llm_slots = min(1, budget["cpu_slots"]) + int(
+                        not gpu_disabled(root) and selected_node(root) is not None
+                    )
+                    if used >= (llm_slots if llm else budget["cpu_slots"]):
                         continue
                     job = dict(row)
                     if job["kind"] == "python":
@@ -385,7 +398,9 @@ def service(root: Path, stop: threading.Event) -> None:
                     "cpu_slots": budget["cpu_slots"],
                     "budget": budget,
                     "cpu_affinities": affinities,
-                    "rtx_slots": 0 if gpu_disabled(root) else 1,
+                    "rtx_slots": 0
+                    if gpu_disabled(root)
+                    else 1 + int(selected_node(root) is not None),
                     "local_model_slots": 1 if gpu_disabled(root) else 0,
                 },
             )
