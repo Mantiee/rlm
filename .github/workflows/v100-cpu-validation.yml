@@ -88,11 +88,11 @@ jobs:
           "'passed' | Set-Content -LiteralPath '$marker'; exit 23" | Set-Content -Encoding ASCII $fixture
           function Get-ScheduledTask { param($TaskName,$ErrorAction) if ($TaskName -eq 'Synta-Managed-Update') { [pscustomobject]@{Actions=@([pscustomobject]@{Execute=(Join-Path $PSHOME 'powershell.exe');Arguments=('-NoProfile -File "' + $fixture + '"')})} } }
           function New-ScheduledTaskAction { param($Execute,$Argument) [pscustomobject]@{Execute=$Execute;Arguments=$Argument} }
-          function Set-ScheduledTask { param($TaskName,$Action) $script:captured=$Action }
+          function Set-ScheduledTask { param($TaskName,$Action) $global:syntaCapturedAction=$Action }
           & ./tools/install-synta-background-tasks.ps1
-          if ($captured.Execute -notmatch 'wscript.exe$') { throw 'Task still creates a console.' }
+          if ($syntaCapturedAction.Execute -notmatch 'wscript.exe$') { throw 'Task still creates a console.' }
           $wrapper = Join-Path $root 'tools/background-tasks/Synta-Managed-Update.vbs'
-          $process = Start-Process -FilePath $captured.Execute -ArgumentList @('//B','//Nologo',('"' + $wrapper + '"')) -Wait -PassThru
+          $process = Start-Process -FilePath $syntaCapturedAction.Execute -ArgumentList @('//B','//Nologo',('"' + $wrapper + '"')) -Wait -PassThru
           if ($process.ExitCode -ne 23) { throw 'Child exit status lost.' }
           if ((Get-Content -Raw $marker).Trim() -ne 'passed') { throw 'Child arguments lost.' }
           exit 0

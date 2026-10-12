@@ -312,7 +312,7 @@ def waiting_researcher(
         with ExitStack() as scope:
             try:
                 actual = scope.enter_context(managed_server(profile_path, root, log_path))
-            except (requests.ConnectionError, requests.Timeout, ValueError) as error:
+            except (requests.RequestException, ValueError) as error:
                 if isinstance(error, ValueError) and fallback is None:
                     raise
                 attempt += 1

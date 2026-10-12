@@ -8,6 +8,8 @@ import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+import requests
+
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.model_policy import WINDOWS_ROLES, admitted_panel, retired
 from rlm.v100.remote_helper import MODEL as MODEL
@@ -182,7 +184,7 @@ def qualify(root: Path) -> dict:
             "profile": baseline_profile,
             "models": sorted((m["name"], m["digest"]) for m in inventory["models"]),
             "panel": cases(),
-            "revision": "roles-v90",
+            "revision": "roles-v92",
         }
     )
     cache = root / "research/model-roles/qualification-cache.json"
@@ -280,7 +282,7 @@ def qualify(root: Path) -> dict:
                     "report_sha256": json_hash(report),
                     "seconds": measurement["seconds"],
                 }
-        except (OSError, ValueError, RuntimeError) as error:
+        except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
             report["error"] = str(error)
         reports.append(report)
         atomic_json(

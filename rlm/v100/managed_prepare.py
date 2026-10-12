@@ -137,7 +137,13 @@ def run(root: Path) -> dict:
             from rlm.v100.model_roles import qualify
 
             record["roles"] = qualify(root)
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            subprocess.SubprocessError,
+            requests.RequestException,
+        ) as error:
             record["roles"] = {"state": "blocked", "error": str(error)}
     record["stage"] = "preparing-assets"
     atomic_json(path, record)
@@ -147,7 +153,13 @@ def run(root: Path) -> dict:
             profile, artifact = prepare(root, native, role, 32768)
             atomic_json(root / f"research/model-roles/candidates/{role}.json", profile)
             record["assets"].append({"role": role, "state": "downloaded-hash-verified", **artifact})
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            subprocess.SubprocessError,
+            requests.RequestException,
+        ) as error:
             record["assets"].append({"role": role, "state": "blocked", "error": str(error)})
         atomic_json(path, record)
     record["debian_foundation"] = {
@@ -156,13 +168,25 @@ def run(root: Path) -> dict:
     }
     try:
         record["memory_pilot"] = memory_pilot(root)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        subprocess.SubprocessError,
+        requests.RequestException,
+    ) as error:
         record["memory_pilot"] = {"state": "blocked", "error": str(error)}
     try:
         from rlm.v100.managed_native import run as native_qualification
 
         record["native_optimization"] = native_qualification(root)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        subprocess.SubprocessError,
+        requests.RequestException,
+    ) as error:
         record["native_optimization"] = {"state": "blocked", "error": str(error)}
     roles = record["roles"]
     record["stage"] = (
