@@ -95,6 +95,51 @@ def test_remote_thinking_and_larger_budget_reach_ollama(transport):
     assert payload["options"]["num_predict"] == 4096 and payload["options"]["num_batch"] == 16
 
 
+@pytest.mark.parametrize("model", ["gpt-oss:20b", "gpt-oss:120b"])
+def test_gpt_role_checks_pin_residency_and_low_reasoning(monkeypatch, model):
+    monkeypatch.setattr(remote_helper, "helper_boot_id", lambda: "test-boot")
+    info = {**INFO, "details": {"family": "gptoss", "quantization_level": "MXFP4"}}
+    instance = remote_helper.OllamaResearchClient(
+        model_name=model,
+        base_url=URL,
+        model_digest=DIGEST,
+        metadata_sha256=remote_helper.metadata_sha(info),
+        context_window=32768,
+        max_vram_gib=21,
+        allow_cpu_offload=True,
+        enable_thinking=True,
+    )
+    state = {"digest": DIGEST}
+    calls = []
+
+    def request(endpoint, data=None):
+        calls.append((endpoint, data))
+        if endpoint == "/api/tags":
+            return {"models": [{"name": model, "digest": state["digest"]}]}
+        if endpoint == "/api/show":
+            return info
+        if endpoint == "/api/ps":
+            return {"models": [{**LOADED, "name": model, "size": 65 * 2**30}]}
+        return {
+            "model": model,
+            "done": True,
+            "done_reason": "stop",
+            "message": {"content": "4"},
+            "prompt_eval_count": 32,
+            "eval_count": 1,
+        }
+
+    monkeypatch.setattr(instance, "remote_request", request)
+    instance.http_request(
+        "/v1/chat/completions",
+        {"model": model, "messages": [{"role": "user", "content": "2+2"}], "max_tokens": 1024},
+    )
+    assert next(data for endpoint, data in calls if endpoint == "/api/chat")["think"] == "low"
+    state["digest"] = "b" * 64
+    with pytest.raises(ValueError, match="changed"):
+        instance.identity()
+
+
 def prepared(root):
     path = remote_helper.prepare_remote(profile(root), root, URL, 32768, DIGEST)
     return path, load_profile(path, root)
@@ -895,4 +940,6 @@ def test_guarded_windows_profile_refuses_inference_without_live_guard(monkeypatc
 
 
 def test_explicit_tailnet_origin_is_supported():
-    assert remote_helper.private_origin("http://100.78.125.51:11437") == "http://100.78.125.51:11437"
+    assert (
+        remote_helper.private_origin("http://100.78.125.51:11437") == "http://100.78.125.51:11437"
+    )

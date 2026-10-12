@@ -184,6 +184,8 @@ def qualify(root: Path) -> dict:
         ("fast", "qwen3.5:2b-q4_K_M"),
         ("fast", "qwen3.5:4b-q4_K_M"),
         ("planner", "qwen3.5:35b-a3b-q4_K_M"),
+        ("planner", "gpt-oss:20b"),
+        ("planner", "gpt-oss:120b"),
     ]:
         profile = copy.deepcopy(baseline_profile)
         profile["runtime"].update(
@@ -196,6 +198,8 @@ def qualify(root: Path) -> dict:
             allow_cpu_offload=role == "planner",
             require_adaptive_windows_guard=True,
         )
+        if model.startswith("gpt-oss:"):
+            profile["runtime"].update(enable_thinking=True, max_output_tokens=1024)
         report = {"role": role, "model": model, "admitted": False, "baseline": baseline}
         try:
             probe = helper_client(baseline_profile, root)
@@ -217,7 +221,14 @@ def qualify(root: Path) -> dict:
             report.update(
                 model_digest=profile["resources"]["model_digest"],
                 measurement=measurement,
-                admitted=better(role, baseline, measurement),
+                admitted=better(role, baseline, measurement)
+                and (
+                    model != "gpt-oss:120b"
+                    or (
+                        measurement["seconds"] <= baseline["seconds"] * 1.25
+                        and all(row["seconds"] <= 15 for row in measurement["cases"])
+                    )
+                ),
             )
             if report["admitted"] and (
                 role not in roles or measurement["seconds"] < roles[role]["seconds"]

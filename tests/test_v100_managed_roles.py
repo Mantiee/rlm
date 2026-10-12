@@ -106,7 +106,7 @@ def test_native_maintenance_never_interrupts_train(tmp_path, monkeypatch):
         "check_output",
         lambda *a, **k: "python -m rlm.v100.cli train dataset.jsonl",
     )
-    assert managed_native.run(tmp_path)["state"] == "deferred-training"
+    assert managed_native.run(tmp_path, allow_maintenance=True)["state"] == "deferred-training"
 
 
 def test_native_maintenance_restores_profile_after_failed_benchmark(tmp_path, monkeypatch):
@@ -139,7 +139,7 @@ def test_native_maintenance_restores_profile_after_failed_benchmark(tmp_path, mo
         "install",
         lambda root, path: resumed.append(json.loads(path.read_text())) or {"submitted": True},
     )
-    result = managed_native.run(tmp_path)
+    result = managed_native.run(tmp_path, allow_maintenance=True)
     assert result["state"] == "blocked"
     assert resumed == [profile]
     assert "failed native probe" in result["error"]
@@ -327,3 +327,23 @@ def test_planner_identity_probe_does_not_leave_ten_second_generation_budget(tmp_
     assert observed == [10]
     assert client.timeout == 120
     assert client.research_token_ceiling == 2048
+
+
+def test_automatic_native_preparation_does_not_pause_live_master(tmp_path, monkeypatch):
+    from rlm.v100 import managed_native
+
+    monkeypatch.setattr(
+        managed_native,
+        "maintenance",
+        lambda root: (_ for _ in ()).throw(AssertionError("mission must not pause")),
+    )
+    assert managed_native.run(tmp_path)["state"] == "deferred-live-priority"
+
+
+def test_large_moe_memory_admission_is_local_and_reserves_headroom():
+    from rlm.v100.model_budget import admission
+
+    assert not admission("gpt-oss:120b", 27, 31, 2000)["admitted"]
+    assert admission("gpt-oss:120b", 120, 13, 200)["admitted"]
+    assert admission("gpt-oss:20b", 20, 13, 100)["admitted"]
+    assert not admission("gpt-oss:120b", 120, 13, 20)["admitted"]

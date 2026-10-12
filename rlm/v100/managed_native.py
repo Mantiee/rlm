@@ -27,7 +27,12 @@ def exclusive(processes: str) -> bool:
     )
 
 
-def run(root: Path) -> dict:
+def run(root: Path, *, allow_maintenance: bool = False) -> dict:
+    if not allow_maintenance:
+        return {
+            "state": "deferred-live-priority",
+            "scope": "Master/chat keep the accepted server. Native maintenance requires a separate explicit window.",
+        }
     lock = root / "research/state/architecture-cuda.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     with lock.open("a") as lease:

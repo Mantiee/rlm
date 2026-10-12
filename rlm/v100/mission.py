@@ -48,6 +48,8 @@ def status(root: Path) -> dict:
     phase = Path(result["run"]) / "status.json"
     learning = Path(result["run"]) / "learning/state.json"
     progress = json.loads(learning.read_text()) if learning.exists() else {}
+    heartbeat_path = Path(result["run"]) / "learning/heartbeat.json"
+    heartbeat = json.loads(heartbeat_path.read_text()) if heartbeat_path.exists() else {}
     state = json.loads(phase.read_text()) if phase.exists() else {"phase": "starting"}
     evaluation = Path(result["run"]) / f"baseline-{state.get('context_window')}.progress.json"
     startup = Path(result["run"]) / f"server-{state.get('context_window')}.startup.json"
@@ -66,6 +68,10 @@ def status(root: Path) -> dict:
         "evaluation": json.loads(evaluation.read_text()) if evaluation.exists() else None,
         "learning": {
             "completed_cycles": len(progress.get("cycles", [])),
+            "stage": heartbeat.get("stage", "not recorded"),
+            "cycle_in_progress": heartbeat.get("cycle_in_progress", heartbeat.get("cycle")),
+            "reason": heartbeat.get("reason"),
+            "updated": heartbeat.get("updated"),
             "last_cycle": progress.get("cycles", [None])[-1] if progress.get("cycles") else None,
             "live_profile": progress.get("live_profile"),
         },

@@ -152,7 +152,8 @@ def run(root: Path) -> dict:
         if isinstance(roles, dict)
         and roles.get("roles")
         and all(item["state"] == "downloaded-hash-verified" for item in record["assets"])
-        and record.get("native_optimization", {}).get("state") == "measured"
+        and record.get("native_optimization", {}).get("state")
+        in ("measured", "deferred-live-priority")
         and record.get("memory_pilot", {}).get("state") not in ("blocked", "interrupted-pilot")
         and record.get("debian_foundation", {}).get("state") != "blocked"
         else "partially-blocked"

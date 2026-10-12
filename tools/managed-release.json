@@ -1,17 +1,19 @@
 {
   "schema": "synta-managed-release-v1",
-  "version": 84,
-  "linux_installer": "tools/update-synta-v84.sh",
+  "version": 85,
+  "linux_installer": "tools/update-synta-v85.sh",
   "windows_prepare": "tools/prepare-managed-windows.ps1",
   "files": {
-    "tools/prepare-managed-windows.ps1": "2b5a36ecaa4855b722a7d54e166887afe6f41de36497d3271df6f47b9e65fee9",
+    "tools/prepare-managed-windows.ps1": "ca2b07a8d1b45e4a025d3f8ae5ab8ce6a5ac09f06864083690716191750cda30",
     "tools/benchmark-synta-windows.ps1": "5eda3a4fcb4ed600965a209609994df92a99001d596cb7ebd0c80c0b1ab48231",
     "tools/serve-v100-dashboard.py": "8a479e7d196adcda6600f7b331dd5d0d5b8f2e1c5f961f731ab64cc3a5649fca",
     "tools/qualify-synta-models-debian.sh": "6ad0254352f4f888e255721b7900b26239da71a741e418018f88b77e25f0d0dd",
-    "rlm/v100/managed_bootstrap.py": "b8623f8a45858995893c275c1dbae36ee189f51c61969b757d3ebd346753e7bb",
+    "rlm/v100/managed_bootstrap.py": "8e3d3daef85a4aa4c504e6ba5d4693b206e4329a0a96d9f94c5aaa4cc28e252a",
     "rlm/v100/inference_benchmark.py": "5b88c362446974bc287371e4ede606ef21e5b07dc088ec6f5e38d2c9f293661f",
     "rlm/v100/wikimedia_exports.py": "f3788e5ab9e2e6d9551b005d1a356052c26d565dc0c9a290d5f9762e521f2ab5",
-    "rlm/v100/knowledge_rag.py": "9f4da63094f504d2c33541ec41bdca7c506f2a00edb4f359e6d64c131816c437",
-    "tools/update-synta-v84.sh": "be81dae42f6759d00ac1a38883abe5c5174921231a2aa0281a7f60932279f650"
+    "rlm/v100/knowledge_rag.py": "9dde4dcfb1c9e4c66783105c8b03fd3e3b701b7e4d512c2f91e73248a2db3ed7",
+    "tools/update-synta-v85.sh": "cd3ddba9ebf8d34c5add0a88afb06ae3f7c18088d19e33290027de1180acf5d9",
+    "rlm/v100/source_sync.py": "e315e1bd6e62ff0ce6a0c235ed857d89ab4ea12bb979322e53ec1e23f2c5ee38",
+    "rlm/v100/model_budget.py": "a5e8802d35b46845a741e6709092c474e24a9308f0dcf73432d36816d5469fc4"
   }
 }

@@ -308,7 +308,12 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
             "id": "master",
             "label": "Master",
             "state": mission.get("state", {}).get("phase", "unknown"),
-            "detail": "Current mission phase; chat: " + chat.get("phase", "unknown"),
+            "detail": "Current mission phase; chat: "
+            + chat.get("phase", "unknown")
+            + "; learning: "
+            + str(mission.get("learning", {}).get("stage", "unknown"))
+            + "; current cycle: "
+            + str(mission.get("learning", {}).get("cycle_in_progress", "unknown")),
             "jobs": [chat] if chat.get("id") else [],
             "stale": not mission.get("running"),
         },
@@ -420,6 +425,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
     actors.append(rtx)
     for identity, label, relative in (
         ("knowledge", "Wikipedia / RAG", "research/knowledge/import-status.json"),
+        ("knowledge-index", "Live Wikipedia index", "research/knowledge/index-progress.json"),
         ("managed-update", "Automatic GitHub updates", "research/managed-update/status.json"),
         ("model-roles", "Qualified model roles", "research/model-roles/active.json"),
         (

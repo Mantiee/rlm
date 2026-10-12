@@ -29,6 +29,8 @@ ROLE_MODELS = {
     "qwen3.5:2b-q4_K_M": ("Q4_K_M", 6),
     "qwen3.5:4b-q4_K_M": ("Q4_K_M", 8),
     "qwen3.5:35b-a3b-q4_K_M": ("Q4_K_M", 21),
+    "gpt-oss:20b": ("MXFP4", 21),
+    "gpt-oss:120b": ("MXFP4", 21),
 }
 BACKEND = "ollama-research"
 HELPER_WORKLOAD_LOCK = threading.Lock()
@@ -102,7 +104,9 @@ def validate_remote(profile: dict) -> None:
         or server.get("draft_model")
         or resources.get("max_vram_gib") != ROLE_MODELS.get(runtime["model_name"], (None, None))[1]
     ):
-        raise ValueError("Remote helper must be a pinned text-only local Qwen researcher profile")
+        raise ValueError(
+            "Remote helper must be a pinned text-only declared local researcher profile"
+        )
 
 
 def metadata_sha(info: dict, scheme: str = FULL_METADATA) -> str:
@@ -165,7 +169,7 @@ class OllamaResearchClient(LlamaCppClient):
         if kwargs.get("model_name", MODEL) not in ROLE_MODELS or not re.fullmatch(
             r"[0-9a-f]{64}", model_digest
         ):
-            raise ValueError("Only the explicitly pinned local Qwen model is permitted")
+            raise ValueError("Only an explicitly pinned declared local model is permitted")
         kwargs.setdefault("model_name", MODEL)
         if (
             type(max_vram_gib) is not int
@@ -174,7 +178,11 @@ class OllamaResearchClient(LlamaCppClient):
             raise ValueError("Role VRAM allowance exceeds its explicit model budget")
         if type(on_demand) is not bool or type(allow_cpu_offload) is not bool:
             raise ValueError("Role loading/offload options must be explicit booleans")
-        if allow_cpu_offload and kwargs["model_name"] != "qwen3.5:35b-a3b-q4_K_M":
+        if allow_cpu_offload and kwargs["model_name"] not in (
+            "qwen3.5:35b-a3b-q4_K_M",
+            "gpt-oss:20b",
+            "gpt-oss:120b",
+        ):
             raise ValueError("CPU expert offload is admitted only for the explicit MoE role")
         self.on_demand, self.allow_cpu_offload = on_demand, allow_cpu_offload
         if type(kwargs.get("enable_thinking", False)) is not bool:
@@ -348,7 +356,10 @@ class OllamaResearchClient(LlamaCppClient):
             raise ValueError("Remote model missing, changed, or cloud-backed")
         info = self.remote_request("/api/show", {"model": self.model_name})
         if (
-            info.get("details", {}).get("family") != "qwen35"
+            info.get("details", {}).get("family")
+            not in (
+                ("gptoss", "gpt-oss") if self.model_name.startswith("gpt-oss:") else ("qwen35",)
+            )
             or info.get("details", {}).get("quantization_level") != ROLE_MODELS[self.model_name][0]
             or info.get("model_info", {}).get("tokenizer.ggml.model") != "gpt2"
             or info.get("system")
@@ -431,7 +442,7 @@ class OllamaResearchClient(LlamaCppClient):
             "model": self.model_name,
             "messages": data["messages"],
             "stream": self.streaming_enabled(),
-            "think": self.enable_thinking,
+            "think": "low" if self.model_name.startswith("gpt-oss:") else self.enable_thinking,
             "options": options,
             "keep_alive": -1,
         }

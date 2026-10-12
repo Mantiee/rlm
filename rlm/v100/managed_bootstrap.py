@@ -141,7 +141,23 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
             )
         except (OSError, subprocess.SubprocessError) as error:
             wiki_receipt = {"stage": "blocked", "error": str(error)}
-    # Preparation acquires assets, then qualifies owned roles and schedules a guarded native window.
+    source_receipt = {"stage": "not prepared"}
+    try:
+        subprocess.run(
+            [
+                str(python),
+                str(folder / "rlm/v100/source_sync.py"),
+                "--root",
+                str(root),
+                "--revision",
+                revision,
+            ],
+            check=True,
+        )
+        source_receipt = {"stage": "prepared", "revision": revision}
+    except (OSError, subprocess.SubprocessError) as error:
+        source_receipt = {"stage": "blocked", "error": str(error)}
+    # Prepare assets and remote roles without pausing the active master for native maintenance.
     subprocess.run([str(python), "-m", "rlm.v100.managed_prepare", "--root", str(root)], check=True)
     preparation = root / "research/managed-update/preparation.json"
     observed = json.loads(preparation.read_text()) if preparation.exists() else {"stage": "unknown"}
@@ -150,6 +166,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
         if observed.get("stage") == "prepared" and wiki_receipt["stage"] != "blocked"
         else "package-ready-preparation-partial",
         "wiki": wiki_receipt,
+        "source": source_receipt,
         "preparation_stage": observed.get("stage"),
         "version": target,
         "revision": revision,
