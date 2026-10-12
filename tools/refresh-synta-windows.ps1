@@ -14,6 +14,7 @@ foreach ($entry in $manifest.files.PSObject.Properties) {
         throw "Release checksum mismatch: $($entry.Name); existing helper retained."
     }
 }
+& (Join-Path $Bundle 'tools\install-synta-background-tasks.ps1')
 $launcher = Join-Path $root 'start-rtx3090-helper.ps1'
 $launcherCurrent = (Test-Path -LiteralPath $launcher -PathType Leaf) -and
     ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant() -eq $manifest.files.'tools/start-rtx3090-helper.ps1')
@@ -41,7 +42,7 @@ if ($guard -and $guard.proxy_code_sha256) {
 }
 $task = Get-ScheduledTask -TaskName 'Synta-RTX3090-Helper' -ErrorAction SilentlyContinue
 if ($task) {
-    if ($task.Actions.Count -ne 1 -or -not $task.Actions[0].Arguments.Contains((Join-Path $root 'autostart-watchdog.ps1'))) {
+    if ($task.Actions.Count -ne 1 -or (-not $task.Actions[0].Arguments.Contains((Join-Path $root 'autostart-watchdog.ps1')) -and -not $task.Actions[0].Arguments.Contains((Join-Path $root 'tools\background-tasks\Synta-RTX3090-Helper.vbs')))) {
         throw 'Helper task identity differs; no process stopped.'
     }
     Stop-ScheduledTask -TaskName 'Synta-RTX3090-Helper'
@@ -67,6 +68,7 @@ Copy-Item -Force -LiteralPath (Join-Path $Bundle 'rlm\v100\windows_resource_prox
 @{enabled=$true;revision=$Revision;scope='More throughput under measured headroom; games and pressure still pause owned work'} |
     ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root 'throughput-settings.json')
 & (Join-Path $Bundle 'tools\install-rtx3090-autostart.ps1') -Revision $Revision -Adaptive
+& (Join-Path $Bundle 'tools\install-synta-background-tasks.ps1')
 $deadline = (Get-Date).AddMinutes(3)
 do {
     try {

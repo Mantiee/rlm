@@ -49,6 +49,7 @@ if ($acquisitionExit -ne 0) {
     throw "Release acquisition failed before helper changes. Inspect $log"
 }
 & (Join-Path $bundle 'tools\refresh-synta-windows.ps1') -Revision $Revision -Bundle $bundle
+& (Join-Path $bundle 'tools\install-synta-background-tasks.ps1')
 Start-ScheduledTask -TaskName 'Synta-Managed-Update'
 Write-Host "Updater stdout/stderr: $log"
 if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 8 }

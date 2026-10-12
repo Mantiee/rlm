@@ -386,11 +386,19 @@ def validate_concurrent_researcher(profile: dict) -> None:
 def helper_client(
     profile: dict, root: Path | None = None, branch: str = "controller"
 ) -> LlamaCppClient:
-    settings = profile["runtime"]
     from rlm.v100.inference import sampling_settings, thinking_enabled
     from rlm.v100.remote_helper import OllamaResearchClient, remote_profile
 
     remote = remote_profile(profile)
+    if remote and root is not None and not profile["resources"].get("calibration_only"):
+        from rlm.v100.model_policy import retired
+        from rlm.v100.model_roles import selected_profile
+
+        if retired(profile["runtime"].get("model_name", "")):
+            replacement = selected_profile(root, "planner") or selected_profile(root, "fast")
+            if replacement is not None:
+                profile = load_profile(replacement, root)
+    settings = profile["runtime"]
     if remote and root is not None:
         from rlm.v100.model_policy import retired
 

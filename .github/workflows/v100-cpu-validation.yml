@@ -77,3 +77,22 @@ jobs:
           # The intentionally failed child remains LASTEXITCODE=1. All assertions
           # above must pass before reporting success to the Actions shell wrapper.
           exit 0
+      - name: Verify windowless task launcher preserves arguments and exit status
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:USERPROFILE 'ai-v100-helper'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $fixture = Join-Path $root 'background-fixture.ps1'
+          $marker = Join-Path $root 'background-fixture-result.txt'
+          "'passed' | Set-Content -LiteralPath '$marker'; exit 23" | Set-Content -Encoding ASCII $fixture
+          function Get-ScheduledTask { param($TaskName,$ErrorAction) if ($TaskName -eq 'Synta-Managed-Update') { [pscustomobject]@{Actions=@([pscustomobject]@{Execute=(Join-Path $PSHOME 'powershell.exe');Arguments=('-NoProfile -File "' + $fixture + '"')})} } }
+          function New-ScheduledTaskAction { param($Execute,$Argument) [pscustomobject]@{Execute=$Execute;Arguments=$Argument} }
+          function Set-ScheduledTask { param($TaskName,$Action) $script:captured=$Action }
+          & ./tools/install-synta-background-tasks.ps1
+          if ($captured.Execute -notmatch 'wscript.exe$') { throw 'Task still creates a console.' }
+          $wrapper = Join-Path $root 'tools/background-tasks/Synta-Managed-Update.vbs'
+          $process = Start-Process -FilePath $captured.Execute -ArgumentList @('//B','//Nologo',('"' + $wrapper + '"')) -Wait -PassThru
+          if ($process.ExitCode -ne 23) { throw 'Child exit status lost.' }
+          if ((Get-Content -Raw $marker).Trim() -ne 'passed') { throw 'Child arguments lost.' }
+          exit 0

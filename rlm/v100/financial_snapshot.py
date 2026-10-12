@@ -66,9 +66,9 @@ def live_ledger(root: Path) -> dict:
         book.close()
 
 
-def read_object(path: Path) -> dict:
-    if path.is_symlink() or path.stat().st_size > 2 * 2**20:
-        raise ValueError("Financial snapshot is linked or exceeds 2 MiB")
+def read_object(path: Path, maximum: int = 2 * 2**20) -> dict:
+    if path.is_symlink() or path.stat().st_size > maximum:
+        raise ValueError("Financial snapshot is linked or exceeds its bounded byte budget")
     value = json.loads(path.read_text())
     if not isinstance(value, dict):
         raise ValueError("Financial snapshot must be an object")
@@ -138,7 +138,7 @@ def supplement(root: Path, report: dict, errors: list) -> dict:
             base = (root / "research/paper/reports").resolve()
             if directory.parent != base:
                 raise ValueError("Paper report is outside the owned report folder")
-            value = read_object(directory / "report.json")
+            value = read_object(directory / "report.json", 32 * 2**20)
             result["paper"] = {
                 "currency": value["currency"],
                 "branches": value["branches"],

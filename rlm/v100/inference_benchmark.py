@@ -324,6 +324,7 @@ def pressure_reason(preflight: bool = False) -> str | None:
             "--format=csv,noheader,nounits",
         ],
         capture_output=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         text=True,
         check=True,
         timeout=3,
@@ -440,7 +441,12 @@ def run(profile: dict, output: Path, port: int = 8097) -> dict:
         ):
             raise RuntimeError("Stop the mission only after its exclusive experiment finishes")
     help_reply = subprocess.run(
-        [str(binary), "--help"], capture_output=True, text=True, timeout=30, check=True
+        [str(binary), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     help_text = help_reply.stdout + help_reply.stderr
     output.mkdir(parents=True)
@@ -494,6 +500,7 @@ def run(profile: dict, output: Path, port: int = 8097) -> dict:
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 env=environment,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if os.name == "nt":
                 import psutil

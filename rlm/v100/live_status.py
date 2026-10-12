@@ -307,7 +307,10 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         {
             "id": "master",
             "label": "Master",
-            "state": mission.get("state", {}).get("phase", "unknown"),
+            "state": mission.get("learning", {}).get("stage")
+            or mission.get("state", {}).get("phase", "unknown")
+            if mission.get("running")
+            else "stopped",
             "detail": "Current mission phase; chat: "
             + chat.get("phase", "unknown")
             + "; learning: "
@@ -390,6 +393,10 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         )
         if not remote_profile(profile):
             raise ValueError("Remote helper is not configured")
+        import copy
+
+        profile = copy.deepcopy(profile)
+        profile["resources"]["calibration_only"] = True
         client = helper_client(profile, root)
         client.timeout = 3
         guard = client.remote_request("/api/synta-resources")
@@ -407,7 +414,11 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
             model for model in info.get("models", []) if model.get("digest") == client.model_digest
         ]
         rtx.update(
-            state="loaded" if loaded else "reachable; model not loaded",
+            state="generating " + str(guard.get("workload", {}).get("model", "unknown"))
+            if guard.get("generating")
+            else "loaded"
+            if loaded
+            else "reachable; selected model not loaded",
             stale=False,
             observed_at=time.time(),
             loaded_models=[

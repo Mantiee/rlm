@@ -113,6 +113,7 @@ def qualify(root: Path, resources: dict) -> dict:
                     "revision": resources.get("revision"),
                     "context": 32768,
                     "panel": "arithmetic-accounting-evidence-v1",
+                    "request_budget": "30s-per-case-180s-panel-v92",
                 },
                 sort_keys=True,
             ).encode()
@@ -168,8 +169,8 @@ def qualify(root: Path, resources: dict) -> dict:
                     client.identity(), STABLE_METADATA
                 )
                 client = helper_client(profile, root)
-                client.timeout = 15
-                client.request_deadline = time.monotonic() + 60
+                client.timeout = 30
+                client.request_deadline = time.monotonic() + 180
                 measurement = evaluate(client)
             except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
                 report = {
@@ -207,7 +208,13 @@ def qualify(root: Path, resources: dict) -> dict:
         return {
             "admitted": False,
             "phase": "reachable-unqualified",
-            "reason": "No downloaded candidate passed every panel case",
+            "reason": "Required current models are not downloaded"
+            if not reports
+            else "No downloaded candidate passed every panel case; inspect qualification details",
+            "required_models": list(NODE_MODELS),
+            "qualification_details": [
+                {k: row.get(k) for k in ("model", "error", "measurement")} for row in reports
+            ],
         }
     _, path, profile = min(winners, key=lambda row: row[0])
     if not locked:

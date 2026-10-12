@@ -315,6 +315,8 @@ def windows(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
         [
             "powershell.exe",
             "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
             "-ExecutionPolicy",
             "Bypass",
             "-File",
@@ -325,6 +327,7 @@ def windows(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
             str(folder),
         ],
         check=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     receipt = root / "logs/managed-models.json"
     models = json.loads(receipt.read_text(encoding="utf-8-sig")) if receipt.exists() else {}

@@ -982,3 +982,20 @@ def test_fresh_opted_in_windows_guard_removes_idle_and_uses_adaptive_batch(trans
         remote_helper.HELPER_PACING[instance.base_url]["not_before"]
         <= remote_helper.time.monotonic()
     )
+
+
+def test_long_lived_old_profile_resolves_new_qualified_role(transport, tmp_path, monkeypatch):
+    from rlm.v100 import model_roles
+
+    _, old = prepared(tmp_path)
+    current = copy.deepcopy(old)
+    current["runtime"]["model_name"] = "gemma4:e2b-it-q4_K_M"
+    current["resources"]["max_vram_gib"] = 7
+    atomic_json(tmp_path / "research/model-roles/model-policy.json", {"version": 92})
+    chosen = tmp_path / "qualified.json"
+    atomic_json(chosen, current)
+    monkeypatch.setattr(model_roles, "selected_profile", lambda root, role: chosen)
+    monkeypatch.setattr(competition, "load_profile", lambda *a: current)
+    instance = competition.helper_client(old, tmp_path)
+    assert instance.model_name == current["runtime"]["model_name"]
+    assert old["runtime"]["model_name"] == remote_helper.MODEL
