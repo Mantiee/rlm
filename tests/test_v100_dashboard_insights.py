@@ -104,5 +104,8 @@ if(dashboardTab!=='trades'||trading.hidden)throw Error('Refresh reset selected v
 if(table.children[0].children[0].children.length!==6)throw Error('Missing table headers');
 if(!table.children[0].children[0].children[5].textContent.includes('double costs'))throw Error('Unlabelled stress return');
 """
-    result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
+    # Shared CI can delay Node startup after tensor tests; UI assertions remain unchanged.
+    result = subprocess.run(
+        ["node", "-"], input=program, text=True, capture_output=True, timeout=30
+    )
     assert result.returncode == 0, result.stderr
