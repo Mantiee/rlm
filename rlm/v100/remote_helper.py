@@ -29,8 +29,7 @@ ROLE_MODELS = {
     "qwen3.5:2b-q4_K_M": ("Q4_K_M", 6),
     "qwen3.5:4b-q4_K_M": ("Q4_K_M", 8),
     "qwen3.5:35b-a3b-q4_K_M": ("Q4_K_M", 21),
-    "gpt-oss:20b": ("MXFP4", 21),
-    "gpt-oss:120b": ("MXFP4", 21),
+    "qwen3.6:35b-a3b-q4_K_M": ("Q4_K_M", 21),
 }
 BACKEND = "ollama-research"
 HELPER_WORKLOAD_LOCK = threading.Lock()
@@ -180,8 +179,7 @@ class OllamaResearchClient(LlamaCppClient):
             raise ValueError("Role loading/offload options must be explicit booleans")
         if allow_cpu_offload and kwargs["model_name"] not in (
             "qwen3.5:35b-a3b-q4_K_M",
-            "gpt-oss:20b",
-            "gpt-oss:120b",
+            "qwen3.6:35b-a3b-q4_K_M",
         ):
             raise ValueError("CPU expert offload is admitted only for the explicit MoE role")
         self.on_demand, self.allow_cpu_offload = on_demand, allow_cpu_offload
@@ -356,10 +354,7 @@ class OllamaResearchClient(LlamaCppClient):
             raise ValueError("Remote model missing, changed, or cloud-backed")
         info = self.remote_request("/api/show", {"model": self.model_name})
         if (
-            info.get("details", {}).get("family")
-            not in (
-                ("gptoss", "gpt-oss") if self.model_name.startswith("gpt-oss:") else ("qwen35",)
-            )
+            info.get("details", {}).get("family") not in ("qwen35",)
             or info.get("details", {}).get("quantization_level") != ROLE_MODELS[self.model_name][0]
             or info.get("model_info", {}).get("tokenizer.ggml.model") != "gpt2"
             or info.get("system")
@@ -442,7 +437,7 @@ class OllamaResearchClient(LlamaCppClient):
             "model": self.model_name,
             "messages": data["messages"],
             "stream": self.streaming_enabled(),
-            "think": "low" if self.model_name.startswith("gpt-oss:") else self.enable_thinking,
+            "think": self.enable_thinking,
             "options": options,
             "keep_alive": -1,
         }

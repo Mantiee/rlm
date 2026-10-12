@@ -48,18 +48,7 @@ if (Test-Path -LiteralPath $tailscale) {
 }
 $network | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root 'logs\tailnet-helper.json')
 # Download only public local model tags. The preserved 9B baseline is never pulled/rebound.
-$models = @('qwen3.5:2b-q4_K_M','qwen3.5:4b-q4_K_M','qwen3.5:35b-a3b-q4_K_M')
-$largeBudget = @{candidates=@();error='Not sampled'}
-try {
-    $budgetScript = Join-Path $Bundle 'rlm\v100\model_budget.py'
-    $budgetText = & $python $budgetScript --root $root
-    if ($LASTEXITCODE -ne 0) { throw 'Large model host admission could not be measured.' }
-    $largeBudget = $budgetText | ConvertFrom-Json
-    foreach ($candidate in $largeBudget.candidates) {
-        if ($candidate.admitted) { $models += $candidate.model }
-    }
-} catch { $largeBudget = @{candidates=@();error=$_.Exception.Message} }
-$largeBudget | ConvertTo-Json -Depth 7 | Set-Content -Encoding UTF8 (Join-Path $root 'logs\large-model-budget.json')
+$models = @('qwen3.5:2b-q4_K_M','qwen3.5:4b-q4_K_M','qwen3.6:35b-a3b-q4_K_M')
 $failures = @()
 $available = @()
 try {
@@ -69,7 +58,7 @@ foreach ($model in $models) {
     try {
         if ($available -contains $model) { Write-Host "Retaining existing model identity: $model"; continue }
         $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($root).Substring(0,1))
-        if ($drive.Free -lt $(if ($model -eq 'gpt-oss:120b') { 80GB } else { 32GB })) { throw 'Model preparation needs at least 32 GiB free disk; existing models retained.' }
+        if ($drive.Free -lt 32GB) { throw 'Model preparation needs at least 32 GiB free disk; existing models retained.' }
         Write-Host "Preparing owned local model: $model"
         Invoke-RestMethod 'http://127.0.0.1:11436/api/pull' -Method Post -ContentType 'application/json' `
             -Body (@{model=$model;stream=$false} | ConvertTo-Json) -TimeoutSec 3600 | ConvertTo-Json -Depth 4

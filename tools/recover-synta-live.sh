@@ -4,8 +4,8 @@ REV="${1:?Pass exact published revision}"
 [[ "$REV" =~ ^[0-9a-f]{40}$ ]] || exit 1
 source "$HOME/ai-v100/env.sh"
 PY="$AI_V100_ROOT/venvs/v100-continual/bin/python"
-INSTALLER="$AI_V100_ROOT/update-synta-v85.sh"
-curl -fL --retry 3 "https://raw.githubusercontent.com/Mantiee/rlm/$REV/tools/update-synta-v85.sh" -o "$INSTALLER"
+INSTALLER="$AI_V100_ROOT/update-synta-v86.sh"
+curl -fL --retry 3 "https://raw.githubusercontent.com/Mantiee/rlm/$REV/tools/update-synta-v86.sh" -o "$INSTALLER"
 "$PY" -c 'import rlm.v100.mission, rlm.v100.supervisor'
 # Stop only the updater maintenance task; the accepted mission is resumed below if needed.
 systemctl --user stop synta-managed-update.service || true

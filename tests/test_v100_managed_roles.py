@@ -340,10 +340,19 @@ def test_automatic_native_preparation_does_not_pause_live_master(tmp_path, monke
     assert managed_native.run(tmp_path)["state"] == "deferred-live-priority"
 
 
-def test_large_moe_memory_admission_is_local_and_reserves_headroom():
-    from rlm.v100.model_budget import admission
-
-    assert not admission("gpt-oss:120b", 27, 31, 2000)["admitted"]
-    assert admission("gpt-oss:120b", 120, 13, 200)["admitted"]
-    assert admission("gpt-oss:20b", 20, 13, 100)["admitted"]
-    assert not admission("gpt-oss:120b", 120, 13, 20)["admitted"]
+@pytest.mark.parametrize("model", ["gpt-oss:20b", "gpt-oss:120b"])
+def test_operator_exclusion_overrides_previously_admitted_role(tmp_path, model):
+    folder = tmp_path / "research/model-roles"
+    profile = {"runtime": {"model_name": model}, "resources": {"model_digest": "a" * 64}}
+    report = dict(admitted=True, role="planner", model_digest="a" * 64)
+    atomic_json(folder / "profile.json", profile)
+    atomic_json(folder / "report.json", report)
+    entry = dict(
+        profile=str(folder / "profile.json"),
+        report=str(folder / "report.json"),
+        profile_sha256=json_hash(profile),
+        report_sha256=json_hash(report),
+    )
+    atomic_json(folder / "active.json", {"roles": {"planner": entry}})
+    assert selected_profile(tmp_path, "planner") is None
+    assert json.loads((folder / "report.json").read_text())["admitted"] is True

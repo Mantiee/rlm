@@ -95,10 +95,10 @@ def test_remote_thinking_and_larger_budget_reach_ollama(transport):
     assert payload["options"]["num_predict"] == 4096 and payload["options"]["num_batch"] == 16
 
 
-@pytest.mark.parametrize("model", ["gpt-oss:20b", "gpt-oss:120b"])
-def test_gpt_role_checks_pin_residency_and_low_reasoning(monkeypatch, model):
+def test_qwen36_role_checks_pin_residency_and_requested_thinking(monkeypatch):
+    model = "qwen3.6:35b-a3b-q4_K_M"
     monkeypatch.setattr(remote_helper, "helper_boot_id", lambda: "test-boot")
-    info = {**INFO, "details": {"family": "gptoss", "quantization_level": "MXFP4"}}
+    info = {**INFO, "details": {"family": "qwen35", "quantization_level": "Q4_K_M"}}
     instance = remote_helper.OllamaResearchClient(
         model_name=model,
         base_url=URL,
@@ -134,7 +134,7 @@ def test_gpt_role_checks_pin_residency_and_low_reasoning(monkeypatch, model):
         "/v1/chat/completions",
         {"model": model, "messages": [{"role": "user", "content": "2+2"}], "max_tokens": 1024},
     )
-    assert next(data for endpoint, data in calls if endpoint == "/api/chat")["think"] == "low"
+    assert next(data for endpoint, data in calls if endpoint == "/api/chat")["think"] is True
     state["digest"] = "b" * 64
     with pytest.raises(ValueError, match="changed"):
         instance.identity()
@@ -943,3 +943,9 @@ def test_explicit_tailnet_origin_is_supported():
     assert (
         remote_helper.private_origin("http://100.78.125.51:11437") == "http://100.78.125.51:11437"
     )
+
+
+@pytest.mark.parametrize("model", ["gpt-oss:20b", "gpt-oss:120b"])
+def test_excluded_gpt_oss_cannot_create_a_client(model):
+    with pytest.raises(ValueError, match="declared local model"):
+        remote_helper.OllamaResearchClient(base_url=URL, model_name=model, model_digest=DIGEST)
