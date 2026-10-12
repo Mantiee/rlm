@@ -6,8 +6,11 @@ import json
 import os
 import re
 import shutil
+import threading
+import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,8 +30,8 @@ def save(path: Path, value: dict) -> None:
     os.replace(temporary, path)
 
 
-def open_export(url: str, timeout: int = 60):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+def open_export(url: str, timeout: int = 60, headers: dict | None = None):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
     try:
         return urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as error:
@@ -81,7 +84,9 @@ def select_export(language: str, today: datetime | None = None) -> tuple[str, st
     )
 
 
-def acquire(folder: Path, origin: str, name: str, expected: str) -> Path:
+def acquire(
+    folder: Path, origin: str, name: str, expected: str, cancel: threading.Event | None = None
+) -> Path:
     path = folder / name
     if path.exists():
         with path.open("rb") as stream:
@@ -89,15 +94,47 @@ def acquire(folder: Path, origin: str, name: str, expected: str) -> Path:
                 raise ValueError("Cached Wikipedia part checksum mismatch")
         return path
     partial = path.with_suffix(".partial")
-    with open_export(origin + "/" + name) as response:
-        size = response.headers.get("Content-Length")
-        size = int(size) if size else None
+    offset = partial.stat().st_size if partial.exists() else 0
+    digest = hashlib.sha256()
+    if offset:
+        print(
+            json.dumps({"stage": "verifying-resume-prefix", "part": name, "bytes": offset}),
+            flush=True,
+        )
+        with partial.open("rb") as stream:
+            while block := stream.read(4 * 1024**2):
+                digest.update(block)
+        if digest.hexdigest() == expected:
+            os.replace(partial, path)
+            return path
+    headers = {"Range": f"bytes={offset}-"} if offset else {}
+    with open_export(origin + "/" + name, headers=headers) as response:
+        if offset:
+            value = response.headers.get("Content-Range", "")
+            match = re.fullmatch(r"bytes ([0-9]+)-([0-9]+)/([0-9]+)", value)
+            if (
+                getattr(response, "status", 200) != 206
+                or not match
+                or int(match[1]) != offset
+                or int(match[2]) != int(match[3]) - 1
+            ):
+                raise ValueError(
+                    "Server did not confirm the requested byte range; existing prefix preserved"
+                )
+            size = int(match[3])
+        else:
+            size = response.headers.get("Content-Length")
+            size = int(size) if size else None
         if size is not None and shutil.disk_usage(folder).free < size * 5 + 8 * 1024**3:
             raise RuntimeError("Insufficient free disk for this Wikipedia part and its index")
-        digest = hashlib.sha256()
-        received = 0
-        with partial.open("wb") as output:
+        received = offset
+        started = reported = time.monotonic()
+        with partial.open("ab" if offset else "wb") as output:
             while block := response.read(4 * 1024**2):
+                if cancel is not None and cancel.is_set():
+                    raise RuntimeError(
+                        "Other Wikipedia transfer failed; prefix retained for next run"
+                    )
                 received += len(block)
                 if size is not None and received > size:
                     raise ValueError("Wikipedia part exceeds published HTTP size")
@@ -105,13 +142,34 @@ def acquire(folder: Path, origin: str, name: str, expected: str) -> Path:
                     raise RuntimeError("Wikipedia download paused: preserve 4 GiB free disk")
                 digest.update(block)
                 output.write(block)
+                now = time.monotonic()
+                if now - reported >= 5:
+                    rate = (received - offset) / max(now - started, 0.001)
+                    print(
+                        json.dumps(
+                            {
+                                "stage": "download-progress",
+                                "part": name,
+                                "bytes": received,
+                                "total_bytes": size,
+                                "mib_per_second": round(rate / 1024**2, 2),
+                                "eta_seconds": round((size - received) / rate)
+                                if size is not None and rate
+                                else None,
+                            }
+                        ),
+                        flush=True,
+                    )
+                    reported = now
         if (size is not None and received != size) or digest.hexdigest() != expected:
             raise ValueError("Incomplete or incorrect Wikipedia part; not admitted to index")
     os.replace(partial, path)
     return path
 
 
-def run(root: Path, language: str) -> dict:
+def run(root: Path, language: str, connections: int = 2) -> dict:
+    if connections not in (1, 2):
+        raise ValueError("Wikipedia transfers use at most two connections")
     status_path = root / "research/knowledge/import-status.json"
     date, origin, manifest, rows = select_export(language)
     folder = root / "research/knowledge/exports" / (language + "wiki") / date
@@ -129,23 +187,42 @@ def run(root: Path, language: str) -> dict:
     }
     save(status_path, record)
     print(json.dumps(record), flush=True)
-    for number, (name, digest) in enumerate(rows, 1):
-        record.update(stage="downloading-part", part=name, part_number=number)
-        save(status_path, record)
-        print(json.dumps(record), flush=True)
-        path = acquire(folder, origin, name, digest)
-        record.update(stage="indexing-part")
-        save(status_path, record)
-        print(json.dumps(record), flush=True)
-        result = import_wiki(root, path, language, 1000000000)
-        record.update(
-            parts_indexed=number, pages_imported=record["pages_imported"] + result["pages_imported"]
-        )
-        save(
-            path.with_suffix(".receipt.json"),
-            {**result, "publisher_sha256": digest, "source": origin + "/" + name},
-        )
-        save(status_path, record)
+    cancel = threading.Event()
+    with ThreadPoolExecutor(max_workers=connections) as executor:
+        pending = {
+            index: executor.submit(acquire, folder, origin, name, digest, cancel)
+            for index, (name, digest) in enumerate(rows[:connections])
+        }
+        try:
+            for number, (name, digest) in enumerate(rows, 1):
+                record.update(stage="downloading-part", part=name, part_number=number)
+                save(status_path, record)
+                print(json.dumps(record), flush=True)
+                path = pending.pop(number - 1).result()
+                following = number - 1 + connections
+                if following < len(rows):
+                    next_name, next_digest = rows[following]
+                    pending[following] = executor.submit(
+                        acquire, folder, origin, next_name, next_digest, cancel
+                    )
+                record.update(stage="indexing-part")
+                save(status_path, record)
+                print(json.dumps(record), flush=True)
+                result = import_wiki(root, path, language, 1000000000)
+                record.update(
+                    parts_indexed=number,
+                    pages_imported=record["pages_imported"] + result["pages_imported"],
+                )
+                save(
+                    path.with_suffix(".receipt.json"),
+                    {**result, "publisher_sha256": digest, "source": origin + "/" + name},
+                )
+                save(status_path, record)
+        except BaseException:
+            cancel.set()
+            for future in pending.values():
+                future.cancel()
+            raise
     record.update(stage="complete")
     save(status_path, record)
     print(json.dumps(record), flush=True)
@@ -156,25 +233,38 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--language", choices=("en", "pl"), default="en")
+    parser.add_argument("--connections", type=int, choices=(1, 2), default=2)
     args = parser.parse_args()
     if os.name != "nt":
         os.nice(10)
-    try:
-        run(args.root, args.language)
-    except (OSError, ValueError, RuntimeError) as error:
-        status_path = args.root / "research/knowledge/import-status.json"
-        previous = json.loads(status_path.read_text()) if status_path.exists() else {}
-        save(
-            status_path,
-            {
-                **previous,
-                "stage": "failed",
-                "language": args.language,
-                "error": str(error),
-                "scope": "No complete corpus claimed; existing indexed data retained",
-            },
-        )
-        raise
+    folder = args.root / "research/knowledge"
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / "import.lock").open("a") as lock:
+        if os.name != "nt":
+            import fcntl
+
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise SystemExit(
+                    "Another Wikipedia importer owns the index; no download started"
+                ) from None
+        try:
+            run(args.root, args.language, args.connections)
+        except (OSError, ValueError, RuntimeError) as error:
+            status_path = args.root / "research/knowledge/import-status.json"
+            previous = json.loads(status_path.read_text()) if status_path.exists() else {}
+            save(
+                status_path,
+                {
+                    **previous,
+                    "stage": "failed",
+                    "language": args.language,
+                    "error": str(error),
+                    "scope": "No complete corpus claimed; existing indexed data retained",
+                },
+            )
+            raise
 
 
 if __name__ == "__main__":
