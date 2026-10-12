@@ -74,3 +74,6 @@ jobs:
           if ($acquisitionExit -ne 1) { throw 'Failed child process exit was lost.' }
           if ($ErrorActionPreference -ne 'Stop') { throw 'Caller error policy was not restored.' }
           if ((Get-Content -Raw $log) -notmatch 'RuntimeError: synta-traceback-sentinel') { throw 'Complete traceback was not captured.' }
+          # The intentionally failed child remains LASTEXITCODE=1. All assertions
+          # above must pass before reporting success to the Actions shell wrapper.
+          exit 0
