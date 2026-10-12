@@ -282,7 +282,7 @@ class DashboardState:
         live = {}
         try:
             live = snapshot(self.root, mission, report, gpu)
-        except (OSError, ValueError, RuntimeError) as error:
+        except (OSError, ValueError, TypeError, RuntimeError) as error:
             errors.append("Podgląd pracy niedostępny: " + str(error)[:200])
         from rlm.v100.trade_explorer import snapshot as trade_snapshot
 
@@ -310,7 +310,7 @@ class DashboardState:
         while not self.stop.is_set():
             try:
                 self.refresh()
-            except (OSError, ValueError, RuntimeError) as error:
+            except (OSError, ValueError, TypeError, RuntimeError) as error:
                 self.data = {
                     **self.data,
                     "errors": [str(error)[:600]],

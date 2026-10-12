@@ -110,20 +110,43 @@ def request(port: int, path: str, data: dict | None = None, timeout: float = 120
         f"http://127.0.0.1:{port}{path}", data=body, headers={"Content-Type": "application/json"}
     )
     with urllib.request.urlopen(value, timeout=timeout) as reply:
-        return json.load(reply)
+        raw = reply.read().decode("utf-8")
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"Native HTTP {path} returned non-JSON: {raw[:240]!r}") from error
 
 
-def measure(port: int, interrupted: threading.Event) -> dict:
+def measure(port: int, interrupted: threading.Event, evidence: Path | None = None) -> dict:
     rows = []
     for prompt in PROMPTS:
         for repeat in range(2):
             if interrupted.is_set():
                 raise RuntimeError("Host pressure interrupted the owned experiment")
             started = time.monotonic()
+            format_options = {}
+            if prompt == PROMPTS[1]:
+                format_options["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "hold_instruction",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "action": {"type": "string", "enum": ["hold"]},
+                                "amount": {"type": "integer", "enum": [0]},
+                            },
+                            "required": ["action", "amount"],
+                            "additionalProperties": False,
+                        },
+                    },
+                }
             reply = request(
                 port,
                 "/v1/chat/completions",
                 {
+                    **format_options,
                     "model": "synta-perf",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0,
@@ -135,6 +158,20 @@ def measure(port: int, interrupted: threading.Event) -> dict:
                 },
             )
             elapsed = time.monotonic() - started
+            if evidence is not None:
+                with evidence.open("a", encoding="utf-8") as stream:
+                    stream.write(
+                        json.dumps(
+                            {
+                                "prompt": prompt,
+                                "repeat": repeat,
+                                "seconds": elapsed,
+                                "response": reply,
+                            },
+                            allow_nan=False,
+                        )
+                        + "\n"
+                    )
             choice = reply["choices"][0]
             tokens = reply.get("usage", {}).get("completion_tokens")
             if type(tokens) is not int or tokens <= 0 or not math.isfinite(elapsed) or elapsed <= 0:
@@ -146,8 +183,18 @@ def measure(port: int, interrupted: threading.Event) -> dict:
                 raise ValueError("Probe output has no user-visible content")
             if prompt == PROMPTS[0] and content.strip() != "437":
                 raise ValueError("Deterministic arithmetic correctness probe failed")
-            if prompt == PROMPTS[1] and json.loads(content) != {"action": "hold", "amount": 0}:
-                raise ValueError("Structured instruction correctness probe failed")
+            if prompt == PROMPTS[1]:
+                try:
+                    structured = json.loads(content)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        f"Structured probe model content was not JSON: {content[:240]!r}; inspect the probe receipt"
+                    ) from error
+                if (
+                    structured != {"action": "hold", "amount": 0}
+                    or type(structured.get("amount")) is not int
+                ):
+                    raise ValueError("Structured instruction correctness probe failed")
             rows.append(
                 {
                     "repeat": repeat,
@@ -350,7 +397,12 @@ def run(profile: dict, output: Path, port: int = 8097) -> dict:
                     time.sleep(0.5)
                 else:
                     raise RuntimeError("Native server did not become ready; inspect variant log")
-                record.update(state="measured", measurement=measure(port, interrupted))
+                record.update(
+                    state="measured",
+                    measurement=measure(
+                        port, interrupted, output / (variant["name"] + "-probes.jsonl")
+                    ),
+                )
             except (ValueError, RuntimeError, OSError) as error:
                 record.update(state="blocked", error=str(error))
             finally:

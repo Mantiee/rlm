@@ -143,6 +143,18 @@ def action_events(events: list[dict]) -> list[dict]:
     ][-200:]
 
 
+def stream_text(value) -> str:
+    """Journals can decode a complete JSON string into a redacted object."""
+    from rlm.v100.activity import redact
+
+    value = redact(value)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, allow_nan=False)
+    raise ValueError("Recorded stream fragment must be text or a structured JSON value")
+
+
 def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
     """Observed agent activity plus labelled declarations, not inferred intentions."""
     views = {}
@@ -197,11 +209,13 @@ def agent_views(events: list[dict], jobs: list[dict]) -> list[dict]:
             key = (
                 "stream_reasoning" if event.get("delta_channel") == "reasoning" else "stream_output"
             )
-            view[key] = (view.get(key, "") + event["delta_text"])[-16384:]
+            view[key] = (view.get(key, "") + stream_text(event["delta_text"]))[-16384:]
         if event.get("returned_trace"):
             if event.get("trace_part") == 0:
                 view["returned_trace"] = ""
-            view["returned_trace"] = view.get("returned_trace", "") + event["returned_trace"]
+            view["returned_trace"] = view.get("returned_trace", "") + stream_text(
+                event["returned_trace"]
+            )
             view["trace_request"] = event.get("request_id")
         if event.get("usage"):
             view["usage"] = event["usage"]

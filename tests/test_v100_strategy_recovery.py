@@ -28,6 +28,14 @@ def test_dashboard_readiness_retries_refused_connection_and_checks_renderer(monk
     ]
 
     def get(*args, **kwargs):
+        if args[0].endswith("/api/status"):
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {
+                    "mission": {},
+                    "collected_at": dashboard_health.time.time(),
+                },
+            )
         reply = replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
