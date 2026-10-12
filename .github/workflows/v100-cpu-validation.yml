@@ -86,10 +86,14 @@ jobs:
           $fixture = Join-Path $root 'background-fixture.ps1'
           $marker = Join-Path $root 'background-fixture-result.txt'
           "'passed' | Set-Content -LiteralPath '$marker'; exit 23" | Set-Content -Encoding ASCII $fixture
-          function Get-ScheduledTask { param($TaskName,$ErrorAction) if ($TaskName -eq 'Synta-Managed-Update') { [pscustomobject]@{Actions=@([pscustomobject]@{Execute=(Join-Path $PSHOME 'powershell.exe');Arguments=('-NoProfile -File "' + $fixture + '"')})} } }
+          $global:syntaCapturedActions = @{}
+          $cpuRoot = Join-Path $env:USERPROFILE 'ai-owned-compute'
+          function Get-ScheduledTask { param($TaskName,$ErrorAction) if ($TaskName -eq 'Synta-Owned-CPU-Worker') { return [pscustomobject]@{Actions=@([pscustomobject]@{Execute=(Join-Path $PSHOME 'powershell.exe');Arguments=('-NoProfile -File "' + (Join-Path $cpuRoot 'autostart-watchdog.ps1') + '"')})} }; if ($TaskName -eq 'Synta-Managed-Update') { [pscustomobject]@{Actions=@([pscustomobject]@{Execute=(Join-Path $PSHOME 'powershell.exe');Arguments=('-NoProfile -File "' + $fixture + '"')})} } }
           function New-ScheduledTaskAction { param($Execute,$Argument) [pscustomobject]@{Execute=$Execute;Arguments=$Argument} }
-          function Set-ScheduledTask { param($TaskName,$Action) $global:syntaCapturedAction=$Action }
+          function Set-ScheduledTask { param($TaskName,$Action) $global:syntaCapturedActions[$TaskName]=$Action }
           & ./tools/install-synta-background-tasks.ps1
+          $syntaCapturedAction = $syntaCapturedActions['Synta-Managed-Update']
+          if ($syntaCapturedActions['Synta-Owned-CPU-Worker'].Execute -notmatch 'wscript.exe$') { throw 'CPU task was not wrapped.' }
           if ($syntaCapturedAction.Execute -notmatch 'wscript.exe$') { throw 'Task still creates a console.' }
           $wrapper = Join-Path $root 'tools/background-tasks/Synta-Managed-Update.vbs'
           $process = Start-Process -FilePath $syntaCapturedAction.Execute -ArgumentList @('//B','//Nologo',('"' + $wrapper + '"')) -Wait -PassThru

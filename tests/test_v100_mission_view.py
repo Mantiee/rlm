@@ -147,3 +147,23 @@ def test_dashboard_upgrade_isolated_and_rolls_back(tmp_path, monkeypatch):
     assert not (tmp_path / ".config/systemd/user/v100-dashboard.service.d/20-code.conf").exists()
     assert "--target" in calls[0] and "--no-deps" in calls[0]
     assert all("v100-mission.service" not in command for command in calls)
+
+
+def test_history_does_not_reset_with_new_run_and_goal_retrieval_is_visible(tmp_path):
+    old = tmp_path / "research/mission/run-previous/learning/state.json"
+    atomic_json(
+        old, {"cycles": [{"cycle": 1, "status": "rejected"}, {"cycle": 2, "status": "accepted"}]}
+    )
+    atomic_json(
+        tmp_path / "research/knowledge/goal-use.json",
+        {"goal_id": "goal", "updated": 100, "sources": ["https://en.wikipedia.org/wiki/Example"]},
+    )
+    current = {
+        "run": str(tmp_path / "research/mission/run-current"),
+        "learning": {"completed_cycles": 0},
+    }
+    view = mission_view.snapshot(tmp_path, current, {})
+    assert view["completed_cycles"] == 0
+    assert view["history"]["completed_cycles"] == 2
+    assert view["knowledge"]["goal_use"]["goal_id"] == "goal"
+    assert view["knowledge"]["goal_use"]["sources"]

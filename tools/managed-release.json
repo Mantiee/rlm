@@ -1,7 +1,7 @@
 {
   "schema": "synta-managed-release-v1",
-  "version": 92,
-  "linux_installer": "tools/update-synta-v92.sh",
+  "version": 93,
+  "linux_installer": "tools/update-synta-v93.sh",
   "windows_prepare": "tools/prepare-managed-windows.ps1",
   "files": {
     "tools/prepare-managed-windows.ps1": "714caf9e678b42ad0a723c125de594d31ae21819247ee96bba25e3055dc5dbfe",
@@ -11,7 +11,7 @@
     "rlm/v100/managed_bootstrap.py": "70dd053e2602ffc1d294a4ce4f40b25409302f6a711ce901ee3b020c3994ebe6",
     "rlm/v100/inference_benchmark.py": "b65cd1dcdc1ba46cfad00fa768726d7a8b5f80cbccc7fccab13717894cf09c25",
     "rlm/v100/wikimedia_exports.py": "f3788e5ab9e2e6d9551b005d1a356052c26d565dc0c9a290d5f9762e521f2ab5",
-    "rlm/v100/knowledge_rag.py": "5655fd939d3201b9abd58e84401ed94dcf33c3c3a1a23a27317e2aa309db18e0",
+    "rlm/v100/knowledge_rag.py": "247358771f2575a1c89bf1eebbb09ece2ceacc159fad1148454d0fc3969c5eb5",
     "rlm/v100/source_sync.py": "e315e1bd6e62ff0ce6a0c235ed857d89ab4ea12bb979322e53ec1e23f2c5ee38",
     "tools/bootstrap-synta-3060.sh": "4d2b53e217a92df49e52e582e4b4549bb46ab29226ff33f730eae7b49d7e6797",
     "tools/attach-synta-3060.sh": "b16079c4a9f66fee567740e41012877d0e90e9708bfa9b475da2fc5db5e51fbf",
@@ -33,9 +33,11 @@
     "rlm/v100/model_policy.py": "a947f096d8d3be1869d72b3a038fe2fd6d3e8e64f00da2dd7e00f9884fea1ac9",
     "rlm/v100/remote_helper.py": "0bbc8be27ab98d54dea1aea7ac37a3f19f8b03a379a1bbc1c6a96c35b8f440e9",
     "tools/update-synta-v91.sh": "693bfcbe13cff24e6fbea8607568b5d742d0ae19576896456490478f1bcae3c0",
-    "rlm/v100/mission_view.py": "7ff94783ff0c883136be5551839076b0d71b898fed5fbab23a06a88593997a98",
-    "tools/install-synta-background-tasks.ps1": "f5c30dd3dfb4472ae299f09c0eba228f14758b07b602f993f36016b18818bb12",
-    "tools/update-synta-v92.sh": "b45e35b4caf7e652c04a060abcbee16cfc487d280a8ceccf7abab49f31486706"
+    "rlm/v100/mission_view.py": "015f00bbfb7cbce637336a2d822932ca16edee99785320321cff2f41e882b5ab",
+    "tools/install-synta-background-tasks.ps1": "e647e535f5f97a7fd3ef4b2a8f8451b224a935d11904dd0d7383aca239040478",
+    "tools/update-synta-v92.sh": "b45e35b4caf7e652c04a060abcbee16cfc487d280a8ceccf7abab49f31486706",
+    "tools/update-synta-v93.sh": "7dc4305296db2b3bdbdb2654563841c4269f1a5a015a0a10035e9e93a7351a7f",
+    "tools/audit-synta-hosts.py": "4c132d09186e73ef92eb87bdda4d1ab27b826ae25c29c8f3e41d41fab9de2c42"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

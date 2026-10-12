@@ -15,7 +15,7 @@ function dashboardNavigation(){
 }
 function evidenceBars(parent,title,rows,unit){
  const h=document.createElement('h3');h.textContent=title;parent.append(h);const usable=rows.filter(r=>typeof r[1]==='number'&&Number.isFinite(r[1]));if(!usable.length){textField(parent,'Status','No measured values available');return}
- const max=Math.max(1,...usable.map(r=>r[1]));for(const [label,value] of usable){const box=document.createElement('div');box.className='evidence-bar';const text=document.createElement('span');text.textContent=label+': '+value.toFixed(unit==='Brier'?4:0)+' '+unit;const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.style.width=(value/max*100)+'%';track.append(bar);box.append(text,track);parent.append(box)}
+ textField(parent,'How to read',unit==='Brier'?'Lower is better. Bar length represents the recorded score, not income.':'Bar length is relative to the largest recorded count. These are counts, not profit.');const max=Math.max(1,...usable.map(r=>r[1]));for(const [label,value] of usable){const box=document.createElement('div');box.className='evidence-bar';const text=document.createElement('span');text.textContent=label+': '+value.toFixed(unit==='Brier'?4:0)+' '+unit;const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.style.width=(value/max*100)+'%';track.append(bar);box.append(text,track);parent.append(box)}
 }
 function insightsView(data){
  const r=data.report||{},g=r.mission_evidence?.goal_learning||{},policy=g.cpu_shadow_policy||{},work=r.income_work||{},sources=r.source_acquisition||{};

@@ -24,6 +24,8 @@ def snapshot(root: Path, mission: dict, report: dict) -> dict:
         "evaluation": {},
         "learner": {},
         "updater": {},
+        "knowledge": {},
+        "history": {},
         "warnings": [],
     }
     run = Path(mission["run"]).resolve() if mission.get("run") else None
@@ -63,6 +65,36 @@ def snapshot(root: Path, mission: dict, report: dict) -> dict:
         view["updater"] = read_receipt(root / "research/managed-update/status.json")
     except (OSError, ValueError) as error:
         view["updater"] = {"stage": "unknown", "error": str(error)[:180]}
+    for name, filename in (
+        ("import", "import-status.json"),
+        ("index", "index-progress.json"),
+        ("goal_use", "goal-use.json"),
+    ):
+        try:
+            receipt = read_receipt(root / "research/knowledge" / filename)
+            view["knowledge"][name] = {
+                **receipt,
+                "age_seconds": max(0, now - receipt.get("updated", receipt["source_updated"])),
+            }
+        except (OSError, ValueError):
+            view["knowledge"][name] = {"stage": "unknown"}
+    paths = sorted(
+        (root / "research/mission").glob("run-*/learning/state.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[:32]
+    completed = 0
+    for path in paths:
+        try:
+            cycles = read_receipt(path, 2 * 2**20).get("cycles", [])
+            completed += len(cycles)
+        except (OSError, ValueError, TypeError):
+            continue
+    view["history"] = {
+        "completed_cycles": completed,
+        "runs_checked": len(paths),
+        "scope": "Retained cycle receipts in the latest 32 runs; not optimizer steps or verified revenue",
+    }
     work = report.get("income_work", {})
     view["income"] = {
         k: work.get(k)
