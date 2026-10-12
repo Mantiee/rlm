@@ -32,6 +32,7 @@ function inferenceStamp(live){return Math.max(0,...(live?.events||[]).map(e=>Dat
 function mergeInference(data,live){return {...data,live:{...data.live,events:live.events,agents:[...(live.agents||[]),...(data.live?.agents||[]).filter(a=>a.source==='research/state/drones.sqlite3')]}}}
 function card(label,value){const node=document.createElement('div');node.className='card';node.dataset.key='metric-'+label;const title=document.createElement('small');title.textContent=label;const strong=document.createElement('strong');strong.className='value';strong.textContent=fmt(value);node.append(title,strong);$('cards').append(node)}
 function workView(data){
+modelDeploymentView(data);
 for(const id of ['actors','goals','events']){if(!$(id)){const node=document.createElement(id==='goals'?'pre':'div');node.id=id;if(id==='actors')node.className='grid';$('cards').after(node)}}
 agentView(data);
 $('actors').replaceChildren();
@@ -46,6 +47,10 @@ for(const a of data.live?.actors||[]){
  const proof=document.createElement('details'),summary=document.createElement('summary'),raw=document.createElement('pre');proof.dataset.key=a.label+'-resource-proof';summary.textContent='Source data';raw.textContent=JSON.stringify(a,null,2);proof.append(summary,raw);node.append(proof);$('actors').append(node)
 }
 restoreDisclosures();const plans=data.live?.goals||{};$('goals').textContent=JSON.stringify(plans,null,2);$('goals').style.display='none';const oldPanel=$('goals').parentElement;if(oldPanel?.tagName==='SECTION')oldPanel.style.display='none';
+}
+
+function modelDeploymentView(data){
+const p=panel('model-deployment-panel','Models by computer and role',$('cards'));p.replaceChildren();const title=document.createElement('h2');title.textContent='Models by computer and role';p.append(title);const note=document.createElement('p');note.textContent='Qualified is a completed test, not proof of current generation. Missing receipts remain unknown. The accepted V100 learner is shown separately in Learning.';p.append(note);const table=document.createElement('table'),head=document.createElement('tr');for(const label of ['Computer','Role','Model','Observed state']){const th=document.createElement('th');th.textContent=label;head.append(th)}table.append(head);for(const row of data.live?.model_deployment||[]){const tr=document.createElement('tr');for(const key of ['host','role','model','state']){const td=document.createElement('td');td.textContent=row[key]||'unknown';tr.append(td)}table.append(tr)}p.append(table);
 }
 
 function textField(parent,label,value){if(value===undefined||value===null||value==='')return;const p=document.createElement('p'),b=document.createElement('strong');b.textContent=label+': ';p.append(b,document.createTextNode(String(value)));parent.append(p)}

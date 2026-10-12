@@ -1,7 +1,7 @@
 name: V100 controller CPU validation
 on:
   push:
-    branches: [v100-rtx-reconnect]
+    branches: [v100-rtx-reconnect, v100-model-migration]
     paths:
       - 'rlm/v100/**'
       - 'tests/test_v100*'

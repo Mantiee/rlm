@@ -240,7 +240,7 @@ for attempt in range(60):
     except OSError:
         if attempt==59: raise
         time.sleep(1)
-for model in ('qwen3.5:2b-q4_K_M','qwen3.5:4b-q4_K_M'):
+for model in ('gemma4:e2b-it-q4_K_M','gemma4:e4b-it-q4_K_M'):
     data=json.dumps({'model':model,'stream':False}).encode()
     req=urllib.request.Request('http://127.0.0.1:11436/api/pull',data=data,headers={'Content-Type':'application/json'})
     with urllib.request.urlopen(req,timeout=3600) as r:
@@ -248,7 +248,7 @@ for model in ('qwen3.5:2b-q4_K_M','qwen3.5:4b-q4_K_M'):
         if result.get('error'): raise RuntimeError(result['error'])
     print(json.dumps({'downloaded':model}),flush=True)
 errors=[]
-for model in ('qwen3.5:4b-q4_K_M','qwen3.5:2b-q4_K_M'):
+for model in ('gemma4:e2b-it-q4_K_M','gemma4:e4b-it-q4_K_M'):
     try:
         data=json.dumps({'model':model,'stream':False,'think':False,'messages':[{'role':'user','content':'Return the integer result of 2+2.'}],'options':{'num_ctx':32768,'num_predict':32},'keep_alive':-1}).encode()
         req=urllib.request.Request('http://127.0.0.1:11436/api/chat',data=data,headers={'Content-Type':'application/json'})

@@ -61,3 +61,13 @@ constitute learning. Physical speed, model admission and revenue require host ev
 - Dedicated Debian 192.168.0.9: sudo tools/bootstrap-synta-3060.sh SHA.
 
 These update code and services, retaining accepted weights, private ledgers and archives.
+
+## v90 model migration
+
+The managed channel prepares explicit October 2026 candidates: Windows fast roles use Gemma 4 E2B/E4B Q4; planning compares Qwen3.8 27B Q4 and Gemma 4 26B-A4B Q4. The dedicated RTX 3060 Ti prepares Gemma 4 E2B first, with E4B admitted only after full GPU residency and independent task checks. Native Debian acquisition prepares Gemma 4 E2B and Qwen3.8 27B GGUF; downloading does not promote a native master.
+
+Qwen3.5, Qwen3.6 and GPT-OSS profiles stay archived and are excluded from production routing under the installed v90 policy. Metadata-only probes may read the former researcher configuration to discover the new inventory; no historical-model generation is used by the new qualification panel. Current candidates must pass every accounting/arithmetic/evidence case. Timing chooses among passing roles and does not establish broad intelligence or profit.
+
+Accepted V100 learner weights and the active training cycle are retained. They are distinct from the larger advisory planner. CPU offload is permitted for the declared Gemma MoE role; it is not claimed faster without measurement. No 120B/180B or 500K-context activation is implied.
+
+The dashboard table “Models by computer and role” reads host receipts. Qualified, downloaded, retired and unknown are separate states; qualification never proves current serving. Updaters on each host follow the same immutable channel independently and defer active work before replacement.

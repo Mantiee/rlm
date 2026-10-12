@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-MODELS = {"qwen3.5:2b-q4_K_M", "qwen3.5:4b-q4_K_M"}
+MODELS = {"gemma4:e2b-it-q4_K_M", "gemma4:e4b-it-q4_K_M"}
 CONTRACT = "synta-dedicated-linux-v1"
 CPU_RAM = 768 * 2**20
 

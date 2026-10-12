@@ -14,13 +14,16 @@ foreach ($entry in $manifest.files.PSObject.Properties) {
         throw "Release checksum mismatch: $($entry.Name); existing helper retained."
     }
 }
+$launcher = Join-Path $root 'start-rtx3090-helper.ps1'
+$launcherCurrent = (Test-Path -LiteralPath $launcher -PathType Leaf) -and
+    ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant() -eq $manifest.files.'tools/start-rtx3090-helper.ps1')
 $origin = 'http://192.168.0.61:11435'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $guard = $null
 $age = 1e99
 try { $guard = Invoke-RestMethod "$origin/api/synta-resources" -TimeoutSec 5 } catch { Write-Warning $_.Exception.Message }
 $age = if ($guard -and $null -ne $guard.heartbeat_age_seconds) { [double]$guard.heartbeat_age_seconds } elseif ($guard) { $now - $guard.updated } else { 1e99 }
-if ($guard -and $guard.proxy_code_sha256 -eq $expected -and $guard.throughput_enabled -and $age -ge 0 -and $age -lt 10) {
+if ($launcherCurrent -and $guard -and $guard.proxy_code_sha256 -eq $expected -and $guard.throughput_enabled -and $age -ge 0 -and $age -lt 10) {
     @{stage='verified';revision=$Revision;updated=$now;resources=$guard} | ConvertTo-Json -Depth 7 | Set-Content -Encoding UTF8 $receipt
     return
 }

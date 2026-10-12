@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $ThroughputFile) {
 $RuntimeVersion = '0.40.0'
 $RuntimeRoot = Join-Path $Root "runtime\ollama-$RuntimeVersion"
 $Ollama = Join-Path $RuntimeRoot 'ollama.exe'
-$Model = 'qwen3.5:9b-q8_0'
+$Model = 'gemma4:e2b-it-q4_K_M'
 $Origin = "http://${WindowsIp}:$Port"
 $Rule = "v100-helper-$Port-from-$DebianIp"
 $BlockRule = "$Rule-block-other-addresses"
@@ -113,7 +113,7 @@ if ($FreeMiB -lt 14336) { throw 'Need at least 14 GiB free before the helper smo
 $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($Root).Substring(0, 1))
 $RequiredFree = 2GB
 if (-not (Test-Path (Join-Path $RuntimeRoot 'runtime-ready.json'))) { $RequiredFree += 12GB }
-if (-not (Test-Path (Join-Path $Root 'models\manifests\registry.ollama.ai\library\qwen3.5\9b-q8_0'))) { $RequiredFree += 14GB }
+if (-not (Test-Path (Join-Path $Root 'models\manifests\registry.ollama.ai\library\gemma4\e2b-it-q4_K_M'))) { $RequiredFree += 14GB }
 if ($drive.Free -lt $RequiredFree) { throw "Need $($RequiredFree / 1GB) GiB free disk for uncached downloads and working space." }
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Root 'models') -Force | Out-Null
@@ -271,7 +271,7 @@ while ($true) {
     ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $HelperRoot 'server-owner.json')
     if ($restarting) {
         Start-Sleep -Seconds 5
-        $warm = @{model='qwen3.5:9b-q8_0';stream=$false;think=$false;keep_alive=-1;messages=@(@{role='user';content='Return only OK.'});options=@{num_ctx=[int]$env:OLLAMA_CONTEXT_LENGTH;num_batch=[int]$env:HELPER_BATCH_TOKENS;num_predict=8;num_thread=2}} | ConvertTo-Json -Depth 8
+        $warm = @{model='gemma4:e2b-it-q4_K_M';stream=$false;think=$false;keep_alive=-1;messages=@(@{role='user';content='Return only OK.'});options=@{num_ctx=[int]$env:OLLAMA_CONTEXT_LENGTH;num_batch=[int]$env:HELPER_BATCH_TOKENS;num_predict=8;num_thread=2}} | ConvertTo-Json -Depth 8
         $warmJob = Start-Job -ArgumentList "http://$env:OLLAMA_HOST/api/chat",$warm -ScriptBlock {
             param($url,$body)
             Invoke-RestMethod $url -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120
@@ -337,7 +337,7 @@ $Ready = $false
         } catch { Start-Sleep -Seconds 1 }
     }
     if (-not $Ready) { throw 'Helper startup timed out.' }
-    Write-Host "Downloading $Model (about 10 GB) into $Root\models ..."
+    Write-Host "Downloading $Model (about 4.6 GB) into $Root\models ..."
     # The isolated CLI prints the normal download progress bar. Its environment
     # points at the isolated backend (11436 behind adaptive proxy), not desktop Ollama.
     $PullInfo = New-Object Diagnostics.ProcessStartInfo

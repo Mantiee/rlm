@@ -386,7 +386,7 @@ def test_unchanged_qualified_inventory_does_not_repeat_gpu_panel(tmp_path, monke
     )
     first = model_roles.qualify(tmp_path)
     count = len(calls)
-    assert first["roles"] and count == 5
+    assert first["roles"] and count == 4
     assert model_roles.qualify(tmp_path) == first
     assert len(calls) == count
     models[-1]["digest"] = "b" * 64

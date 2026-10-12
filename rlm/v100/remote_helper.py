@@ -22,9 +22,14 @@ import requests
 
 from rlm.clients.llamacpp import LlamaCppClient
 from rlm.v100.common import atomic_json
+from rlm.v100.model_policy import metadata_contract
 
 MODEL = "qwen3.5:9b-q8_0"
 ROLE_MODELS = {
+    "gemma4:e2b-it-q4_K_M": ("Q4_K_M", 7),
+    "gemma4:e4b-it-q4_K_M": ("Q4_K_M", 8),
+    "gemma4:26b-a4b-it-q4_K_M": ("Q4_K_M", 22),
+    "qwen3.8:27b-q4_K_M": ("Q4_K_M", 22),
     MODEL: ("Q8_0", 12),
     "qwen3.5:2b-q4_K_M": ("Q4_K_M", 6),
     "qwen3.5:4b-q4_K_M": ("Q4_K_M", 8),
@@ -218,6 +223,7 @@ class OllamaResearchClient(LlamaCppClient):
         if allow_cpu_offload and kwargs["model_name"] not in (
             "qwen3.5:35b-a3b-q4_K_M",
             "qwen3.6:35b-a3b-q4_K_M",
+            "gemma4:26b-a4b-it-q4_K_M",
         ):
             raise ValueError("CPU expert offload is admitted only for the explicit MoE role")
         self.on_demand, self.allow_cpu_offload = on_demand, allow_cpu_offload
@@ -402,10 +408,11 @@ class OllamaResearchClient(LlamaCppClient):
         ):
             raise ValueError("Remote model missing, changed, or cloud-backed")
         info = self.remote_request("/api/show", {"model": self.model_name})
+        families, tokenizers = metadata_contract(self.model_name)
         if (
-            info.get("details", {}).get("family") not in ("qwen35",)
+            info.get("details", {}).get("family") not in families
             or info.get("details", {}).get("quantization_level") != ROLE_MODELS[self.model_name][0]
-            or info.get("model_info", {}).get("tokenizer.ggml.model") != "gpt2"
+            or info.get("model_info", {}).get("tokenizer.ggml.model") not in tokenizers
             or info.get("system")
             or info.get("remote_host")
             or info.get("remote_model")

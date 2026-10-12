@@ -68,7 +68,7 @@ def test_independent_nodes_can_hold_workload_leases_together(monkeypatch):
 def test_stale_or_changed_node_never_routes_a_job(tmp_path):
     atomic_json(tmp_path / "research/owned-node.json", {})
     folder = tmp_path / "research/owned-node"
-    profile = {"runtime": {"base_url": remote_nodes.ENDPOINT}}
+    profile = {"runtime": {"base_url": remote_nodes.ENDPOINT, "model_name": "gemma4:e2b-it-q4_K_M"}}
     path = folder / "profile.json"
     atomic_json(path, profile)
     state = {

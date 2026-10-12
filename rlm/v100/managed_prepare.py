@@ -150,21 +150,10 @@ def run(root: Path) -> dict:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             record["assets"].append({"role": role, "state": "blocked", "error": str(error)})
         atomic_json(path, record)
-    try:
-        from huggingface_hub import HfApi
-
-        from rlm.v100.foundation import propose
-
-        identity = HfApi().model_info("Qwen/Qwen3.5-4B").sha
-        record["debian_foundation"] = propose(
-            root,
-            "A",
-            "Qwen/Qwen3.5-4B",
-            identity,
-            "Compare a separate Qwen3.5 foundation against the accepted learner using retained quality gates; preserve predecessor and reject regressions. Faster small-model serving is a hypothesis requiring measurement.",
-        )
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        record["debian_foundation"] = {"state": "blocked", "error": str(error)}
+    record["debian_foundation"] = {
+        "state": "accepted-learner-retained",
+        "reason": "No old Qwen foundation retried; new serving candidates are qualified separately from learned weights",
+    }
     try:
         record["memory_pilot"] = memory_pilot(root)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

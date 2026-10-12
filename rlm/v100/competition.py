@@ -392,6 +392,18 @@ def helper_client(
 
     remote = remote_profile(profile)
     if remote and root is not None:
+        from rlm.v100.model_policy import retired
+
+        if (
+            (root / "research/model-roles/model-policy.json").exists()
+            and retired(settings["model_name"])
+            and not profile["resources"].get("calibration_only")
+        ):
+            import requests
+
+            raise requests.ConnectionError(
+                "Retired remote model is unavailable for production; use a qualified current role or local master"
+            )
         from rlm.v100.mission_chat import preferences
 
         if preferences(root).get("remote_helper_enabled", True) is False:

@@ -248,6 +248,15 @@ class Proxy(BaseHTTPRequestHandler):
                 raise ValueError("Request exceeds 2 MiB")
             body = self.rfile.read(length)
             if generating:
+                requested = json.loads(body)
+                if str(requested.get("model", "")).startswith(("qwen3.5:", "qwen3.6:", "gpt-oss:")):
+                    self.send_json(
+                        503,
+                        {
+                            "error": "Retired model is disabled; use a qualified current role or another host"
+                        },
+                    )
+                    return
                 state = (
                     pressure.fresh_state() if hasattr(pressure, "fresh_state") else pressure.state
                 )

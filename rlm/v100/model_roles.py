@@ -9,7 +9,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from rlm.v100.common import atomic_json, load_profile
-from rlm.v100.remote_helper import MODEL, ROLE_MODELS, STABLE_METADATA, metadata_sha
+from rlm.v100.model_policy import WINDOWS_ROLES, admitted_panel, retired
+from rlm.v100.remote_helper import MODEL as MODEL
+from rlm.v100.remote_helper import ROLE_MODELS, STABLE_METADATA, metadata_sha
 
 
 def json_hash(value: dict) -> str:
@@ -33,7 +35,7 @@ def selected_profile(root: Path, role: str) -> Path | None:
     report = json.loads(report_path.read_text())
     value = json.loads(profile.read_text())
     # The operator excludes gpt-oss, including profiles admitted by an older release.
-    if value.get("runtime", {}).get("model_name", "").startswith("gpt-oss:"):
+    if retired(value.get("runtime", {}).get("model_name", "")):
         return None
     if (
         entry["profile_sha256"] != json_hash(value)
@@ -173,15 +175,14 @@ def qualify(root: Path) -> dict:
 
     original = root / "research/researcher-rtx3090.json"
     baseline_profile = load_profile(original, root)
-    if baseline_profile["runtime"]["model_name"] != MODEL:
-        raise ValueError("Role qualification requires the preserved pinned 9B baseline")
+    baseline_profile["resources"]["calibration_only"] = True
     inventory = helper_client(baseline_profile, root).remote_request("/api/tags")
     fingerprint = json_hash(
         {
             "profile": baseline_profile,
             "models": sorted((m["name"], m["digest"]) for m in inventory["models"]),
             "panel": cases(),
-            "revision": "roles-v88",
+            "revision": "roles-v90",
         }
     )
     cache = root / "research/model-roles/qualification-cache.json"
@@ -200,16 +201,15 @@ def qualify(root: Path) -> dict:
     production_output = baseline_profile["runtime"]["max_output_tokens"]
     baseline_profile["resources"]["on_demand"] = True
     baseline_profile["runtime"].update(max_output_tokens=256, enable_thinking=False)
-    baseline = evaluate(helper_client(baseline_profile, root))
+    baseline = {
+        "criterion": "All 20 accounting/arithmetic/evidence cases; no historical model inference",
+        "measured": False,
+    }
     roles = {}
     reports = []
-    for role, model in [
-        ("fast", "qwen3.5:2b-q4_K_M"),
-        ("fast", "qwen3.5:4b-q4_K_M"),
-        ("planner", "qwen3.5:35b-a3b-q4_K_M"),
-        ("planner", "qwen3.6:35b-a3b-q4_K_M"),
-    ]:
+    for role, model in WINDOWS_ROLES:
         profile = copy.deepcopy(baseline_profile)
+        profile["resources"].pop("calibration_only", None)
         profile["runtime"].update(
             model_name=model, model_version="role-" + model, context_window=32768
         )
@@ -217,7 +217,7 @@ def qualify(root: Path) -> dict:
         profile["resources"].update(
             max_vram_gib=ROLE_MODELS[model][1],
             on_demand=True,
-            allow_cpu_offload=role == "planner",
+            allow_cpu_offload=model == "gemma4:26b-a4b-it-q4_K_M",
             require_adaptive_windows_guard=True,
         )
         report = {"role": role, "model": model, "admitted": False, "baseline": baseline}
@@ -241,7 +241,7 @@ def qualify(root: Path) -> dict:
             report.update(
                 model_digest=profile["resources"]["model_digest"],
                 measurement=measurement,
-                admitted=better(role, baseline, measurement),
+                admitted=admitted_panel(measurement),
             )
             if report["admitted"] and (
                 role not in roles or measurement["seconds"] < roles[role]["seconds"]
@@ -280,9 +280,9 @@ def qualify(root: Path) -> dict:
         if not profile.is_relative_to((root / "research/model-roles").resolve()):
             raise ValueError("Role registry escaped its owned folder")
         name = json.loads(profile.read_text()).get("runtime", {}).get("model_name", "")
-        if name.startswith("gpt-oss:"):
+        if retired(name):
             prior.setdefault("disabled_roles", []).append(
-                {"role": role, "entry": entry, "reason": "Operator excluded gpt-oss"}
+                {"role": role, "entry": entry, "reason": "Operator retired this model family"}
             )
             del prior["roles"][role]
     prior["roles"].update(roles)
@@ -292,6 +292,11 @@ def qualify(root: Path) -> dict:
         scope="Admitted role profiles only; Gemma learner and accepted weights retained",
     )
     atomic_json(active, prior)
+    if "fast" in roles:
+        # The shared legacy path is configuration for resident drones. Preserve its
+        # previous bytes as evidence, then use only the newly qualified profile.
+        atomic_json(folder / "previous-researcher.json", load_profile(original, root))
+        atomic_json(original, json.loads(Path(roles["fast"]["profile"]).read_text()))
     # Transport failures retry; stable scored outcomes need no repeated GPU exercise.
     if all(
         "error" not in r or r["error"] == "Candidate not downloaded on Windows" for r in reports

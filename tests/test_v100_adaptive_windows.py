@@ -65,6 +65,12 @@ def test_proxy_denies_pressure_then_caps_and_forwards_real_inference(tmp_path):
         proxy.pressure.state = budget(55, 12, 50, 12, 80, 0, False)
         client.close()
         client = http.client.HTTPConnection("127.0.0.1", proxy.server_port, timeout=3)
+        client.request("POST", "/api/chat", body=json.dumps({"model": "qwen3.5:9b-q8_0"}))
+        response = client.getresponse()
+        assert response.status == 503 and not seen
+        assert "Retired model" in json.loads(response.read())["error"]
+        client.close()
+        client = http.client.HTTPConnection("127.0.0.1", proxy.server_port, timeout=3)
         client.request(
             "POST",
             "/api/chat",

@@ -530,6 +530,8 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
                 }
             )
     events = recent_events(root)
+    from rlm.v100.model_policy import deployment
+
     return {
         "observed_at": now,
         "actors": actors,
@@ -537,4 +539,5 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         "events": action_events(events),
         "agents": agent_views(events, jobs),
         "chat": chat,
+        "model_deployment": deployment(root),
     }

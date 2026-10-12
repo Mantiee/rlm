@@ -48,8 +48,8 @@ if (Test-Path -LiteralPath $tailscale) {
     Write-Warning $_.Exception.Message
 }
 $network | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root 'logs\tailnet-helper.json')
-# Download only public local model tags. The preserved 9B baseline is never pulled/rebound.
-$models = @('qwen3.5:2b-q4_K_M','qwen3.5:4b-q4_K_M','qwen3.6:35b-a3b-q4_K_M')
+# Prepare explicit current local candidates. Downloading never certifies role quality.
+$models = @('gemma4:e2b-it-q4_K_M','gemma4:e4b-it-q4_K_M','qwen3.8:27b-q4_K_M','gemma4:26b-a4b-it-q4_K_M')
 $failures = @()
 $available = @()
 try {

@@ -5,8 +5,8 @@ if ($Revision -notmatch '^[0-9a-f]{40}$') { throw 'Use an exact published revisi
 $root = Join-Path $env:USERPROFILE 'ai-v100-helper'
 $python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Existing Synta isolated Python runtime required.' }
-$manifestPath = Join-Path $root 'models\manifests\registry.ollama.ai\library\qwen3.5\9b-q8_0'
-if (-not (Test-Path -LiteralPath $manifestPath)) { throw 'Existing Synta qwen3.5:9b-q8_0 manifest required; no model is downloaded.' }
+$manifestPath = Join-Path $root 'models\manifests\registry.ollama.ai\library\gemma4\e2b-it-q4_K_M'
+if (-not (Test-Path -LiteralPath $manifestPath)) { throw 'Existing Synta gemma4:e2b-it-q4_K_M manifest required; no model is downloaded.' }
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 $layers = @($manifest.layers | Where-Object { $_.mediaType -eq 'application/vnd.ollama.image.model' })
 if ($layers.Count -ne 1 -or $layers[0].digest -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Ambiguous or invalid GGUF model manifest.' }

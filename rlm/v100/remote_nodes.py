@@ -15,6 +15,7 @@ from pathlib import Path
 import requests
 
 from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.model_policy import NODE_MODELS, retired
 from rlm.v100.model_roles import evaluate, json_hash
 from rlm.v100.remote_helper import BACKEND, ROLE_MODELS, STABLE_METADATA, metadata_sha
 
@@ -63,6 +64,8 @@ def selected_node(root: Path) -> Path | None:
     value = json.loads(path.read_text())
     if json_hash(value) != status["profile_sha256"] or value["runtime"]["base_url"] != ENDPOINT:
         raise ValueError("Owned node profile identity changed")
+    if retired(value["runtime"]["model_name"]):
+        return None
     return path
 
 
@@ -79,7 +82,7 @@ def qualify(root: Path, resources: dict) -> dict:
     winners = []
     folder = root / "research/owned-node"
     folder.mkdir(parents=True, exist_ok=True)
-    for model in ("qwen3.5:4b-q4_K_M", "qwen3.5:2b-q4_K_M"):
+    for model in NODE_MODELS:
         matching = [
             r
             for r in rows
