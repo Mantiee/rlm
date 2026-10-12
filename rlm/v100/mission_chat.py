@@ -794,6 +794,19 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     if path is None:
         raise BackendNotReady("Waiting for owned inference server")
     profile = copy.deepcopy(load_profile(path, root))
+    from rlm.v100.model_roles import selected_profile
+
+    planner = selected_profile(root, "planner")
+    if planner is not None and preferences(root).get("remote_helper_enabled", True):
+        try:
+            chosen = load_profile(planner, root)
+            probe = helper_client(chosen, root)
+            probe.timeout = min(probe.timeout, 5)
+            probe.identity()
+            profile = copy.deepcopy(chosen)
+        except requests.RequestException:
+            # No generation/tool execution has started; retain accepted local master.
+            pass
     profile["runtime"].update(enable_thinking=False, max_output_tokens=2048, max_timeout=120)
     client = helper_client(profile, root)
     client.activity_actor = "chat"
@@ -806,9 +819,15 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     cpu_master = False
     cpu_detail = None
     try:
-        actual = client.request("/props")
-        if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
-            raise BackendNotReady("Waiting for the accepted serving model")
+        from rlm.v100.remote_helper import remote_profile
+
+        if remote_profile(profile):
+            client.identity()
+            delegated = True
+        else:
+            actual = client.request("/props")
+            if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
+                raise BackendNotReady("Waiting for the accepted serving model")
     except (requests.RequestException, OSError) as serving_error:
         if not preferences(root).get("remote_helper_enabled", True):
             raise BackendNotReady(str(serving_error)) from serving_error
@@ -833,7 +852,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             from rlm.v100.remote_helper import remote_profile, selected_helper
 
             try:
-                helper = load_profile(selected_helper(root), root)
+                helper = load_profile(selected_helper(root, "planner"), root)
                 if not remote_profile(helper):
                     raise RuntimeError("No independent remote chat helper configured")
                 client = helper_client(helper, root)
@@ -980,6 +999,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             "paper_observed_results",
             "morph_model",
             "propose_ngram_memory",
+            "managed_upgrade_status",
+            "request_model_preparation",
             "test_submodel",
             "income_opportunities",
             "register_income_opportunity",

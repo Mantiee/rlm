@@ -287,7 +287,6 @@ def test_large_remote_context_still_requires_loaded_context_and_vram_budget(
     "url",
     [
         "http://8.8.8.8:11435",
-        "http://100.78.125.51:11435",
         "http://localhost:11435",
         "http://192.168.0.61",
         "https://192.168.0.61:11435",
@@ -893,3 +892,7 @@ def test_guarded_windows_profile_refuses_inference_without_live_guard(monkeypatc
             },
         )
     assert calls == ["/api/synta-resources"]
+
+
+def test_explicit_tailnet_origin_is_supported():
+    assert remote_helper.private_origin("http://100.78.125.51:11437") == "http://100.78.125.51:11437"

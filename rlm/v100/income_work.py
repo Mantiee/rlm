@@ -34,8 +34,20 @@ class MasterNotReady(RuntimeError):
 def accepted_master(root: Path, branch: str):
     """Reuse a protected serving master, never launch a model or use a candidate."""
     from rlm.v100.competition import helper_client
+    from rlm.v100.mission_chat import preferences
+    from rlm.v100.model_roles import selected_profile
     from rlm.v100.serving import assert_served_expert
 
+    planner = selected_profile(root, "planner")
+    if planner is not None and preferences(root).get("remote_helper_enabled", True):
+        try:
+            client = helper_client(load_profile(planner, root), root, branch)
+            client.timeout = min(client.timeout, 10)
+            client.identity()
+            client.activity_actor = "income-research-planner"
+            return client
+        except requests.RequestException:
+            pass
     active = json.loads((root / "research/mission/active.json").read_text())
     run = Path(active["run"]).resolve()
     if not run.is_relative_to((root / "research/mission").resolve()):

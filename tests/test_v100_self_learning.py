@@ -394,7 +394,7 @@ def test_continuous_loop_admits_new_examples_trains_and_retains_prior_versions(
         book = PaperBook(tmp_path)
         assert book.state()["branches"] == original_paper["branches"]
         statuses = [event["payload"].get("status") for event in book.events()]
-        assert "training-started" in statuses
+        assert "candidate-planning-and-training-started" in statuses
         assert "selected for next serving phase after finite quality gates" in statuses
         assert "observation-during-training" in statuses
         book.close()

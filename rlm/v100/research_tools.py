@@ -7,6 +7,7 @@ import json
 import re
 import socket
 import ssl
+import subprocess
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -456,6 +457,16 @@ TOOLS = [
         {"candidate_id": {"type": "string"}},
     ),
     tool_schema(
+        "managed_upgrade_status",
+        "Read automatic update, model preparation, memory pilot and admitted role receipts. Downloaded is not activated; model timing is not income.",
+        {},
+    ),
+    tool_schema(
+        "request_model_preparation",
+        "Start the installed owned-host updater service. It verifies release hashes and defers package changes during training. Returns a queued receipt, not completed execution.",
+        {},
+    ),
+    tool_schema(
         "propose_ngram_memory",
         "Create a small causal Engram-inspired memory candidate with identity-initialized output. Byte-token pilot only; no pretrained GGUF retrofit, NVMe capacity claim or Windows RTX startup. Use test_submodel, compare memory_enabled=False, then goal/retention gates before promotion.",
         {
@@ -694,6 +705,29 @@ class ResearchTools:
                 "total_bytes": len(raw),
                 "content": page,
                 "scope": "One verified archive excerpt; inspect remaining pages before inferring absent facts.",
+            }
+        if name == "managed_upgrade_status" and not arguments:
+            paths = (
+                "research/managed-update/status.json",
+                "research/managed-update/preparation.json",
+                "research/model-roles/active.json",
+            )
+            return {
+                path: json.loads((self.root / path).read_text())
+                if (self.root / path).exists()
+                else {"state": "not started"}
+                for path in paths
+            }
+        if name == "request_model_preparation" and not arguments:
+            subprocess.run(
+                ["systemctl", "--user", "start", "--no-block", "synta-managed-update.service"],
+                check=True,
+                timeout=10,
+            )
+            return {
+                "state": "queued",
+                "service": "synta-managed-update.service",
+                "scope": "Owned update request only; inspect managed_upgrade_status for results",
             }
         if name == "mission_evidence" and not arguments:
             from rlm.v100.mission_evidence import collect
@@ -1236,6 +1270,9 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
                 " Generated internal plans, hypotheses and tool arguments must be English. Preserve literal operator/source quotations. Negative backtest returns are historical losses, not Brier or benchmark scores. Forecasts are not executed paper fills. Zero fills do not validate a profitable strategy."
             )
     client = apply(client, root)
+    from rlm.v100.knowledge_rag import attach
+
+    messages = attach(root, messages)
     owner = getattr(client, "research_owner", "A")
     journal = ActivityLog(root, owner, getattr(client, "activity_actor", "tester"))
     tools = ResearchTools(

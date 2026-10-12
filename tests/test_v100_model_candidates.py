@@ -77,3 +77,44 @@ def test_long_context_requires_measured_prefill(tmp_path, monkeypatch):
     record = benchmark.long_context_probe(8097, 524288, tmp_path / "evidence.json")
     assert record["input_tokens_sent"] >= 500000
     assert record["passed"] is False
+
+
+@pytest.mark.parametrize("honors_range", [True, False])
+def test_resume_uses_pinned_prefix_and_rejects_ignored_range(tmp_path, monkeypatch, honors_range):
+    import io
+    from types import SimpleNamespace
+
+    payload = b"verified-model-bytes"
+    record = dict(
+        role="fast",
+        revision="a" * 40,
+        filename="model.gguf",
+        repo="owner/model",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        bytes=len(payload),
+    )
+    folder = tmp_path / "models/candidates/fast" / record["revision"]
+    folder.mkdir(parents=True)
+    partial = folder / "model.partial"
+    partial.write_bytes(payload[:7])
+    monkeypatch.setattr(
+        candidates.shutil, "disk_usage", lambda path: SimpleNamespace(free=100 * 2**30)
+    )
+
+    class Reply(io.BytesIO):
+        status = 206 if honors_range else 200
+        headers = {"Content-Range": f"bytes 7-{len(payload) - 1}/{len(payload)}"}
+
+    def urlopen(request, **kw):
+        assert request.get_header("Range") == "bytes=7-"
+        assert "a" * 40 in request.full_url
+        return Reply(payload[7:])
+
+    monkeypatch.setattr(candidates.urllib.request, "urlopen", urlopen)
+    if honors_range:
+        assert candidates.download(tmp_path, record).read_bytes() == payload
+        assert not partial.exists()
+    else:
+        with pytest.raises(ValueError, match="partial retained"):
+            candidates.download(tmp_path, record)
+        assert partial.read_bytes() == payload[:7]

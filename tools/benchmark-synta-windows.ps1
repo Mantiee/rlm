@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Revision)
+param([Parameter(Mandatory=$true)][string]$Revision,[string]$Bundle="")
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 if ($Revision -notmatch '^[0-9a-f]{40}$') { throw 'Use an exact published revision.' }
@@ -40,7 +40,11 @@ $oldPath = $env:PATH
 $folder = Join-Path $root ('performance\' + (Get-Date -Format 'yyyyMMdd-HHmmss-ffff'))
 New-Item -ItemType Directory -Path $folder | Out-Null
 $script = Join-Path $folder 'inference_benchmark.py'
-Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/Mantiee/rlm/$Revision/rlm/v100/inference_benchmark.py" -OutFile $script
+if ($Bundle) {
+    Copy-Item -LiteralPath (Join-Path $Bundle 'rlm\v100\inference_benchmark.py') -Destination $script
+} else {
+    Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/Mantiee/rlm/$Revision/rlm/v100/inference_benchmark.py" -OutFile $script
+}
 $profile = @{server=@{binary=$binary[0].FullName;model=$model;model_sha256=$modelHash;context_per_slot=32768;slots=1;threads=4;batch_size=128;ubatch_size=64;flash_attention='on';cache_type='q8_0';jinja=$true;gpu_layers=999;draft_model='';spec_type='none'}}
 $profilePath = Join-Path $folder 'profile.json'
 $profile | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $profilePath -Encoding UTF8

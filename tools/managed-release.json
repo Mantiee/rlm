@@ -1,0 +1,17 @@
+{
+  "schema": "synta-managed-release-v1",
+  "version": 83,
+  "linux_installer": "tools/update-synta-v83.sh",
+  "windows_prepare": "tools/prepare-managed-windows.ps1",
+  "files": {
+    "tools/update-synta-v83.sh": "baf79d433557322d326197bc8eac5e048d8e002da96db8989c10131de29e2c6e",
+    "tools/prepare-managed-windows.ps1": "2748170c19cfa11a9229e1d5d42930d6b813e81ad5653da5b558e40ebdfc1c14",
+    "tools/benchmark-synta-windows.ps1": "5eda3a4fcb4ed600965a209609994df92a99001d596cb7ebd0c80c0b1ab48231",
+    "tools/serve-v100-dashboard.py": "8a479e7d196adcda6600f7b331dd5d0d5b8f2e1c5f961f731ab64cc3a5649fca",
+    "tools/qualify-synta-models-debian.sh": "6ad0254352f4f888e255721b7900b26239da71a741e418018f88b77e25f0d0dd",
+    "rlm/v100/managed_bootstrap.py": "159544cb51a384adfcd821a844bf33fc84c6218e76048645a31586a0ccf36812",
+    "rlm/v100/inference_benchmark.py": "5b88c362446974bc287371e4ede606ef21e5b07dc088ec6f5e38d2c9f293661f",
+    "rlm/v100/wikimedia_exports.py": "f3788e5ab9e2e6d9551b005d1a356052c26d565dc0c9a290d5f9762e521f2ab5",
+    "rlm/v100/knowledge_rag.py": "9f4da63094f504d2c33541ec41bdca7c506f2a00edb4f359e6d64c131816c437"
+  }
+}

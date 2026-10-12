@@ -418,6 +418,51 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
             if remaining and not rtx["stale"]:
                 rtx["state"] = "cooldown"
     actors.append(rtx)
+    for identity, label, relative in (
+        ("knowledge", "Wikipedia / RAG", "research/knowledge/import-status.json"),
+        ("managed-update", "Automatic GitHub updates", "research/managed-update/status.json"),
+        ("model-roles", "Qualified model roles", "research/model-roles/active.json"),
+        (
+            "native-qualification",
+            "Native optimization / context",
+            "research/managed-update/native-qualification.json",
+        ),
+        (
+            "model-preparation",
+            "Model downloads / memory pilot",
+            "research/managed-update/preparation.json",
+        ),
+    ):
+        receipt = root / relative
+        try:
+            value = (
+                json.loads(receipt.read_text()) if receipt.exists() else {"stage": "not started"}
+            )
+            state = value.get(
+                "stage",
+                value.get("state", "qualified" if value.get("roles") else "no admitted roles"),
+            )
+            actors.append(
+                {
+                    "id": identity,
+                    "label": label,
+                    "state": "unavailable" if state in ("failed", "resume-failed") else state,
+                    "detail": json.dumps(value, ensure_ascii=False)[:1800],
+                    "jobs": [],
+                    "stale": state in ("failed", "resume-failed"),
+                }
+            )
+        except (OSError, ValueError) as error:
+            actors.append(
+                {
+                    "id": identity,
+                    "label": label,
+                    "state": "unavailable",
+                    "detail": str(error)[:300],
+                    "jobs": [],
+                    "stale": True,
+                }
+            )
     events = recent_events(root)
     return {
         "observed_at": now,

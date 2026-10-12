@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import time
 import urllib.request
 from pathlib import Path
 
@@ -61,13 +62,47 @@ def download(root: Path, record: dict) -> Path:
     url = (
         f"https://huggingface.co/{record['repo']}/resolve/{record['revision']}/{record['filename']}"
     )
-    with urllib.request.urlopen(url, timeout=60) as reply, temporary.open("wb") as output:
-        while block := reply.read(4 * 1024**2):
-            received += len(block)
-            if received > record["bytes"]:
-                raise ValueError("Candidate exceeds declared artifact size")
-            digest.update(block)
-            output.write(block)
+    if temporary.exists():
+        received = temporary.stat().st_size
+        if received > record["bytes"]:
+            raise ValueError("Partial candidate exceeds the pinned artifact size")
+        with temporary.open("rb") as stream:
+            while block := stream.read(4 * 1024**2):
+                digest.update(block)
+    if received < record["bytes"]:
+        headers = {"User-Agent": "SyntaModelAcquirer/1.0 (+https://github.com/Mantiee/rlm)"}
+        if received:
+            headers["Range"] = f"bytes={received}-"
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=60) as reply:
+            if received:
+                content_range = reply.headers.get("Content-Range", "")
+                expected_range = rf"bytes {received}-[0-9]+/{record['bytes']}"
+                if reply.status != 206 or not re.fullmatch(expected_range, content_range):
+                    raise ValueError(
+                        "Model server did not honor exact pinned resume range; partial retained"
+                    )
+            last_update = time.monotonic()
+            with temporary.open("ab" if received else "wb") as output:
+                while block := reply.read(4 * 1024**2):
+                    received += len(block)
+                    if received > record["bytes"]:
+                        raise ValueError("Candidate exceeds declared artifact size")
+                    digest.update(block)
+                    output.write(block)
+                    if time.monotonic() - last_update >= 10:
+                        print(
+                            json.dumps(
+                                {
+                                    "stage": "model-download-progress",
+                                    "role": record["role"],
+                                    "bytes": received,
+                                    "total_bytes": record["bytes"],
+                                }
+                            ),
+                            flush=True,
+                        )
+                        last_update = time.monotonic()
     if received != record["bytes"] or digest.hexdigest() != record["sha256"]:
         raise ValueError("Downloaded candidate checksum/size mismatch; not activated")
     os.replace(temporary, path)

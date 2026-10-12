@@ -174,7 +174,9 @@ def execute(root: Path, job: dict) -> dict:
     if preferences(root).get("remote_helper_enabled", True) is False:
         client = accepted_master(root, job["branch"])
     else:
-        profile = load_profile(selected_helper(root), root)
+        profile = load_profile(
+            selected_helper(root, "planner" if job["kind"] == "critic" else "fast"), root
+        )
         if not remote_profile(profile):
             raise ValueError(
                 "Resident research requires an explicitly selected remote or accepted master"

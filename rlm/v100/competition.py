@@ -113,7 +113,7 @@ def managed_server(
         assert isinstance(client, OllamaResearchClient)
         client.timeout = min(15, client.timeout)
         client.identity()
-        measured = client.loaded()
+        measured = {"state": "load-on-first-request"} if client.on_demand else client.loaded()
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a") as log:
             log.write(
@@ -411,6 +411,8 @@ def helper_client(
             "max_vram_gib": profile["resources"]["max_vram_gib"],
             "helper_batch_tokens": profile["resources"].get("helper_batch_tokens", 64),
             "helper_duty_percent": profile["resources"].get("helper_duty_percent", 65),
+            "on_demand": profile["resources"].get("on_demand", False),
+            "allow_cpu_offload": profile["resources"].get("allow_cpu_offload", False),
             "require_adaptive_windows_guard": profile["resources"].get(
                 "require_adaptive_windows_guard", False
             ),

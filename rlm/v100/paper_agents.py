@@ -396,6 +396,9 @@ def paper_round(
 
 
 def financial_helper_profile(path: Path, root: Path) -> Path:
+    from rlm.v100.model_roles import selected_profile
+
+    path = selected_profile(root, "fast") or path
     researcher = load_profile(path, root)
     from rlm.v100.remote_helper import remote_profile
 

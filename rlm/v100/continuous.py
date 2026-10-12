@@ -446,7 +446,7 @@ def learn_loop(
             trial = output / f"update-{cycle:04d}"
             stage("candidate-training-and-independent-tests")
             if paper is not None:
-                paper.phase("training-started", cycle, current)
+                paper.phase("candidate-planning-and-training-started", cycle, current)
             try:
                 result = evolve(
                     current,

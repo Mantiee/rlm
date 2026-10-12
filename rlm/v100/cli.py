@@ -83,6 +83,10 @@ def server_command(profile: dict) -> list[str]:
         if type(tokens) is not int or not 1 <= tokens <= 16:
             raise ValueError("N-gram draft_tokens must be between 1 and 16")
         command += ["--spec-type", s["spec_type"], "--spec-draft-n-max", str(tokens)]
+    if s.get("cpu_moe"):
+        if s["cpu_moe"] is not True:
+            raise ValueError("CPU expert offload must be an explicit boolean")
+        command.append("--cpu-moe")
     return command
 
 

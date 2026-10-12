@@ -24,6 +24,12 @@ from rlm.clients.llamacpp import LlamaCppClient
 from rlm.v100.common import atomic_json
 
 MODEL = "qwen3.5:9b-q8_0"
+ROLE_MODELS = {
+    MODEL: ("Q8_0", 12),
+    "qwen3.5:2b-q4_K_M": ("Q4_K_M", 6),
+    "qwen3.5:4b-q4_K_M": ("Q4_K_M", 8),
+    "qwen3.5:35b-a3b-q4_K_M": ("Q4_K_M", 21),
+}
 BACKEND = "ollama-research"
 HELPER_WORKLOAD_LOCK = threading.Lock()
 HELPER_PACING: dict[str, dict] = {}
@@ -55,7 +61,7 @@ def private_origin(value: str) -> str:
         or address.version != 4
         or not any(
             address in ipaddress.ip_network(net)
-            for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+            for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10")
         )
         or parsed.port is None
         or not 1 <= parsed.port <= 65535
@@ -82,7 +88,7 @@ def validate_remote(profile: dict) -> None:
     if (
         runtime.get("backend") != BACKEND
         or runtime.get("tool_protocol") != "json"
-        or runtime["model_name"] != MODEL
+        or runtime["model_name"] not in ROLE_MODELS
         or type(runtime.get("enable_thinking")) is not bool
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("model_digest", ""))
         or not re.fullmatch(r"[0-9a-f]{64}", resources.get("metadata_sha256", ""))
@@ -94,7 +100,7 @@ def validate_remote(profile: dict) -> None:
         or server.get("model")
         or server.get("binary")
         or server.get("draft_model")
-        or resources.get("max_vram_gib") != 12
+        or resources.get("max_vram_gib") != ROLE_MODELS.get(runtime["model_name"], (None, None))[1]
     ):
         raise ValueError("Remote helper must be a pinned text-only local Qwen researcher profile")
 
@@ -148,17 +154,29 @@ class OllamaResearchClient(LlamaCppClient):
         helper_batch_tokens: int = 64,
         helper_duty_percent: int = 65,
         require_adaptive_windows_guard: bool = False,
+        on_demand: bool = False,
+        allow_cpu_offload: bool = False,
         **kwargs: Any,
     ):
         origin = private_origin(base_url)
         validate_workload(helper_batch_tokens, helper_duty_percent)
         if metadata_hash_scheme not in (FULL_METADATA, STABLE_METADATA, ORDERED_METADATA):
             raise ValueError("Unknown remote metadata hash scheme")
-        if kwargs.get("model_name", MODEL) != MODEL or not re.fullmatch(
+        if kwargs.get("model_name", MODEL) not in ROLE_MODELS or not re.fullmatch(
             r"[0-9a-f]{64}", model_digest
         ):
             raise ValueError("Only the explicitly pinned local Qwen model is permitted")
-        kwargs["model_name"] = MODEL
+        kwargs.setdefault("model_name", MODEL)
+        if (
+            type(max_vram_gib) is not int
+            or not 1 <= max_vram_gib <= ROLE_MODELS[kwargs["model_name"]][1]
+        ):
+            raise ValueError("Role VRAM allowance exceeds its explicit model budget")
+        if type(on_demand) is not bool or type(allow_cpu_offload) is not bool:
+            raise ValueError("Role loading/offload options must be explicit booleans")
+        if allow_cpu_offload and kwargs["model_name"] != "qwen3.5:35b-a3b-q4_K_M":
+            raise ValueError("CPU expert offload is admitted only for the explicit MoE role")
+        self.on_demand, self.allow_cpu_offload = on_demand, allow_cpu_offload
         if type(kwargs.get("enable_thinking", False)) is not bool:
             raise ValueError("Remote thinking must be an explicit boolean")
         kwargs.setdefault("enable_thinking", False)
@@ -331,7 +349,7 @@ class OllamaResearchClient(LlamaCppClient):
         info = self.remote_request("/api/show", {"model": self.model_name})
         if (
             info.get("details", {}).get("family") != "qwen35"
-            or info.get("details", {}).get("quantization_level") != "Q8_0"
+            or info.get("details", {}).get("quantization_level") != ROLE_MODELS[self.model_name][0]
             or info.get("model_info", {}).get("tokenizer.ggml.model") != "gpt2"
             or info.get("system")
             or info.get("remote_host")
@@ -355,7 +373,7 @@ class OllamaResearchClient(LlamaCppClient):
         if (
             item.get("context_length") != self.context_window
             or not 0 < item.get("size_vram", 0) <= self.max_vram_gib * 2**30
-            or item.get("size_vram", 0) < item.get("size", 1)
+            or (not self.allow_cpu_offload and item.get("size_vram", 0) < item.get("size", 1))
         ):
             raise ValueError("Remote helper context, GPU residency or measured VRAM differs")
         return item
@@ -434,7 +452,8 @@ class OllamaResearchClient(LlamaCppClient):
                         "Windows adaptive guard unavailable: " + str(guard.get("reason", "unknown"))
                     )
             self.identity()
-            self.loaded()
+            if not self.on_demand:
+                self.loaded()
             started = time.monotonic()
             try:
                 response = self.remote_request("/api/chat", payload)
@@ -595,7 +614,12 @@ def migrate_remote_metadata(root: Path) -> dict:
         return record
 
 
-def selected_helper(root: Path) -> Path:
+def selected_helper(root: Path, role: str = "fast") -> Path:
+    from rlm.v100.model_roles import selected_profile
+
+    selected = selected_profile(root, role)
+    if selected is not None:
+        return selected
     remote = root / "research/researcher-rtx3090.json"
     path = remote if remote.exists() else root / "research/researcher-cpu.toml"
     if not path.exists():

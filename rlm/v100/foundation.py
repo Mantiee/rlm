@@ -14,11 +14,18 @@ from rlm.v100.protection import file_hash
 
 
 def model_class(directory: Path):
+    import transformers
     from transformers import AutoModelForCausalLM, Gemma4UnifiedForConditionalGeneration
 
     configuration = json.loads((directory / "config.json").read_text())
     if configuration.get("auto_map") or configuration.get("text_config", {}).get("auto_map"):
         raise ValueError("Custom remote model code is not imported into the host trainer")
+    architectures = configuration.get("architectures", [])
+    if "Qwen3_5ForConditionalGeneration" in architectures:
+        implementation = getattr(transformers, "Qwen3_5ForConditionalGeneration", None)
+        if implementation is None:
+            raise ValueError("Installed Transformers lacks the library Qwen3.5 implementation")
+        return implementation
     return (
         Gemma4UnifiedForConditionalGeneration
         if "Gemma4UnifiedForConditionalGeneration" in configuration.get("architectures", [])
@@ -116,6 +123,15 @@ def pending(root: Path) -> list[Path]:
 
 
 def trial(
+    root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], proposal_path: Path
+) -> dict:
+    from rlm.v100.architectures import resource_lease
+
+    with resource_lease(root, "cuda"):
+        return trial_exclusive(root, parent, pool, suite, gates, proposal_path)
+
+
+def trial_exclusive(
     root: Path, parent: dict, pool: Path, suite: Path, gates: list[dict], proposal_path: Path
 ) -> dict:
     from rlm.v100.competition import helper_client, managed_server, require_idle_gpu
