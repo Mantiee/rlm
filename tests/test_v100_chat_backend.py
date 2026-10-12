@@ -44,7 +44,8 @@ def admitted(root, monkeypatch):
     return accepted, client, events
 
 
-def test_cpu_clone_preserves_weights_and_original_profile(tmp_path):
+def test_cpu_clone_preserves_weights_and_original_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(chat_backend.os, "cpu_count", lambda: 12)
     accepted = profile(tmp_path)
     original = copy.deepcopy(accepted)
     clone = chat_backend.cpu_profile(accepted)
@@ -52,7 +53,7 @@ def test_cpu_clone_preserves_weights_and_original_profile(tmp_path):
     assert clone["server"]["model"] == accepted["server"]["model"]
     assert clone["server"]["gpu_layers"] == 0 and clone["server"]["draft_model"] == ""
     assert clone["runtime"]["context_window"] == 8192
-    assert clone["server"]["threads"] == 2
+    assert clone["server"]["threads"] == 8
     assert clone["resources"]["device"] == "cpu"
     competition.validate_concurrent_researcher(clone)
     accepted["runtime"]["backend"] = "isolated-architecture"

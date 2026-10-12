@@ -1,6 +1,7 @@
 """An admitted CPU copy of accepted native weights, never a training candidate."""
 
 import copy
+import os
 import threading
 import time
 from contextlib import ExitStack
@@ -20,7 +21,7 @@ def cpu_profile(accepted: dict) -> dict:
     profile["server"].update(
         gpu_layers=0,
         slots=1,
-        threads=2,
+        threads=max(2, min(8, (os.cpu_count() or 4) - 2)),
         context_per_slot=8192,
         batch_size=64,
         ubatch_size=32,
@@ -40,6 +41,7 @@ def cpu_profile(accepted: dict) -> dict:
     profile.setdefault("resources", {}).pop("mtp_validation", None)
     profile["resources"].update(
         device="cpu",
+        accepted_cpu_chat=True,
         min_available_ram_gib=16,
         cpu_guard=True,
         min_free_ram_gib=4,

@@ -8,12 +8,14 @@ $expected = $manifest.files.'rlm/v100/windows_resource_proxy.py'
 $origin = 'http://192.168.0.61:11435'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $guard = $null
+$age = 1e99
 try { $guard = Invoke-RestMethod "$origin/api/synta-resources" -TimeoutSec 5 } catch { Write-Warning $_.Exception.Message }
-if ($guard -and $guard.proxy_code_sha256 -eq $expected -and $guard.throughput_enabled -and ($now - $guard.updated) -ge 0 -and ($now - $guard.updated) -lt 10) {
+$age = if ($guard -and $null -ne $guard.heartbeat_age_seconds) { [double]$guard.heartbeat_age_seconds } elseif ($guard) { $now - $guard.updated } else { 1e99 }
+if ($guard -and $guard.proxy_code_sha256 -eq $expected -and $guard.throughput_enabled -and $age -ge 0 -and $age -lt 10) {
     @{stage='verified';revision=$Revision;updated=$now;resources=$guard} | ConvertTo-Json -Depth 7 | Set-Content -Encoding UTF8 $receipt
     return
 }
-if ($guard -and ($now - $guard.updated) -ge 0 -and ($now - $guard.updated) -lt 10 -and $guard.generating) {
+if ($guard -and $age -ge 0 -and $age -lt 10 -and $guard.generating) {
     @{stage='deferred-active-inference';revision=$Revision;updated=$now} | ConvertTo-Json | Set-Content -Encoding UTF8 $receipt
     return
 }
@@ -58,7 +60,8 @@ do {
     try {
         $guard = Invoke-RestMethod "$origin/api/synta-resources" -TimeoutSec 5
         $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        if ($guard.proxy_code_sha256 -eq $expected -and $guard.throughput_enabled -and ($now - $guard.updated) -ge 0 -and ($now - $guard.updated) -lt 10) {
+        $age = if ($null -ne $guard.heartbeat_age_seconds) { [double]$guard.heartbeat_age_seconds } else { $now - $guard.updated }
+        if ($guard.proxy_code_sha256 -eq $expected -and $guard.throughput_enabled -and $age -ge 0 -and $age -lt 10) {
             @{stage='verified';revision=$Revision;updated=$now;resources=$guard} | ConvertTo-Json -Depth 7 | Set-Content -Encoding UTF8 $receipt
             Write-Host 'Owned Windows proxy refreshed; fresh heartbeat verified. CPU worker and other applications retained.'
             return

@@ -45,8 +45,8 @@ def local_budget(root: Path | None = None) -> dict:
     if path is not None and path.exists():
         policy = json.loads(path.read_text())
         maximum = policy["max_cpu_slots"]
-        if type(maximum) is not int or not 1 <= maximum <= 4:
-            raise ValueError("Local CPU policy must allow 1-4 slots")
+        if type(maximum) is not int or not 1 <= maximum <= 16:
+            raise ValueError("Local CPU policy must allow 1-16 slots")
         reserve_ram, ram_per_slot = (
             policy.get("reserve_ram_gib", 0),
             policy.get("ram_per_slot_gib", 2),

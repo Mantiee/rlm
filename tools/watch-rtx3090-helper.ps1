@@ -16,7 +16,7 @@ while ($true) {
     } catch { Write-Host 'Helper unavailable or paused by game guard.' }
     try {
         $guard = Invoke-RestMethod -Uri ($Endpoint.TrimEnd('/') + '/api/synta-resources') -TimeoutSec 3
-        $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $guard.updated
+        $age = if ($null -ne $guard.heartbeat_age_seconds) { [double]$guard.heartbeat_age_seconds } else { [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $guard.updated }
         if ($age -lt 0 -or $age -gt 10 -or $guard.stale) {
             Write-Host 'RESOURCE MONITOR STALE: admission disabled; inspect managed-helper.json.' -ForegroundColor Red
         } else {

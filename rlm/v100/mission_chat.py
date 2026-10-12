@@ -26,6 +26,14 @@ class BackendNotReady(requests.ConnectionError):
     """Owned accepted serving endpoint is not ready before generation."""
 
 
+def backend_preflight(client) -> None:
+    probe = getattr(client, "preflight", None)
+    if callable(probe):
+        probe()
+    else:
+        client.identity()
+
+
 @contextmanager
 def connect(root: Path):
     path = root / "research/state/user-chat.sqlite3"
@@ -802,7 +810,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             chosen = load_profile(planner, root)
             probe = helper_client(chosen, root)
             probe.timeout = min(probe.timeout, 5)
-            probe.identity()
+            backend_preflight(probe)
             profile = copy.deepcopy(chosen)
         except requests.RequestException:
             # No generation/tool execution has started; retain accepted local master.
@@ -822,7 +830,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         from rlm.v100.remote_helper import remote_profile
 
         if remote_profile(profile):
-            client.identity()
+            backend_preflight(client)
             delegated = True
         else:
             actual = client.request("/props")
@@ -832,12 +840,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         if not preferences(root).get("remote_helper_enabled", True):
             raise BackendNotReady(str(serving_error)) from serving_error
         if not profile.get("resources", {}).get("interactive_lab"):
-            raise
-        if (
-            accepted_cpu is not None
-            and not quick_question
-            and profile.get("resources", {}).get("accepted_cpu_chat")
-        ):
+            raise BackendNotReady(str(serving_error)) from serving_error
+        if accepted_cpu is not None and profile.get("resources", {}).get("accepted_cpu_chat"):
             try:
                 client = accepted_cpu.get(profile)
                 generation_timeout = min(client.timeout, 60)
@@ -850,21 +854,32 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 )
         if not cpu_master:
             from rlm.v100.remote_helper import remote_profile, selected_helper
+            from rlm.v100.remote_nodes import selected_node
 
-            try:
-                helper = load_profile(selected_helper(root, "planner"), root)
-                if not remote_profile(helper):
-                    raise RuntimeError("No independent remote chat helper configured")
-                client = helper_client(helper, root)
-                client.request_deadline = request.get("deadline", time.monotonic() + 180)
-                generation_timeout = min(client.timeout, 60)
-                client.timeout = min(generation_timeout, 20)
-                client.identity()
-            except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
+            candidates = [
+                selected_node(root),
+                selected_helper(root, "planner"),
+                selected_helper(root, "fast"),
+            ]
+            errors = []
+            for candidate in dict.fromkeys(p for p in candidates if p is not None):
+                try:
+                    helper = load_profile(candidate, root)
+                    if not remote_profile(helper):
+                        continue
+                    available = helper_client(helper, root)
+                    available.request_deadline = request.get("deadline", time.monotonic() + 180)
+                    generation_timeout = min(available.timeout, 60)
+                    available.timeout = min(generation_timeout, 10)
+                    backend_preflight(available)
+                    client = available
+                    break
+                except (OSError, requests.RequestException) as error:
+                    errors.append(str(error)[:240])
+            else:
                 raise BackendNotReady(
-                    "Accepted local backend unavailable; remote helper unavailable: "
-                    + str(error)[:240]
-                ) from error
+                    "Accepted local backend and qualified helpers unavailable: " + "; ".join(errors)
+                )
             client.sampling_args["max_tokens"] = 2048
             client.enable_thinking = False
             client.activity_actor = "chat-delegate"
@@ -1139,6 +1154,37 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     result["scope"] = (
         "Weights change only through independently tested training; CPU chat uses accepted weights, never a training candidate"
     )
+    return result
+
+
+def reopen_unavailable_questions(root: Path) -> dict:
+    from rlm.v100.chat_goals import normalized
+
+    reopened = []
+    with connect(root) as db:
+        rows = db.execute(
+            "SELECT * FROM requests WHERE state='failed' AND response IS NULL AND error LIKE '%adaptive guard unavailable%' ORDER BY rowid DESC LIMIT 32"
+        ).fetchall()
+        for row in rows:
+            text = normalized(row["message"])
+            if "?" not in text or not re.match(r"^(czy|mozesz|can|are|is|do you)\b", text):
+                continue
+            if re.search(
+                r"\b(zrob|wykonaj|kup|sprzedaj|wyslij|send|execute|register|delete|update|ustaw|zmien|trenuj)\b",
+                text,
+            ):
+                continue
+            atomic_json(root / "research/chat-recovery" / (row["id"] + ".json"), dict(row))
+            db.execute(
+                "UPDATE requests SET state='queued',attempts=0,wait_started=0,retry_after=0,error=NULL,updated=0 WHERE id=? AND state='failed'",
+                (row["id"],),
+            )
+            reopened.append(row["id"])
+    result = {
+        "reopened_questions": reopened,
+        "scope": "Only plain read-only questions; prior failure archived. Commands and tool execution are not replayed.",
+    }
+    atomic_json(root / "research/chat-recovery/status.json", result)
     return result
 
 

@@ -13,7 +13,7 @@ import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
-from contextlib import closing
+from contextlib import closing, nullcontext
 from pathlib import Path
 from urllib.parse import quote
 
@@ -55,8 +55,11 @@ def import_wiki(root: Path, path: Path, language: str, max_pages: int) -> dict:
     with path.open("rb") as stream:
         artifact = language + ":" + hashlib.file_digest(stream, "sha256").hexdigest()
     pages = chunks = reused = written = 0
-    opener = bz2.open if path.suffix == ".bz2" else open
-    with closing(connect(root)) as database, opener(path, "rb") as stream:
+    with (
+        closing(connect(root)) as database,
+        path.open("rb") as compressed,
+        bz2.BZ2File(compressed) if path.suffix == ".bz2" else nullcontext(compressed) as stream,
+    ):
         database.execute("INSERT INTO passages(passages, rank) VALUES('automerge', 8)")
         previous = database.execute(
             "SELECT pages,chunks,complete FROM wiki_checkpoints WHERE artifact=?", (artifact,)
@@ -66,6 +69,7 @@ def import_wiki(root: Path, path: Path, language: str, max_pages: int) -> dict:
         _, document = next(events)
         limited = False
         last_commit = time.monotonic()
+        work_started, work_bytes = None, 0
         for event, page in events:
             if event != "end" or page.tag.rsplit("}", 1)[-1] != "page":
                 continue
@@ -82,6 +86,8 @@ def import_wiki(root: Path, path: Path, language: str, max_pages: int) -> dict:
                 if pages <= resume_pages:
                     reused += 1
                 else:
+                    if work_started is None:
+                        work_started, work_bytes = time.monotonic(), compressed.tell()
                     title = fields["title"].text or ""
                     values = {child.tag.rsplit("}", 1)[-1]: child.text or "" for child in revision}
                     text, revision_id = values.get("text", ""), values.get("id", "")
@@ -139,7 +145,17 @@ def import_wiki(root: Path, path: Path, language: str, max_pages: int) -> dict:
                         )
                     database.commit()
                     now = time.monotonic()
+                    consumed, total = compressed.tell(), path.stat().st_size
+                    rate = (
+                        (consumed - work_bytes) / max(0.001, now - work_started)
+                        if work_started is not None
+                        else 0
+                    )
                     progress = {
+                        "compressed_bytes_read": consumed,
+                        "compressed_bytes_total": total,
+                        "part_progress_percent": round(min(100, consumed / max(1, total) * 100), 1),
+                        "part_eta_seconds": round((total - consumed) / rate) if rate > 0 else None,
                         "stage": "scanning-committed-prefix"
                         if pages < resume_pages
                         else "indexing-wikipedia",

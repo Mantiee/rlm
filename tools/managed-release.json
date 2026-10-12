@@ -1,7 +1,7 @@
 {
   "schema": "synta-managed-release-v1",
-  "version": 88,
-  "linux_installer": "tools/update-synta-v88.sh",
+  "version": 89,
+  "linux_installer": "tools/update-synta-v89.sh",
   "windows_prepare": "tools/prepare-managed-windows.ps1",
   "files": {
     "tools/prepare-managed-windows.ps1": "e43871fc9d5dcca81e7aadb8d1afbb8eac38cb5d00bae7febcd61931f88e9a63",
@@ -11,21 +11,23 @@
     "rlm/v100/managed_bootstrap.py": "45bc0d6929607b44f487d3d181def248bded90b89cd9ef20560b1b853c20abe4",
     "rlm/v100/inference_benchmark.py": "5b88c362446974bc287371e4ede606ef21e5b07dc088ec6f5e38d2c9f293661f",
     "rlm/v100/wikimedia_exports.py": "f3788e5ab9e2e6d9551b005d1a356052c26d565dc0c9a290d5f9762e521f2ab5",
-    "rlm/v100/knowledge_rag.py": "9dde4dcfb1c9e4c66783105c8b03fd3e3b701b7e4d512c2f91e73248a2db3ed7",
+    "rlm/v100/knowledge_rag.py": "5655fd939d3201b9abd58e84401ed94dcf33c3c3a1a23a27317e2aa309db18e0",
     "rlm/v100/source_sync.py": "e315e1bd6e62ff0ce6a0c235ed857d89ab4ea12bb979322e53ec1e23f2c5ee38",
     "tools/bootstrap-synta-3060.sh": "ad9ed452875b44f8c2bfae05c41d08f5f9508d13f5a7b3bdd4cfb0420ff9f80e",
     "tools/attach-synta-3060.sh": "b16079c4a9f66fee567740e41012877d0e90e9708bfa9b475da2fc5db5e51fbf",
-    "rlm/v100/owned_node.py": "cd9b6412e12fc3dbac9cefbc27bb9ab13e705132b37297b301ab7561e5012463",
+    "rlm/v100/owned_node.py": "ead4c815d2cfcd6490c5f45ba3069e67d436152a8862f26b0916a6d30dc6f3ea",
     "rlm/v100/owned_node_update.py": "9f7ee2c0c7659e481e2e431284e9f48af8219ee8c4fe3d58d7bd603973cbf2a4",
     "rlm/v100/compute_kernel.py": "cb8da6de7a85730cb91d25f8e54ec07031ac97444b9d69ebe70d68fffb46cb53",
     "rlm/v100/compute_worker.py": "67c71aa00b8612c1ccdaac6be29dd58f99b2ddc1b4a645a7a807f373a48bff7a",
-    "tools/update-synta-v88.sh": "8bceb614f965cb784bfffed8323ac5e0e0ebd423ca7424a519db2a348abe473d",
     "tools/install-synta-watchdog.sh": "61a73b76a327828f45472d15b975dd46bc32a824e960bce03e5846f4e664b0ac",
     "rlm/v100/mission_watchdog.py": "b37816bbb0989b338cb9ae978f3788c376297ef3577f6cadbc10a2b9a60dbe2f",
-    "tools/refresh-synta-windows.ps1": "8f0cee9ab126db0439408ed4a9dc25aa69df62c40cfa00512a32993d39a6c432",
+    "tools/refresh-synta-windows.ps1": "3fe5d50452aed23355f1913da7ed2b8ada38390099c276bcdb01d2267605d4f4",
     "tools/install-rtx3090-autostart.ps1": "4c9251e38f68bcf91b1e1d6cf976f9f3d953bcbe377ea4b2eedaf4eb66b9054b",
     "tools/start-rtx3090-helper.ps1": "f6797bddc2dfef068f2a1c0e760a6ae324192312ffa07c268bd813e64c4341b8",
-    "tools/watch-rtx3090-helper.ps1": "291acd3cd4ceebb74b47e23d4681f9bc40e9fcab5eaa8378dbecdd9ecb87f129"
+    "tools/watch-rtx3090-helper.ps1": "cb2dadd98b4f1a4a6d5ddc269b33d15799351adcda26ba59c8e7c9a4fe03b547",
+    "tools/update-synta-v89.sh": "7b0ae94ce1480d527ceadf79bac820f0e725ef1110b72ebeace9f87420389b36",
+    "tools/bootstrap-synta-windows.ps1": "0fa41a55ab749711a0d5a41c83aec698f7b4dba97d90902aaffa6839a5e78650",
+    "rlm/v100/autonomous_planning.py": "0b3781c2e275e5b078e6337c54cd2a65621c9c5a4ca4b28d886e94408c68b4fd"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

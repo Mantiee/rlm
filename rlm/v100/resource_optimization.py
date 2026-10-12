@@ -68,7 +68,7 @@ def apply(root: Path, message: str, original: str) -> dict:
     path = root / "research/state/resource-policy.json"
     previous = json.loads(path.read_text()) if path.exists() else {"max_cpu_slots": 2}
     policy = {
-        "max_cpu_slots": min(4, max(1, (available_cpus() - 1) // 2)),
+        "max_cpu_slots": min(16, max(1, (available_cpus() - 1) // 2)),
         "reserve_ram_gib": 4,
         "ram_per_slot_gib": 3,
         "updated": time.time(),

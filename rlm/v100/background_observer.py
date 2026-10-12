@@ -16,6 +16,14 @@ def tick(root: Path) -> None:
     from rlm.v100.spot_bootstrap import prepare
 
     commission(root)
+    from rlm.v100.autonomous_planning import tick as planning_tick
+
+    try:
+        planning_tick(root)
+    except (OSError, ValueError, RuntimeError) as error:
+        ActivityLog(root, "controller", "planning").write(
+            "errors", "planning-unavailable", {"detail": str(error)[:400]}
+        )
 
     try:
         goal_tick(root)

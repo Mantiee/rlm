@@ -158,6 +158,27 @@ def metadata_sha(info: dict, scheme: str = FULL_METADATA) -> str:
     return hashlib.sha256(json.dumps(chosen, sort_keys=True).encode()).hexdigest()
 
 
+def check_guard(guard: dict, dedicated: bool = False) -> dict:
+    expected = "synta-dedicated-linux-v1" if dedicated else "synta-adaptive-windows-v1"
+    label = "Dedicated Linux" if dedicated else "Windows"
+    age = guard.get("heartbeat_age_seconds")
+    if age is None:
+        stamp = guard.get("updated", 0)
+        age = time.time() - stamp if type(stamp) in (int, float) else None
+    problems = []
+    if guard.get("contract") != expected:
+        problems.append("unexpected or missing guard contract")
+    if type(age) not in (int, float) or not math.isfinite(age) or not 0 <= age <= 10:
+        problems.append("stale resource heartbeat: " + str(age) + " seconds")
+    if guard.get("ready") is not True:
+        problems.append(str(guard.get("reason", "resource admission not ready")))
+    if problems:
+        raise requests.ConnectionError(
+            label + " adaptive guard unavailable: " + "; ".join(problems)
+        )
+    return guard
+
+
 class OllamaResearchClient(LlamaCppClient):
     def __init__(
         self,
@@ -288,6 +309,11 @@ class OllamaResearchClient(LlamaCppClient):
                 "waited_seconds": max(0, time.monotonic() - started),
             }
             yield quota
+
+    def preflight(self) -> None:
+        if self.require_adaptive_windows_guard:
+            check_guard(self.remote_request("/api/synta-resources"), self.dedicated_host)
+        self.identity()
 
     def reserve_helper_idle(self, quota: dict, request_seconds: float) -> None:
         duty = quota.get("adaptive_duty_percent", self.helper_duty_percent)
@@ -472,21 +498,7 @@ class OllamaResearchClient(LlamaCppClient):
         with self.request_lock, self.workload_slot() as quota:
             if self.require_adaptive_windows_guard:
                 guard = self.remote_request("/api/synta-resources")
-                if (
-                    guard.get("contract")
-                    != (
-                        "synta-dedicated-linux-v1"
-                        if self.dedicated_host
-                        else "synta-adaptive-windows-v1"
-                    )
-                    or guard.get("ready") is not True
-                    or time.time() - guard.get("updated", 0) > 10
-                ):
-                    raise requests.ConnectionError(
-                        ("Dedicated Linux" if self.dedicated_host else "Windows")
-                        + " adaptive guard unavailable: "
-                        + str(guard.get("reason", "unknown"))
-                    )
+                check_guard(guard, self.dedicated_host)
                 if guard.get("throughput_enabled") is True and not self.dedicated_host:
                     duty = guard.get("duty_percent")
                     if type(duty) is int and 1 <= duty <= 100:

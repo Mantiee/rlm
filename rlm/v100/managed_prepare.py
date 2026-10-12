@@ -65,22 +65,50 @@ def memory_pilot(root: Path) -> dict:
     if evidence.exists():
         return json.loads(evidence.read_text())
     if folder.exists():
-        return {
-            "state": "interrupted-pilot",
-            "path": str(folder),
-            "scope": "Inspect existing trial; never overwrite its frozen evidence",
-        }
-    propose(
-        root,
-        "A",
-        identity,
-        32,
-        1,
-        1024,
-        3,
-        "Compare causal n-gram memory enabled and disabled on the same held-out goal workload. Reject absent improvement; this is a small independent CPU model, not pretrained Gemma/Qwen extension.",
+        # Preserve the failed/interrupted archive and retry in one new versioned trial.
+        identity = "managed-ngram-v89-" + goal["id"][:12]
+        folder = candidate_path(root, identity)
+        evidence = folder / "trial/quality.json"
+        if evidence.exists():
+            return json.loads(evidence.read_text())
+        if (folder / "trial").exists():
+            return {
+                "state": "interrupted-pilot",
+                "path": str(folder),
+                "scope": "New attempt retained; inspect its failure before another retry",
+            }
+    if not folder.exists():
+        propose(
+            root,
+            "A",
+            identity,
+            32,
+            1,
+            1024,
+            3,
+            "Compare causal n-gram memory enabled and disabled on the same held-out goal workload. Reject absent improvement; this is a small independent CPU model, not pretrained Gemma/Qwen extension.",
+        )
+    records = [json.loads(line) for line in pool.read_text().splitlines() if line.strip()]
+    required = max(
+        (
+            len(
+                "".join(
+                    str(m["role"]) + ": " + str(m["content"]) + "\n" for m in row["messages"]
+                ).encode()
+            )
+            + 32
+            for row in records
+        ),
+        default=256,
     )
-    return run_candidate(root, identity, pool, suite, dict(DEFAULT_BUDGET))
+    if required > 8192:
+        return {
+            "state": "blocked",
+            "reason": "Full verified examples exceed the 8192-byte CPU pilot context; no truncation performed",
+            "required_bytes": required,
+        }
+    budget = dict(DEFAULT_BUDGET) | {"context_window": max(256, required), "threads": 4}
+    return run_candidate(root, identity, pool, suite, budget)
 
 
 def run(root: Path) -> dict:

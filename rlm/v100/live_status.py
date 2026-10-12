@@ -393,7 +393,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         client = helper_client(profile, root)
         client.timeout = 3
         guard = client.remote_request("/api/synta-resources")
-        age = time.time() - guard.get("updated", 0)
+        age = guard.get("heartbeat_age_seconds", time.time() - guard.get("updated", 0))
         if guard.get("contract") != "synta-adaptive-windows-v1" or not 0 <= age <= 10:
             raise RuntimeError("Windows resource monitor heartbeat stale or unavailable")
         rtx["metrics"] = guard
@@ -482,6 +482,11 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         ("knowledge-index", "Live Wikipedia index", "research/knowledge/index-progress.json"),
         ("managed-update", "Automatic GitHub updates", "research/managed-update/status.json"),
         ("mission-watchdog", "Mission recovery", "research/mission-watchdog/status.json"),
+        (
+            "autonomous-planning",
+            "Autonomous short / medium planning",
+            "research/plans/autonomous-status.json",
+        ),
         ("model-roles", "Qualified model roles", "research/model-roles/active.json"),
         (
             "native-qualification",

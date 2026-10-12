@@ -82,6 +82,7 @@ class Pressure:
         self.generating = False
         self.workload = {}
         self.maintenance = False
+        self.last_sample = None
         self.code_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
     def stop_owned_runner(self) -> None:
@@ -140,7 +141,12 @@ class Pressure:
 
     def fresh_state(self) -> dict:
         state = dict(self.state)
-        age = time.time() - state.get("updated", 0)
+        age = (
+            time.monotonic() - self.last_sample
+            if self.last_sample is not None
+            else time.time() - state.get("updated", 0)
+        )
+        state["heartbeat_age_seconds"] = age
         if not 0 <= age <= 10:
             state.update(ready=False, reason="Resource monitor heartbeat stale", stale=True)
         return state
@@ -173,6 +179,7 @@ class Pressure:
                         self.stop_owned_runner()
                     except Exception as stop_error:
                         state["reason"] += "; owned runner stop failed: " + str(stop_error)
+            self.last_sample = time.monotonic()
             self.state = {
                 **state,
                 "updated": time.time(),

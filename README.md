@@ -1,21 +1,20 @@
+# Synta shared owned-compute project
+
+Operator-owned fork: **Mantiee/rlm**. Managed deployment branch: **v100-rtx-reconnect**.
+Debian, Windows and the dedicated RTX 3060 Ti node resolve that branch to an immutable
+commit and verify the managed release artifact hashes. Models, private data, balances
+and accepted weights stay on their hosts. Only reviewed managed releases auto-deploy.
+
+Current release: **v89**. See [SYNTA.md](SYNTA.md) for recovery, automatic updates,
+chat availability, autonomous short/medium planning and Wikipedia progress.
+
+## Library and historical release notes
+
 
 ---
 
-Synta v74 adds model-selected goal experiments after source commissioning, offline
-helper recovery and a CPU shadow forecast learner using audited future outcomes.
-Real capital is zero; existing PAPER balances remain usable. See [SYNTA_V74.md](SYNTA_V74.md).
-
-Synta v73 keeps paper observations running when the fee publication cannot be verified,
-without extending expired fees or admitting fills. See [SYNTA_V73.md](SYNTA_V73.md).
-
-Synta v72 adds public web/form tools with explicit one-shot operator approval and
-fixes historical trade markers to use execution-time valuations. Read-only questions
-can inspect actual evidence. See [SYNTA_V72.md](SYNTA_V72.md).
-
-Synta v71 executes resource optimization directly, keeps follow-ups on the operator task,
-and rejects empty/failed work as successful chat completion. CPU concurrency adapts to
-affinity, quota and RAM. See [SYNTA_V71.md](SYNTA_V71.md).
-The startup verification fix from [v70](SYNTA_V70.md) is retained.
+Synta v70 avoids repeated full artifact reads within the same process, detects changed file
+identities, and bounds native startup verification. See [SYNTA_V70.md](SYNTA_V70.md).
 
 > **V100 fork, v100.14:** the local workflow uses your own llama.cpp server, no paid API.
 > v100.14 fixes CPU research request budgets and one-slot job scheduling, trims
@@ -241,7 +240,3 @@ Persistent goals, A/B lineages, bounded research drones, concurrent chat, privat
 For private phone access, see [SYNTA_REMOTE_ACCESS.md](SYNTA_REMOTE_ACCESS.md).
 The remote dashboard and master chat share mobile navigation; an existing v67/v68
 gateway can receive the [v69 repair](SYNTA_V69.md) without restarting the mission.
-
-Strategy evidence, truthful learning comparisons and dashboard startup recovery: [SYNTA_V76.md](SYNTA_V76.md).
-
-Dashboard v75 navigation, metric definitions and targeted upgrade: [SYNTA_V75.md](SYNTA_V75.md).

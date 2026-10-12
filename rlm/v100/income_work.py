@@ -34,18 +34,32 @@ class MasterNotReady(RuntimeError):
 def owned_advisor(root: Path, branch: str, reason: str):
     """Use an independently qualified advisory node while protected serving is unavailable."""
     from rlm.v100.competition import helper_client
-    from rlm.v100.mission_chat import preferences
+    from rlm.v100.mission_chat import backend_preflight, preferences
+    from rlm.v100.remote_helper import remote_profile, selected_helper
     from rlm.v100.remote_nodes import selected_node
 
-    path = selected_node(root) if preferences(root).get("remote_helper_enabled", True) else None
-    if path is None:
+    if not preferences(root).get("remote_helper_enabled", True):
         raise MasterNotReady(reason)
-    client = helper_client(load_profile(path, root), root, branch)
-    client.timeout = 5
-    try:
-        client.identity()
-    except requests.RequestException as error:
-        raise MasterNotReady(reason) from error
+    candidates = [selected_node(root)]
+    for role in ("planner", "fast"):
+        try:
+            candidates.append(selected_helper(root, role))
+        except (OSError, ValueError):
+            continue
+    failures = []
+    for path in dict.fromkeys(p for p in candidates if p is not None):
+        try:
+            profile = load_profile(path, root)
+            if not remote_profile(profile):
+                continue
+            client = helper_client(profile, root, branch)
+            client.timeout = 5
+            backend_preflight(client)
+            break
+        except (OSError, requests.RequestException) as error:
+            failures.append(str(error)[:180])
+    else:
+        raise MasterNotReady(reason + "; " + "; ".join(failures))
     client.timeout = 120
     client.request_deadline = time.monotonic() + 150
     client.enable_thinking = False
@@ -59,7 +73,7 @@ def owned_advisor(root: Path, branch: str, reason: str):
 def accepted_master(root: Path, branch: str):
     """Reuse a protected serving master, never launch a model or use a candidate."""
     from rlm.v100.competition import helper_client
-    from rlm.v100.mission_chat import preferences
+    from rlm.v100.mission_chat import backend_preflight, preferences
     from rlm.v100.model_roles import selected_profile
     from rlm.v100.serving import assert_served_expert
 
@@ -68,7 +82,7 @@ def accepted_master(root: Path, branch: str):
         try:
             client = helper_client(load_profile(planner, root), root, branch)
             client.timeout = min(client.timeout, 10)
-            client.identity()
+            backend_preflight(client)
             # The short identity probe is not the generation deadline, especially for cold MoE loading.
             client.timeout = 120
             client.request_deadline = time.monotonic() + 150

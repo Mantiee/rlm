@@ -324,7 +324,9 @@ def test_income_advisor_reuses_qualified_node_without_launching_master(tmp_path,
     client = SimpleNamespace(timeout=5, identity=lambda: None, sampling_args={})
     monkeypatch.setattr(remote_nodes, "selected_node", lambda root: path)
     monkeypatch.setattr(mission_chat, "preferences", lambda root: {})
-    monkeypatch.setattr(income_work, "load_profile", lambda *args: {})
+    monkeypatch.setattr(
+        income_work, "load_profile", lambda *args: {"resources": {"device": "remote"}}
+    )
     monkeypatch.setattr(competition, "helper_client", lambda *args: client)
     assert income_work.owned_advisor(tmp_path, "A", "training") is client
     assert client.activity_actor == "income-owned-advisor"

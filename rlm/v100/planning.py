@@ -17,7 +17,9 @@ def read(root: Path) -> dict:
     return result
 
 
-def update(root: Path, horizon: str, text: str, actor: str) -> dict:
+def update(
+    root: Path, horizon: str, text: str, actor: str, expected_goal_id: str | None = None
+) -> dict:
     if horizon not in ("long", "mid", "short") or actor not in ("user", "A", "B"):
         raise ValueError("Invalid plan horizon or author")
     if horizon == "long" and actor != "user":
@@ -41,6 +43,11 @@ def update(root: Path, horizon: str, text: str, actor: str) -> dict:
     with (directory / "plan.lock").open("a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         current = read(root)
+        if (
+            expected_goal_id is not None
+            and (current.get("long") or {}).get("id") != expected_goal_id
+        ):
+            raise ValueError("Goal changed during autonomous planning; proposal discarded")
         previous = current.get(horizon)
         value = {
             "id": uuid.uuid4().hex,

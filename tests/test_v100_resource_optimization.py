@@ -85,8 +85,8 @@ def test_tuning_is_direct_with_real_policy_receipt_and_preserved_windows(tmp_pat
     )
     result = mission_chat.respond(tmp_path, tmp_path, {"message": "Zrób optymalizację CPU i RAM"})
     policy = json.loads((tmp_path / "research/state/resource-policy.json").read_text())
-    assert policy["max_cpu_slots"] == 4 and policy["reserve_ram_gib"] == 4
-    assert resource_budget.local_budget(tmp_path)["cpu_slots"] == 4
+    assert policy["max_cpu_slots"] == 5 and policy["reserve_ram_gib"] == 4
+    assert resource_budget.local_budget(tmp_path)["cpu_slots"] == 5
     assert calls == ["A"] and preferences.read_bytes() == before
     assert result["responder"]["model"] == "controller-resource-optimization"
     assert result["applied"][0]["state"] == "applied"

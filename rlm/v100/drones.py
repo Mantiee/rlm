@@ -168,7 +168,7 @@ def execute(root: Path, job: dict) -> dict:
     from rlm.v100.competition import helper_client
     from rlm.v100.goals import load_goal
     from rlm.v100.income_work import accepted_master
-    from rlm.v100.mission_chat import preferences
+    from rlm.v100.mission_chat import backend_preflight, preferences
     from rlm.v100.remote_helper import remote_profile, selected_helper
     from rlm.v100.researchers import research_task
 
@@ -184,14 +184,14 @@ def execute(root: Path, job: dict) -> dict:
         profile["runtime"]["max_timeout"] = min(120, profile["runtime"]["max_timeout"])
         client = helper_client(profile, root, job["branch"])
         try:
-            client.identity()
+            backend_preflight(client)
         except requests.RequestException as error:
             node = selected_node(root)
             alternative = None
             if node is not None and node.resolve() != chosen_path.resolve():
                 try:
                     alternative = helper_client(load_profile(node, root), root, job["branch"])
-                    alternative.identity()
+                    backend_preflight(alternative)
                 except requests.RequestException:
                     alternative = None
             client = (
@@ -324,7 +324,7 @@ def inference_lane(root: Path, kind: str) -> str:
 def service(root: Path, stop: threading.Event) -> None:
     # One model job plus up to four CPU/network jobs and one observer. RTX requests share the global
     # existing helper pacing lock with foreground researchers and benchmark clients.
-    with ThreadPoolExecutor(max_workers=6) as workers:
+    with ThreadPoolExecutor(max_workers=19) as workers:
         active = {}
         affinities = {}
         lanes = {}

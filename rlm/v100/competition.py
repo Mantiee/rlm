@@ -370,12 +370,13 @@ def validate_concurrent_researcher(profile: dict) -> None:
     if remote_profile(profile):
         validate_remote(profile)
         return
+    maximum_threads = 8 if profile.get("resources", {}).get("accepted_cpu_chat") is True else 4
     if (
         profile.get("resources", {}).get("device") != "cpu"
         or profile["server"].get("gpu_layers") != 0
         or profile["server"]["draft_model"]
         or profile["server"]["slots"] != 1
-        or not 1 <= profile["server"]["threads"] <= 4
+        or not 1 <= profile["server"]["threads"] <= maximum_threads
     ):
         raise ValueError(
             "Concurrent researcher must use a pinned remote helper or CPU only, one slot and at most four threads"

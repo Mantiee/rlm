@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.fixture(params=[82, 83, 84, 85, 86, 87, 88])
+@pytest.fixture(params=[82, 83, 84, 85, 86, 87, 88, 89])
 def script(request):
     return Path(__file__).parents[1] / f"tools/update-synta-v{request.param}.sh"
 

@@ -14,11 +14,30 @@ foreach ($name in @('managed_bootstrap','inference_benchmark')) {
 $runner = Join-Path $dir 'managed_bootstrap.py'
 & $python -m py_compile $runner
 if ($LASTEXITCODE -ne 0) { throw 'Bootstrap Python failed syntax validation; no updater task started.' }
-$action = New-ScheduledTaskAction -Execute $python -Argument "-u `"$runner`" --root `"$root`""
+$log = Join-Path $root 'logs\managed-update-run.log'
+New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
+$wrapper = Join-Path $dir 'run-managed-update.ps1'
+@'
+$ErrorActionPreference = 'Continue'
+$root = Join-Path $env:USERPROFILE 'ai-v100-helper'
+$python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
+$runner = Join-Path $root 'tools\managed-bootstrap\managed_bootstrap.py'
+$log = Join-Path $root 'logs\managed-update-run.log'
+& $python -u $runner --root $root *>> $log
+exit $LASTEXITCODE
+'@ | Set-Content -Encoding UTF8 $wrapper
+$action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$wrapper`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 15)
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $identity = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 5) -StartWhenAvailable
 Register-ScheduledTask -TaskName 'Synta-Managed-Update' -Action $action -Trigger $trigger -Principal $identity -Settings $settings -Force | Out-Null
+# Repair serving in this console, independently of a previous model downloader.
+$bundle = Join-Path $root ("tools\managed-releases\" + $Revision)
+& $python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from managed_bootstrap import release,materialize; rev,manifest=release(sys.argv[3]); materialize(Path(sys.argv[2]),rev,manifest)' $dir $bundle $Revision
+if ($LASTEXITCODE -ne 0) { throw "Release acquisition failed. Inspect $log" }
+& (Join-Path $bundle 'tools\refresh-synta-windows.ps1') -Revision $Revision -Bundle $bundle
 Start-ScheduledTask -TaskName 'Synta-Managed-Update'
+Write-Host "Updater stdout/stderr: $log"
+if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 8 }
 Write-Host 'Automatic current-user updater registered. Inspect ai-v100-helper\logs\managed-update.json. No ChatGPT remote shell is created.'

@@ -167,7 +167,13 @@ class Node:
                         (self.source / "compute_worker.py").read_bytes()
                     ).hexdigest(),
                 }
-            atomic(self.root / "resource-status.json", self.state)
+            try:
+                atomic(self.root / "resource-status.json", self.state)
+            except OSError as error:
+                print(
+                    json.dumps({"telemetry_write_error": str(error), "updated": time.time()}),
+                    flush=True,
+                )
             time.sleep(2)
 
     def submit_cpu(self, value: dict) -> dict:
