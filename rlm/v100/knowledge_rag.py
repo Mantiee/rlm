@@ -76,6 +76,19 @@ def import_wiki(root: Path, path: Path, language: str, max_pages: int) -> dict:
                 pages += 1
                 if pages % 100 == 0:
                     database.commit()
+                    if pages % 1000 == 0:
+                        print(
+                            json.dumps(
+                                {
+                                    "stage": "indexing-wikipedia",
+                                    "part": path.name,
+                                    "pages": pages,
+                                    "chunks": chunks,
+                                    "seconds": time.monotonic() - started,
+                                }
+                            ),
+                            flush=True,
+                        )
                     if shutil.disk_usage(root).free < 4 * 1024**3:
                         raise RuntimeError(
                             "Wikipedia import paused: preserve at least 4 GiB free disk; committed pages retained"
