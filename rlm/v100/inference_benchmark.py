@@ -54,6 +54,16 @@ def variants(profile: dict, help_text: str) -> list[dict]:
                 "server": {**values[-1]["server"], "spec_type": "ngram-simple", "draft_tokens": 4},
             }
         )
+    if "--cpu-moe" in help_text and "35B-A3B" in base.get("model", ""):
+        values.append({"name": "cpu-moe", "server": {**base, "cpu_moe": True}})
+    if base.get("tune_kernels"):
+        values.extend(
+            [
+                {"name": "ubatch-128", "server": {**base, "ubatch_size": 128, "batch_size": 256}},
+                {"name": "threads-8", "server": {**base, "threads": 8}},
+                {"name": "flash-off", "server": {**base, "flash_attention": "off"}},
+            ]
+        )
     # CPU layer offload is tested, not assumed faster. Context/model stay fixed.
     values.append({"name": "cpu-offload", "server": {**base, "gpu_layers": 16}})
     return values
@@ -101,6 +111,17 @@ def command(server: dict, port: int) -> list[str]:
             "--spec-draft-n-max",
             str(server["draft_tokens"]),
         ]
+    if server.get("rope_scaling"):
+        args += [
+            "--rope-scaling",
+            server["rope_scaling"],
+            "--rope-scale",
+            str(server["rope_scale"]),
+            "--yarn-orig-ctx",
+            str(server["yarn_orig_ctx"]),
+        ]
+    if server.get("cpu_moe"):
+        args += ["--cpu-moe"]
     return args
 
 
@@ -213,10 +234,69 @@ def measure(port: int, interrupted: threading.Event, evidence: Path | None = Non
     }
 
 
+def long_context_probe(port: int, context: int, evidence: Path) -> dict:
+    """Measure actual prefill and retrieval; allocated capacity alone is not success."""
+    filler = request(
+        port, "/tokenize", {"content": "ordinary archived reference material. " * 100}
+    )["tokens"]
+    keys = ("synta_first_7391", "synta_middle_4826", "synta_last_9153")
+    sections = []
+    target = context - 4096
+    for key in keys:
+        sections.extend(filler * (target // (3 * len(filler))))
+        sections.extend(
+            request(port, "/tokenize", {"content": "\nThe secret marker is " + key + ".\n"})[
+                "tokens"
+            ]
+        )
+    suffix = request(
+        port,
+        "/apply-template",
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "List all three secret markers from the reference material above. Answer only with the three markers. /no_think",
+                }
+            ]
+        },
+    )["prompt"]
+    sections.extend(request(port, "/tokenize", {"content": suffix})["tokens"])
+    started = time.monotonic()
+    reply = request(
+        port,
+        "/completion",
+        {"prompt": sections, "n_predict": 256, "temperature": 0, "cache_prompt": False},
+        timeout=1800,
+    )
+    record = {
+        "input_tokens_sent": len(sections),
+        "seconds": time.monotonic() - started,
+        "output": reply.get("content", ""),
+        "timings": reply.get("timings", {}),
+    }
+    record["passed"] = (
+        len(sections) >= 500000
+        and all(key in record["output"] for key in keys)
+        and reply.get("timings", {}).get("prompt_n", 0) >= 500000
+    )
+    record["scope"] = (
+        "Three synthetic markers in one long prefill; not broad reasoning or task-quality approval"
+    )
+    save(evidence, record)
+    return record
+
+
 def select(rows: list[dict]) -> dict:
     baseline = next((r for r in rows if r["name"] == "baseline" and r["state"] == "measured"), None)
     if baseline is None:
         return {"state": "blocked", "reason": "No complete baseline", "winner": None}
+    if "long_context" in baseline and not baseline["long_context"].get("passed"):
+        return {
+            "state": "blocked",
+            "reason": "Long-context prefill/retrieval gate failed",
+            "winner": None,
+        }
     outputs = [r["output"] for r in baseline["measurement"]["probes"]]
     admitted = []
     for row in rows:
@@ -368,6 +448,13 @@ def run(profile: dict, output: Path, port: int = 8097) -> dict:
         model_hash = hashlib.file_digest(source, "sha256").hexdigest()
     if profile["server"].get("model_sha256") not in (None, model_hash):
         raise ValueError("Local GGUF checksum differs from the pinned model manifest")
+    for flag in (
+        ("--rope-scaling", "--rope-scale", "--yarn-orig-ctx")
+        if profile["server"].get("rope_scaling")
+        else ()
+    ):
+        if flag not in help_text:
+            raise ValueError("Native runtime does not support required long-context flag: " + flag)
     supported = variants(profile, help_text)
     rows = (
         []
@@ -438,6 +525,13 @@ def run(profile: dict, output: Path, port: int = 8097) -> dict:
                         port, interrupted, output / (variant["name"] + "-probes.jsonl")
                     ),
                 )
+                if (
+                    variant["name"] == "baseline"
+                    and profile["server"]["context_per_slot"] >= 524288
+                ):
+                    record["long_context"] = long_context_probe(
+                        port, profile["server"]["context_per_slot"], output / "long-context.json"
+                    )
             except (ValueError, RuntimeError, OSError) as error:
                 record.update(state="blocked", error=str(error))
             finally:
