@@ -50,7 +50,7 @@ def test_previously_admitted_old_role_is_archived_not_selected(tmp_path, name):
 def test_gemma_identity_does_not_accept_qwen_tokenizer():
     info = {
         "details": {"family": "gemma4", "quantization_level": "Q4_K_M"},
-        "model_info": {"tokenizer.ggml.model": "llama"},
+        "model_info": {"tokenizer.ggml.model": "gemma4"},
         "template": "fixed template",
     }
     client = remote_helper.OllamaResearchClient(
@@ -68,6 +68,7 @@ def test_gemma_identity_does_not_accept_qwen_tokenizer():
         else info
     )
     assert client.identity() == info
+    assert client.count_text("a b") == 5
     info["model_info"]["tokenizer.ggml.model"] = "gpt2"
     with pytest.raises(ValueError, match="metadata"):
         client.identity()

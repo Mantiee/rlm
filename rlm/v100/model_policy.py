@@ -18,7 +18,7 @@ def retired(name: str) -> bool:
 
 def metadata_contract(name: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if name.startswith("gemma4:"):
-        return ("gemma4",), ("llama",)
+        return ("gemma4",), ("gemma4",)
     if name.startswith("qwen3.8:"):
         return ("qwen35", "qwen38"), ("gpt2",)
     return ("qwen35",), ("gpt2",)

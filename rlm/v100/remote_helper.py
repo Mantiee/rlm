@@ -441,6 +441,8 @@ class OllamaResearchClient(LlamaCppClient):
         return item
 
     def count_text(self, text: str, parse_special: bool = False) -> int:
+        if self.model_name.startswith("gemma4:"):
+            text = text.replace(" ", "\u2581")
         return len(text.encode("utf-8"))
 
     def template_args(self) -> dict:
