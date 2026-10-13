@@ -153,3 +153,5 @@ def test_installer_does_not_confuse_loaded_models_with_running_jobs():
     source = (Path(__file__).parents[1] / "tools/bootstrap-synta-3060.sh").read_text()
     assert '"$SOURCE/owned_maintenance.py"' in source
     assert "if value.get('models'): raise SystemExit(75)" not in source
+    preflight = source.split('mkdir -p "$BASE/releases/$REV"', 1)[0]
+    assert "raise SystemExit(75)" not in preflight

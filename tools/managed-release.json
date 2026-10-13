@@ -13,7 +13,7 @@
     "rlm/v100/wikimedia_exports.py": "f3788e5ab9e2e6d9551b005d1a356052c26d565dc0c9a290d5f9762e521f2ab5",
     "rlm/v100/knowledge_rag.py": "f1bfb077a54003069d25609250071bcbff404485582b29b4ca726aa0cd9c6572",
     "rlm/v100/source_sync.py": "e315e1bd6e62ff0ce6a0c235ed857d89ab4ea12bb979322e53ec1e23f2c5ee38",
-    "tools/bootstrap-synta-3060.sh": "9d1e339d6b0b5e2341c1b87830edf2471b8e3dd93fb342df9c5758e3797f231b",
+    "tools/bootstrap-synta-3060.sh": "baf85bb9a66728b93e39873125990f0384a90bdea01c5329ca05af146b0ad77c",
     "tools/attach-synta-3060.sh": "b16079c4a9f66fee567740e41012877d0e90e9708bfa9b475da2fc5db5e51fbf",
     "rlm/v100/owned_node.py": "4da8c9e2885c5bb049b07eab4feb91a271e13129e9f2ce05bd5654b141a2889d",
     "rlm/v100/owned_node_update.py": "37b44f6a05616309d27f6d12a7a225810596d288af0b4a18c64af86afb019f48",

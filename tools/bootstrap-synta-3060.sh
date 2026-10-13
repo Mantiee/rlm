@@ -19,8 +19,7 @@ try:
 except OSError:
     value={}
 if value.get('generating') or value.get('cpu_active',0):
-    print('Owned node busy; update deferred without cancelling jobs',flush=True)
-    raise SystemExit(75)
+    print('Preparing verified update while owned jobs run; bounded drain follows before any restart',flush=True)
 PY
 fi
 mkdir -p "$BASE/releases/$REV" "$BASE/downloads" "$STATE/work" "$STATE/ollama" "$STATE/research"
