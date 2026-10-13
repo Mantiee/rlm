@@ -65,6 +65,9 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(tmp_pat
     assert migrated["resources"]["model_digest"] == "a" * 64
     assert migrated["resources"]["metadata_sha256"] == metadata
     assert migrated["resources"]["allow_cpu_offload"] is False
+    assert migrated["runtime"]["context_window"] == 65536
+    assert migrated["server"]["context_per_slot"] == 65536
+    assert migrated["memory"]["retrieve_count"] <= 4
     assert json.loads(original.read_text()) == migrated
     assert result["legacy_route"]["role"] == "planner"
     assert "fast" not in result["roles"]

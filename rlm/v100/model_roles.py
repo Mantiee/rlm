@@ -27,9 +27,9 @@ def offload_allowed(model: str) -> bool:
 
 
 def needs_compatible_profile(profile: dict) -> bool:
-    return (
-        profile.get("runtime", {}).get("model_name") == "qwen3.8:27b-q4_K_M"
-        and profile.get("resources", {}).get("allow_cpu_offload") is True
+    return profile.get("runtime", {}).get("model_name") == "qwen3.8:27b-q4_K_M" and (
+        profile.get("resources", {}).get("allow_cpu_offload") is True
+        or profile.get("runtime", {}).get("context_window", 0) < 65536
     )
 
 
@@ -200,7 +200,7 @@ def qualify(root: Path) -> dict:
             "profile": baseline_profile,
             "models": sorted((m["name"], m["digest"]) for m in inventory["models"]),
             "panel": cases(),
-            "revision": "roles-v99-compatible-offload",
+            "revision": "roles-v99-compatible-context",
         }
     )
     cache = root / "research/model-roles/qualification-cache.json"
@@ -245,10 +245,11 @@ def qualify(root: Path) -> dict:
             continue
         profile = copy.deepcopy(migrations.get(role, baseline_profile))
         profile["resources"].pop("calibration_only", None)
+        context = 65536 if model == "qwen3.8:27b-q4_K_M" else 32768
         profile["runtime"].update(
-            model_name=model, model_version="role-" + model, context_window=32768
+            model_name=model, model_version="role-" + model, context_window=context
         )
-        profile["server"]["context_per_slot"] = 32768
+        profile["server"]["context_per_slot"] = context
         profile["resources"].update(
             throughput_mode=True,
             helper_batch_tokens=256,
@@ -258,7 +259,13 @@ def qualify(root: Path) -> dict:
             allow_cpu_offload=offload_allowed(model),
             require_adaptive_windows_guard=True,
         )
-        report = {"role": role, "model": model, "admitted": False, "baseline": baseline}
+        report = {
+            "role": role,
+            "model": model,
+            "admitted": False,
+            "baseline": baseline,
+            "context_window": context,
+        }
         try:
             probe = helper_client(baseline_profile, root)
             matches = [
@@ -310,6 +317,9 @@ def qualify(root: Path) -> dict:
                 maximum_chunks = max(1, (32768 - 1024) // memory["chunk_tokens"])
                 memory["fanout"] = min(memory["fanout"], maximum_chunks)
                 memory["retrieve_count"] = min(memory["retrieve_count"], maximum_chunks)
+                if role == "planner":
+                    memory["fanout"] = min(memory["fanout"], 4)
+                    memory["retrieve_count"] = min(memory["retrieve_count"], 4)
                 atomic_json(profile_path, profile)
                 atomic_json(report_path, report)
                 roles[role] = {
@@ -351,7 +361,17 @@ def qualify(root: Path) -> dict:
         # previous bytes as evidence, then use only the newly qualified profile.
         atomic_json(folder / "previous-researcher.json", load_profile(original, root))
         atomic_json(original, json.loads(Path(roles["fast"]["profile"]).read_text()))
-    elif "planner" in roles and retired(baseline_profile["runtime"]["model_name"]):
+    elif "planner" in roles and (
+        retired(baseline_profile["runtime"]["model_name"])
+        or (
+            baseline_profile["runtime"]["model_name"]
+            == json.loads(Path(roles["planner"]["profile"]).read_text())["runtime"]["model_name"]
+            and baseline_profile["resources"]["model_digest"]
+            == json.loads(Path(roles["planner"]["profile"]).read_text())["resources"][
+                "model_digest"
+            ]
+        )
+    ):
         # Old resident workers read this legacy path. Route them to the same
         # qualified planner instead of an explicitly retired model; do not
         # label it a speed-qualified fast model or change its identity.
