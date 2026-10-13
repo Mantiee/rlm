@@ -35,7 +35,14 @@ def read(root: Path, goal: str) -> list[dict]:
 
 
 def attach(root: Path, messages: list[dict], context_window: int = 8192) -> list[dict]:
-    result = [dict(row) for row in messages if not str(row.get("content", "")).startswith(MARKER)]
+    current = next(
+        (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"), None
+    )
+    result = [
+        dict(row)
+        for i, row in enumerate(messages)
+        if i == current or not str(row.get("content", "")).startswith(MARKER)
+    ]
     try:
         goal = goal_id(root)
         notes = read(root, goal) if goal else []
@@ -74,7 +81,7 @@ def record(root: Path, messages: list[dict], response: dict, trace: list[dict]) 
             (
                 str(row.get("content", ""))
                 for row in reversed(messages)
-                if row.get("role") == "user" and not str(row.get("content", "")).startswith(MARKER)
+                if row.get("role") == "user"
             ),
             "",
         )

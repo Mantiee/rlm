@@ -61,6 +61,8 @@ def test_public_memory_is_bounded_goal_scoped_and_not_reasoning(tmp_path, monkey
     assert "unverified" in attached[0]["content"]
     assert len(attached[0]["content"]) < 2000
     assert decision_memory.attach(tmp_path, attached) == attached
+    quoted = {"role": "user", "content": decision_memory.MARKER + "explain this label"}
+    assert decision_memory.attach(tmp_path, [quoted])[-1] == quoted
     monkeypatch.setattr(decision_memory, "goal_id", lambda root: "b" * 64)
     assert decision_memory.attach(tmp_path, [message]) == [message]
 
