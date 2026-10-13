@@ -9,13 +9,13 @@ import time
 from pathlib import Path
 
 import requests
-
-from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn
-from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.goal_learning import observe
 from rlm.v100.goals import load_goal
 from rlm.v100.income_opportunities import NUMBER_FIELDS, TEXT_FIELDS, register
+
+from rlm.v100.activity import ActivityLog
+from rlm.v100.common import atomic_json, load_profile
 
 STARTING_SOURCES = (
     (
@@ -34,10 +34,11 @@ class MasterNotReady(RuntimeError):
 def owned_advisor(root: Path, branch: str, reason: str):
     """Use an independently qualified advisory node while protected serving is unavailable."""
     from rlm.v100.competition import helper_client
-    from rlm.v100.mission_chat import backend_preflight, preferences
-    from rlm.v100.remote_helper import remote_profile, selected_helper
     from rlm.v100.remote_nodes import selected_node
     from rlm.v100.serving import assert_served_expert
+
+    from rlm.v100.mission_chat import backend_preflight, preferences
+    from rlm.v100.remote_helper import remote_profile, selected_helper
 
     # Chat can maintain a CPU copy of the accepted weights on its own endpoint.
     # Reuse only that already running copy; never launch competing CPU/GPU servers.
@@ -109,9 +110,10 @@ def owned_advisor(root: Path, branch: str, reason: str):
 def accepted_master(root: Path, branch: str):
     """Reuse a protected serving master, never launch a model or use a candidate."""
     from rlm.v100.competition import helper_client
+    from rlm.v100.serving import assert_served_expert
+
     from rlm.v100.mission_chat import backend_preflight, preferences
     from rlm.v100.model_roles import selected_profile
-    from rlm.v100.serving import assert_served_expert
 
     planner = selected_profile(root, "planner")
     if planner is not None and preferences(root).get("remote_helper_enabled", True):
@@ -424,7 +426,7 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
             job["branch"],
             {
                 "role": "researcher",
-                "brief": "Choose and EXECUTE one useful next experiment toward the income goal. Inspect receipts and blockers; revise losing tests. Use legal public WWW, guest code/browser and eligible free compute. Real spendable capital is zero; test allocated PAPER capital after costs. Produce an artifact, commit a forecast or run a test; report exact receipts and missing inputs. No invented income or placeholder work.",
+                "brief": "Choose and EXECUTE one useful next experiment toward the income goal. Read income_opportunities and previous receipts before choosing work; archived proposals are hypotheses, not completed tests or income. Prefer a legal, automatable deliverable or measurable experiment. Human research/usability participation requires the actual human: record the specific operator step once and choose other useful work instead of repeating age/residency/account summaries or impersonating a participant. Inspect receipts and blockers; revise losing tests. Use legal public WWW, guest code/browser and eligible free compute. Real spendable capital is zero; test allocated PAPER capital after costs. Produce an artifact, commit a forecast or run a test; report exact receipts and missing inputs. No invented income, account access, payout or placeholder work.",
             },
             [
                 {

@@ -20,6 +20,19 @@ def json_hash(value: dict) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
+def offload_allowed(model: str) -> bool:
+    # The retained v92 worker only supports expert offload for the MoE role.
+    # A dense planner is separately qualified with full GPU residency.
+    return model == "gemma4:26b-a4b-it-q4_K_M"
+
+
+def needs_compatible_profile(profile: dict) -> bool:
+    return (
+        profile.get("runtime", {}).get("model_name") == "qwen3.8:27b-q4_K_M"
+        and profile.get("resources", {}).get("allow_cpu_offload") is True
+    )
+
+
 def selected_profile(root: Path, role: str) -> Path | None:
     if role not in ("fast", "planner"):
         raise ValueError("Unknown measured model role")
@@ -187,16 +200,22 @@ def qualify(root: Path) -> dict:
             "profile": baseline_profile,
             "models": sorted((m["name"], m["digest"]) for m in inventory["models"]),
             "panel": cases(),
-            "revision": "roles-v96",
+            "revision": "roles-v99-compatible-offload",
         }
     )
     cache = root / "research/model-roles/qualification-cache.json"
     active = root / "research/model-roles/active.json"
     locked = {}
+    migrations = {}
     if active.is_file():
         for role in ("fast", "planner"):
-            if selected_profile(root, role) is not None:
-                locked[role] = json.loads(active.read_text())["roles"][role]
+            selected = selected_profile(root, role)
+            if selected is not None:
+                pinned = json.loads(selected.read_text())
+                if needs_compatible_profile(pinned):
+                    migrations[role] = pinned
+                else:
+                    locked[role] = json.loads(active.read_text())["roles"][role]
         if len(locked) == 2:
             return json.loads(active.read_text())
     if cache.is_file() and active.is_file():
@@ -222,7 +241,9 @@ def qualify(root: Path) -> dict:
     for role, model in WINDOWS_ROLES:
         if role in locked:
             continue
-        profile = copy.deepcopy(baseline_profile)
+        if role in migrations and model != migrations[role]["runtime"]["model_name"]:
+            continue
+        profile = copy.deepcopy(migrations.get(role, baseline_profile))
         profile["resources"].pop("calibration_only", None)
         profile["runtime"].update(
             model_name=model, model_version="role-" + model, context_window=32768
@@ -234,7 +255,7 @@ def qualify(root: Path) -> dict:
             helper_duty_percent=100,
             max_vram_gib=ROLE_MODELS[model][1],
             on_demand=True,
-            allow_cpu_offload=role == "planner",
+            allow_cpu_offload=offload_allowed(model),
             require_adaptive_windows_guard=True,
         )
         report = {"role": role, "model": model, "admitted": False, "baseline": baseline}
@@ -247,12 +268,25 @@ def qualify(root: Path) -> dict:
             ]
             if len(matches) != 1:
                 raise ValueError("Candidate not downloaded on Windows")
+            if (
+                role in migrations
+                and matches[0]["digest"] != migrations[role]["resources"]["model_digest"]
+            ):
+                raise ValueError("Compatibility migration cannot change the pinned model digest")
             profile["resources"]["model_digest"] = matches[0]["digest"]
             profile["resources"]["metadata_sha256"] = ""
             profile["resources"]["metadata_hash_scheme"] = STABLE_METADATA
             client = helper_client(profile, root)
             info = client.identity()
             profile["resources"]["metadata_sha256"] = metadata_sha(info, STABLE_METADATA)
+            if (
+                role in migrations
+                and profile["resources"]["metadata_sha256"]
+                != migrations[role]["resources"]["metadata_sha256"]
+            ):
+                raise ValueError(
+                    "Compatibility migration cannot change pinned tokenizer/template metadata"
+                )
             client = helper_client(profile, root)
             client.timeout = min(client.timeout, 120)
             client.request_deadline = time.monotonic() + 360
@@ -317,6 +351,18 @@ def qualify(root: Path) -> dict:
         # previous bytes as evidence, then use only the newly qualified profile.
         atomic_json(folder / "previous-researcher.json", load_profile(original, root))
         atomic_json(original, json.loads(Path(roles["fast"]["profile"]).read_text()))
+    elif "planner" in roles and retired(baseline_profile["runtime"]["model_name"]):
+        # Old resident workers read this legacy path. Route them to the same
+        # qualified planner instead of an explicitly retired model; do not
+        # label it a speed-qualified fast model or change its identity.
+        atomic_json(folder / "previous-researcher.json", load_profile(original, root))
+        atomic_json(original, json.loads(Path(roles["planner"]["profile"]).read_text()))
+        prior["legacy_route"] = {
+            "role": "planner",
+            "profile": roles["planner"]["profile"],
+            "reason": "No admitted fast model; retired legacy model replaced by qualified planner",
+        }
+        atomic_json(active, prior)
     # Transport failures retry; stable scored outcomes need no repeated GPU exercise.
     if all(
         "error" not in r or r["error"] == "Candidate not downloaded on Windows" for r in reports

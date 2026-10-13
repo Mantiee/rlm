@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -187,11 +188,23 @@ def fetch(url: str) -> bytes:
     request = urllib.request.Request(
         url, headers={"User-Agent": "SyntaManagedUpdater/1.0 (+https://github.com/Mantiee/rlm)"}
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        data = response.read(4 * 1024**2 + 1)
-    if len(data) > 4 * 1024**2:
-        raise ValueError("Release metadata/script exceeds its byte budget")
-    return data
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                data = response.read(4 * 1024**2 + 1)
+            if len(data) > 4 * 1024**2:
+                raise ValueError("Release metadata/script exceeds its byte budget")
+            return data
+        except urllib.error.HTTPError as error:
+            if error.code != 429 and not 500 <= error.code < 600:
+                raise
+            if attempt == 2:
+                raise
+        except (OSError, urllib.error.URLError):
+            if attempt == 2:
+                raise
+        time.sleep(attempt + 1)
+    raise RuntimeError("Metadata fetch retry budget exhausted")
 
 
 def release(revision: str | None = None) -> tuple[str, dict]:

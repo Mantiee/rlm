@@ -1,9 +1,49 @@
 """Bounded current-run facts for the dashboard, independent of aggregate audits."""
 
 import json
+import re
+import subprocess
 import time
 from importlib.metadata import version
 from pathlib import Path
+
+_PACKAGE_CACHE = {}
+
+
+def training_package(root: Path) -> dict:
+    """Probe the trainer interpreter without the renderer's PYTHONPATH/metadata."""
+    python = root / "venvs/v100-continual/bin/python"
+    cached = _PACKAGE_CACHE.get(str(python))
+    if cached and time.monotonic() - cached[0] < 60:
+        return dict(cached[1])
+    value = {
+        "version": None,
+        "observed_at": time.time(),
+        "scope": "Isolated trainer interpreter probe; not renderer metadata",
+    }
+    try:
+        if not python.is_file():
+            raise OSError("Trainer interpreter unavailable")
+        result = subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "from importlib.metadata import version;print(version('rlms'))",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        installed = result.stdout.strip()
+        if not re.fullmatch(r"0\.1\.3\+v100\.\d+", installed):
+            raise ValueError("Unknown trainer package identity")
+        value["version"] = installed
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        value["error"] = str(error)[:180]
+    _PACKAGE_CACHE[str(python)] = (time.monotonic(), value)
+    return dict(value)
 
 
 def read_receipt(path: Path, maximum: int = 65536) -> dict:
@@ -17,6 +57,7 @@ def read_receipt(path: Path, maximum: int = 65536) -> dict:
 
 def snapshot(root: Path, mission: dict, report: dict) -> dict:
     now = time.time()
+    package = training_package(root)
     view = {
         "collected_at": now,
         "stage": mission.get("state", {}).get("phase", "unknown"),
@@ -28,7 +69,9 @@ def snapshot(root: Path, mission: dict, report: dict) -> dict:
         "knowledge": {},
         "history": {},
         "warnings": [],
-        "installed_package": version("rlms"),
+        "installed_package": package["version"],
+        "training_package_probe": package,
+        "renderer_package": version("rlms"),
     }
     run = Path(mission["run"]).resolve() if mission.get("run") else None
     if run and run.is_relative_to((root / "research/mission").resolve()):
