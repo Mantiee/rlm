@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import requests
+
 from rlm.v100.common import atomic_json
 from rlm.v100.model_candidates import prepare
 
@@ -227,7 +228,16 @@ def remote_only(root: Path) -> dict:
             atomic_json(profile, value)
         try:
             record["roles"] = qualify(root)
-            record["stage"] = "qualified" if record["roles"].get("roles") else "no-role-admitted"
+            roles = record["roles"]
+            record["stage"] = (
+                "already-running"
+                if roles.get("stage") == "already-running"
+                else "compatibility-blocked"
+                if roles.get("unresolved_compatibility")
+                else "qualified"
+                if roles.get("roles")
+                else "no-role-admitted"
+            )
         except (
             OSError,
             ValueError,

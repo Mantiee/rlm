@@ -53,6 +53,26 @@ def test_trading_collector_failure_does_not_freeze_mission(tmp_path, monkeypatch
     assert "broken chart" in state.data["trades"]["errors"][0]
 
 
+def test_stopped_controller_is_not_relabelled_as_active_evaluation(tmp_path):
+    run = tmp_path / "research/mission/run-current"
+    atomic_json(
+        run / "learning/update-0001/generation-01/A/development-quality.progress.json",
+        {
+            "schema": "v100-evaluation-progress-v1",
+            "state": "running",
+            "completed": 0,
+            "total": 81,
+        },
+    )
+    result = mission_view.snapshot(
+        tmp_path, {"run": str(run), "running": False, "state": {"phase": "stopped"}}, {}
+    )
+    assert result["stage"] == "stopped"
+    assert result["evaluation"]["state"] == "running"  # Preserve the recorded state as evidence.
+    assert result["evaluation"]["stale"] is True
+    assert "Mission stopped" in result["warnings"][0]
+
+
 def test_package_update_defers_entire_incomplete_cycle(tmp_path, monkeypatch):
     current = {
         "running": True,

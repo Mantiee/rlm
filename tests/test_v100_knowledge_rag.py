@@ -171,3 +171,33 @@ def test_read_search_does_not_create_or_write_schema(tmp_path):
     with __import__("pytest").raises(sqlite3.OperationalError):
         read_search(tmp_path, ["income"], 2, time.monotonic() + 0.5)
     assert not (tmp_path / "research/knowledge/passages.sqlite3").exists()
+
+
+def test_structured_task_queries_ignore_json_keys_and_rank_topic_titles(tmp_path, monkeypatch):
+    from rlm.v100 import goals, knowledge_rag
+
+    dump = tmp_path / "wiki.xml.bz2"
+    dump.write_bytes(
+        bz2.compress(
+            b"<mediawiki><page><title>Business revenue</title><ns>0</ns><revision><id>9</id><text>Revenue accounting costs.</text></revision></page><page><title>Branch</title><ns>0</ns><revision><id>10</id><text>branch user_goal json message text research source.</text></revision></page></mediawiki>"
+        )
+    )
+    import_wiki(tmp_path, dump, "en", 10)
+    monkeypatch.setattr(goals, "load_goal", lambda root: {"text": "business revenue"})
+    message = {
+        "role": "user",
+        "content": json.dumps(
+            {
+                "branch": "A",
+                "user_goal": {"text": "business revenue accounting"},
+                "task": "Compare business revenue costs",
+            }
+        ),
+    }
+    result = knowledge_rag.attach(tmp_path, [message])
+    assert result[0] == message
+    passages = json.loads(result[-1]["content"])["supplemental_archive_data"]["passages"]
+    assert [p["title"] for p in passages] == ["Business revenue"]
+    receipt = json.loads((tmp_path / "research/knowledge/goal-use.json").read_text())
+    assert "user_goal" not in receipt["query"] and "branch" not in receipt["query"]
+    assert receipt["state"] == "retrieved"

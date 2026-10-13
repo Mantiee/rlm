@@ -17,7 +17,7 @@ import requests
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.model_policy import NODE_MODELS, retired
 from rlm.v100.model_roles import evaluate, json_hash
-from rlm.v100.remote_helper import BACKEND, ROLE_MODELS, STABLE_METADATA, metadata_sha
+from rlm.v100.remote_helper import BACKEND, ORDERED_METADATA, ROLE_MODELS, metadata_sha
 
 ENDPOINT = "http://192.168.0.9:11435"
 CONTRACT = "synta-dedicated-linux-v1"
@@ -152,7 +152,7 @@ def qualify(root: Path, resources: dict) -> dict:
                 "device": "remote",
                 "model_digest": digest,
                 "metadata_sha256": "",
-                "metadata_hash_scheme": STABLE_METADATA,
+                "metadata_hash_scheme": ORDERED_METADATA,
                 "max_vram_gib": ROLE_MODELS[model][1],
                 "helper_batch_tokens": 64,
                 "helper_duty_percent": 100,
@@ -165,9 +165,11 @@ def qualify(root: Path, resources: dict) -> dict:
             try:
                 client = helper_client(profile, root)
                 client.timeout = 5
-                profile["resources"]["metadata_sha256"] = metadata_sha(
-                    client.identity(), STABLE_METADATA
-                )
+                info = client.identity()
+                snapshot = folder / (key + ".show.json")
+                atomic_json(snapshot, info)
+                profile["resources"]["metadata_sha256"] = metadata_sha(info, ORDERED_METADATA)
+                profile["resources"]["metadata_snapshot"] = str(snapshot.relative_to(root))
                 client = helper_client(profile, root)
                 client.timeout = 30
                 client.request_deadline = time.monotonic() + 180

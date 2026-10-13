@@ -59,6 +59,11 @@ def main():
         "wiki_index": "knowledge/index-progress.json",
         "wiki_goal_use": "knowledge/goal-use.json",
         "private_sync": "private-sync/status.json",
+        "remote_preparation": "model-roles/remote-preparation.json",
+        "remote_chat_deployment": "remote-chat-deployment.json",
+        "mission_recovery": "mission-watchdog/status.json",
+        "supervisor": "supervisor/status.json",
+        "supervisor_pause": "supervisor/pause.json",
     }.items():
         report["receipts"][name] = receipt(root / "research" / path)
     report["receipts"]["current_activity"] = snapshot(root, report["mission"], {})
@@ -69,6 +74,28 @@ def main():
         {"path": str(path), "data": receipt(path)}
         for path in sorted(reports, key=lambda p: p.stat().st_mtime, reverse=True)[:5]
     ]
+    report["role_metadata"] = []
+    for role, entry in report["receipts"]["roles"].get("roles", {}).items():
+        profile_path = Path(entry["profile"]).resolve()
+        if not profile_path.is_relative_to((root / "research/model-roles").resolve()):
+            continue
+        profile = receipt(profile_path)
+        item = {"role": role, "profile": profile}
+        snapshot_path = profile.get("resources", {}).get("metadata_snapshot")
+        if snapshot_path:
+            snapshot_path = (root / snapshot_path).resolve()
+            if snapshot_path.is_relative_to((root / "research").resolve()):
+                item["pinned_snapshot"] = receipt(snapshot_path)
+        report["role_metadata"].append(item)
+    for entry in report["qualification_details"][:1]:
+        for candidate in entry["data"].get("reports", []):
+            snapshot_path = candidate.get("metadata_snapshot")
+            if snapshot_path and candidate.get("role") == "planner":
+                snapshot_path = Path(snapshot_path).resolve()
+                if snapshot_path.is_relative_to((root / "research/model-roles").resolve()):
+                    report["role_metadata"].append(
+                        {"role": "planner-candidate", "current_snapshot": receipt(snapshot_path)}
+                    )
     urls = [("dashboard", "http://192.168.0.68:8765/api/status")]
     for host, origin in (
         ("windows", "http://192.168.0.61:11435"),
@@ -89,6 +116,7 @@ def main():
         "v100-mission.service",
         "synta-managed-update.service",
         "synta-model-preparation.service",
+        "synta-role-qualification.service",
         "*wikipedia*",
     ]
     try:

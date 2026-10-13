@@ -87,9 +87,14 @@ def snapshot(root: Path, mission: dict, report: dict) -> dict:
                 view["evaluation"] = {
                     **row,
                     "age_seconds": age,
-                    "stale": row.get("state") == "running" and age > 900,
+                    "stale": row.get("state") == "running"
+                    and (age > 900 or mission.get("running") is not True),
                 }
-                if row.get("state") == "running" and age <= 900:
+                if row.get("state") == "running" and mission.get("running") is not True:
+                    view["warnings"].append(
+                        "Mission stopped; the recorded evaluation does not confirm an active worker"
+                    )
+                if row.get("state") == "running" and age <= 900 and mission.get("running") is True:
                     view["stage"] = "candidate evaluation"
                 break
             except (OSError, ValueError) as error:

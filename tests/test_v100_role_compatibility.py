@@ -10,8 +10,15 @@ from rlm.v100 import competition, managed_bootstrap, model_roles
 from rlm.v100.common import atomic_json
 
 
-def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(tmp_path, monkeypatch):
-    info = {"template": "pinned template", "tokenizer": "pinned tokenizer"}
+@pytest.mark.parametrize("metadata_change", ["none", "ordering", "template"])
+def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(
+    tmp_path, monkeypatch, metadata_change
+):
+    info = {
+        "template": "pinned template",
+        "tokenizer": "pinned tokenizer",
+        "parameters": "temperature 0\nnum_ctx 32768",
+    }
     metadata = model_roles.metadata_sha(info, model_roles.STABLE_METADATA)
     profile = {
         "runtime": {"model_name": "qwen3.8:27b-q4_K_M", "max_output_tokens": 4096},
@@ -33,6 +40,10 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(tmp_pat
         tmp_path / "research/model-roles/active.json",
         {"roles": {"planner": {"profile": str(pinned)}}},
     )
+    if metadata_change == "ordering":
+        info["parameters"] = "num_ctx 32768\ntemperature 0"
+    elif metadata_change == "template":
+        info["template"] = "changed template"
     monkeypatch.setattr(
         model_roles, "selected_profile", lambda root, role: pinned if role == "planner" else None
     )
@@ -61,10 +72,19 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(tmp_pat
         lambda client: {"passed": 20, "total": 20, "critical_passed": True, "seconds": 10},
     )
     result = model_roles.qualify(tmp_path)
+    if metadata_change == "template":
+        assert result["roles"]["planner"]["profile"] == str(pinned)
+        assert result["unresolved_compatibility"] == ["planner"]
+        assert json.loads(original.read_text()) == baseline
+        assert json.loads(pinned.read_text()) == profile
+        return
     migrated = json.loads(open(result["roles"]["planner"]["profile"]).read())
     assert migrated["runtime"]["model_name"] == profile["runtime"]["model_name"]
     assert migrated["resources"]["model_digest"] == "a" * 64
-    assert migrated["resources"]["metadata_sha256"] == metadata
+    assert migrated["resources"]["metadata_sha256"] == model_roles.metadata_sha(
+        info, model_roles.ORDERED_METADATA
+    )
+    assert json.loads((tmp_path / migrated["resources"]["metadata_snapshot"]).read_text()) == info
     assert migrated["resources"]["allow_cpu_offload"] is False
     assert migrated["runtime"]["context_window"] == 65536
     assert migrated["server"]["context_per_slot"] == 65536
@@ -73,6 +93,74 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(tmp_pat
     assert result["legacy_route"]["role"] == "planner"
     assert "fast" not in result["roles"]
     assert json.loads(pinned.read_text()) == profile
+
+
+def test_legacy_role_pin_recovers_only_parameter_order(tmp_path):
+    info = {
+        "template": "pinned tokenizer template",
+        "parameters": 'temperature 0\nstop "one"\nstop "two"\nnum_ctx 32768',
+        "modelfile": 'FROM pinned\nPARAMETER temperature 0\nPARAMETER num_ctx 32768\nTEMPLATE """\nPARAMETER this is template text\n"""\n',
+        "modified_at": "before",
+    }
+    pin = {
+        "metadata_hash_scheme": model_roles.STABLE_METADATA,
+        "metadata_sha256": model_roles.metadata_sha(info, model_roles.STABLE_METADATA),
+    }
+    current = dict(info, modified_at="later")
+    current["parameters"] = 'num_ctx 32768\nstop "one"\nstop "two"\ntemperature 0'
+    current["modelfile"] = info["modelfile"].replace(
+        "PARAMETER temperature 0\nPARAMETER num_ctx 32768",
+        "PARAMETER num_ctx 32768\nPARAMETER temperature 0",
+    )
+    assert (
+        model_roles.compatible_metadata(tmp_path, pin, current)["state"] == "legacy-pin-reproduced"
+    )
+    for changed in (
+        dict(current, template="different tokenizer template"),
+        dict(
+            current,
+            parameters=current["parameters"].replace(
+                'stop "one"\nstop "two"', 'stop "two"\nstop "one"'
+            ),
+        ),
+        dict(
+            current,
+            modelfile=current["modelfile"].replace("this is template text", "new template text"),
+        ),
+    ):
+        with pytest.raises(ValueError, match="cannot change pinned"):
+            model_roles.compatible_metadata(tmp_path, pin, changed)
+
+
+def test_metadata_migration_requires_verified_snapshot_and_rejects_escape(tmp_path):
+    info = {"template": "unchanged", "parameters": "num_ctx 32768\ntemperature 0"}
+    previous = dict(info, parameters="temperature 0\nnum_ctx 32768")
+    path = tmp_path / "research/model-roles/pinned.show.json"
+    atomic_json(path, previous)
+    pin = {
+        "metadata_snapshot": str(path),
+        "metadata_hash_scheme": model_roles.STABLE_METADATA,
+        "metadata_sha256": model_roles.metadata_sha(previous, model_roles.STABLE_METADATA),
+    }
+    assert model_roles.compatible_metadata(tmp_path, pin, info)["state"] == "parameter-order-proven"
+    with pytest.raises(ValueError, match="fields=.*template"):
+        model_roles.compatible_metadata(tmp_path, pin, dict(info, template="changed"))
+    with pytest.raises(ValueError, match="escaped"):
+        model_roles.compatible_metadata(
+            tmp_path, dict(pin, metadata_snapshot="../foreign.json"), info
+        )
+
+
+def test_role_qualification_has_one_owned_admission_lease(tmp_path, monkeypatch):
+    import fcntl
+
+    folder = tmp_path / "research/model-roles"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(model_roles, "qualify_locked", lambda root: {"stage": "measured"})
+    with (folder / "qualification.lock").open("a") as lease:
+        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert model_roles.qualify(tmp_path)["stage"] == "already-running"
+    assert model_roles.qualify(tmp_path)["stage"] == "measured"
 
 
 def test_offload_permission_is_architecture_specific():
