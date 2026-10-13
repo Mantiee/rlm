@@ -127,6 +127,62 @@ def dashboard_update(root: Path, folder: Path, revision: str) -> dict:
     return result
 
 
+def remote_chat_update(root: Path, dashboard: dict, revision: str) -> dict:
+    """Refresh the authenticated read-only gateway without restarting the learner."""
+    if dashboard.get("stage") != "ready" or dashboard.get("revision") != revision:
+        return {"stage": "blocked", "reason": "Verified separate runtime unavailable"}
+    target = Path(dashboard["code_path"])
+    override = Path.home() / ".config/systemd/user/synta-remote.service.d/20-code.conf"
+    path = root / "research/remote-chat-deployment.json"
+    if path.is_file():
+        previous = json.loads(path.read_text())
+        if previous.get("stage") == "configured" and previous.get("revision") == revision:
+            return previous
+    old = override.read_bytes() if override.is_file() else None
+    try:
+        subprocess.run(
+            [
+                str(root / "venvs/v100-continual/bin/python"),
+                "-c",
+                "import sys;sys.path.insert(0,sys.argv[1]);from rlm.v100.remote_access import GatewayServer;from rlm.v100.chat_progress import requested;assert requested('Możesz już skutecznie testami zarabiać? trenujesz już przez 4 dni…')",
+                str(target),
+            ],
+            check=True,
+            timeout=30,
+        )
+        override.parent.mkdir(parents=True, exist_ok=True)
+        override.write_text(f'[Service]\nEnvironment="PYTHONPATH={target}"\n')
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=15)
+        subprocess.run(
+            ["systemctl", "--user", "try-restart", "synta-remote.service"], check=True, timeout=30
+        )
+        subprocess.run(
+            [
+                str(root / "venvs/v100-continual/bin/python"),
+                "-c",
+                "import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from rlm.v100.mission_chat import resolve_failed_status_questions;print(resolve_failed_status_questions(Path(sys.argv[2])))",
+                str(target),
+                str(root),
+            ],
+            check=True,
+            timeout=60,
+        )
+        result = {
+            "stage": "configured",
+            "revision": revision,
+            "scope": "Authenticated gateway code refreshed; actual browser response requires a receipt. Accepted trainer and queued action worker unchanged",
+        }
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        if old is None:
+            override.unlink(missing_ok=True)
+        else:
+            override.write_bytes(old)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, timeout=15)
+        result = {"stage": "blocked", "error": str(error)[:400]}
+    save(path, {**result, "updated": time.time()})
+    return result
+
+
 def fetch(url: str) -> bytes:
     request = urllib.request.Request(
         url, headers={"User-Agent": "SyntaManagedUpdater/1.0 (+https://github.com/Mantiee/rlm)"}
@@ -303,6 +359,7 @@ def remote_preparation(root: Path, folder: Path, revision: str) -> dict:
 def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     python = root / "venvs/v100-continual/bin/python"
     dashboard = dashboard_update(root, folder, revision) if manifest["version"] >= 91 else {}
+    remote_chat = remote_chat_update(root, dashboard, revision) if manifest["version"] >= 98 else {}
     watchdog = folder / "rlm/v100/mission_watchdog.py"
     if watchdog.is_file():
         subprocess.run([str(python), str(watchdog), "--root", str(root)], check=True, timeout=120)
@@ -331,6 +388,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
                 "target": target,
                 "revision": revision,
                 "dashboard": dashboard,
+                "remote_chat": remote_chat,
                 "remote_qualification": remote_roles,
                 "scope": "Training and independent evaluation complete before a package switch",
             }

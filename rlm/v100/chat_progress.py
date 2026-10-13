@@ -12,10 +12,13 @@ def requested(message: str) -> bool:
     text = normalized(message)
     return bool(
         re.search(
-            r"co (?:(?:teraz|aktualnie|dokladnie|konkretnie|obecnie) )*robisz|co .*robicie|jaki (?:jest )?(?:postep|progres)|czego sie nauczyl|czy .*uczysz sie|czy uczysz sie|learn.*continuously|what have you learned|what (?:exactly )?are you doing",
+            r"co (?:(?:teraz|aktualnie|dokladnie|konkretnie|obecnie) )*robisz|co .*robicie|jaki (?:jest )?(?:postep|progres)|czego sie nauczyl|czy .*uczysz sie|czy uczysz sie|learn.*continuously|what have you learned|what (?:exactly )?are you doing|(?:czy|mozesz|potrafisz|umiesz)\b[^\n?]{0,120}\b(?:zarabiac|zarabiasz|zarabiania)\b|(?:czy|ile|jak dlugo)\b[^\n?]{0,80}\btrenujesz\b|\b(?:are you|can you|have you)\b[^\n?]{0,120}\b(?:earning|earn money|made money|training)\b",
             text,
         )
-    ) and not re.search(r"\b(?:zmien|dodaj|napraw|zrob|wdroz|zaimplementuj)\b", text)
+    ) and not re.search(
+        r"\b(?:zmien|dodaj|napraw|zrob|wdroz|zaimplementuj|uruchom|kup|sprzedaj|wykonaj|wyslij|usun|ustaw|trenuj|start|implement|fix|deploy|buy|sell|execute|send|delete|register|update|set|train)\b",
+        text,
+    )
 
 
 def continue_requested(message: str) -> bool:
@@ -29,6 +32,7 @@ def continue_requested(message: str) -> bool:
 
 def respond(root: Path, message: str | None = None) -> dict:
     from rlm.v100.chat_facts import language
+
     from rlm.v100.mission_evidence import collect
 
     evidence = collect(root)
@@ -47,6 +51,10 @@ def respond(root: Path, message: str | None = None) -> dict:
         )
 
     lines = [
+        wording(
+            "Zarabianie: ten status nie potwierdza otrzymanej zapłaty ani skutecznej strategii. Wyniki testów i papierowy zysk wymagają osobnych raportów; nie są prawdziwym przychodem.",
+            "Income: this status does not confirm a received payment or a profitable strategy. Test results and paper profit require separate reports and are not actual revenue.",
+        ),
         wording(
             "Pętla badań działa osobno od treningu wag. Trening wymaga nowych zweryfikowanych danych; nie odbywa się przy każdej odpowiedzi.",
             "Research runs separately from weight training. Training requires new verified data; answering a message is not an optimizer update.",

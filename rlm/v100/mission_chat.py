@@ -608,9 +608,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
     from rlm.v100.mission import status
-    from rlm.v100.mission_evidence import collect as collect_evidence
     from rlm.v100.planning import read as read_plans
     from rlm.v100.planning import update as update_plan
+
+    from rlm.v100.mission_evidence import collect as collect_evidence
     from rlm.v100.research_policy import settings
 
     # Authorization comes only from the current authenticated local user message,
@@ -1155,6 +1156,38 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         "Weights change only through independently tested training; CPU chat uses accepted weights, never a training candidate"
     )
     return result
+
+
+def resolve_failed_status_questions(root: Path) -> dict:
+    """Answer failed read-only status questions from receipts; never replay tools."""
+    from rlm.v100 import chat_progress
+
+    with connect(root) as db:
+        rows = db.execute(
+            "SELECT * FROM requests WHERE state='failed' AND response IS NULL ORDER BY rowid DESC LIMIT 32"
+        ).fetchall()
+    resolved = []
+    for row in rows:
+        if not chat_progress.requested(row["message"]):
+            continue
+        response = chat_progress.respond(root, row["message"])
+        response["previous_error"] = row["error"]
+        response["scope"] = "Fresh read-only status after failed inference; no actions replayed"
+        with connect(root) as db:
+            changed = db.execute(
+                "UPDATE requests SET state='completed',response=?,error=NULL,updated=? WHERE id=? AND state='failed' AND response IS NULL",
+                (json.dumps(response, ensure_ascii=False), time.time(), row["id"]),
+            ).rowcount
+        if changed:
+            resolved.append(row["id"])
+            ActivityLog(root, "controller", "chat").write(
+                "decisions",
+                "status-question-recovered",
+                {"id": row["id"], "previous_error": row["error"], "scope": response["scope"]},
+            )
+        if len(resolved) >= 8:
+            break
+    return {"resolved_read_only_questions": resolved, "actions_replayed": 0}
 
 
 def reopen_unavailable_questions(root: Path) -> dict:

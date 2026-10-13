@@ -15,11 +15,11 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 import urllib3
-
-from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn, research_output_limit, tool_schema, tool_turn
 from rlm.v100.insights import PROOF_DOMAINS
 from rlm.v100.tool_protocol import json_object
+
+from rlm.v100.activity import ActivityLog
 
 COMPACT_CPU_TOOLS = {
     "search_memory",
@@ -1272,7 +1272,11 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
     client = apply(client, root)
     from rlm.v100.knowledge_rag import attach
 
+    memory_messages = messages
     messages = attach(root, messages)
+    from rlm.v100 import decision_memory
+
+    messages = decision_memory.attach(root, messages, client.context_window)
     owner = getattr(client, "research_owner", "A")
     journal = ActivityLog(root, owner, getattr(client, "activity_actor", "tester"))
     tools = ResearchTools(
@@ -1380,6 +1384,8 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
             retry_output_limit=research_output_limit(client),
         )
     )
-    result["content"] = json.dumps(json_object(result.get("content"), "Research final answer"))
+    public_response = json_object(result.get("content"), "Research final answer")
+    result["content"] = json.dumps(public_response)
+    decision_memory.record(root, memory_messages, public_response, trace)
     result["research_trace"] = trace
     return result
