@@ -192,6 +192,55 @@ def refresh_private_sync(root: Path, folder: Path) -> None:
         os.replace(temporary, destination / source.name)
 
 
+def remote_preparation(root: Path, folder: Path, revision: str) -> dict:
+    """Use the pinned source as a separate process while the learner package waits."""
+    python = root / "venvs/v100-continual/bin/python"
+    source = folder / "rlm/v100/source_sync.py"
+    if not source.is_file():
+        return {"stage": "not available in bundle"}
+    try:
+        active = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", "synta-role-qualification.service"],
+            check=False,
+            timeout=15,
+        )
+        if active.returncode == 0:
+            return {"stage": "already-running"}
+        subprocess.run(
+            [str(python), str(source), "--root", str(root), "--revision", revision],
+            check=True,
+            timeout=180,
+        )
+        snapshot = root / "research/managed-source" / revision
+        ledger = json.loads((snapshot / "MANAGED_SOURCE.json").read_text())
+        manifest = json.loads((folder / "release.json").read_text())
+        for name in (
+            "rlm/v100/managed_prepare.py",
+            "rlm/v100/model_roles.py",
+            "rlm/v100/remote_helper.py",
+        ):
+            if ledger["files"].get(name) != manifest["files"].get(name):
+                raise ValueError("Remote preparation source differs from verified bundle: " + name)
+        unit = Path.home() / ".config/systemd/user/synta-role-qualification.service"
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text(
+            f"[Unit]\nDescription=Synta independent remote model qualification\n[Service]\nType=oneshot\nWorkingDirectory={snapshot}\nExecStart={python} -u -m rlm.v100.managed_prepare --root {root} --remote-only\nNice=10\nTimeoutStartSec=15min\n"
+        )
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=15)
+        subprocess.run(
+            ["systemctl", "--user", "start", "--no-block", "synta-role-qualification.service"],
+            check=True,
+            timeout=15,
+        )
+        return {
+            "stage": "queued",
+            "revision": revision,
+            "scope": "Remote roles only; active accepted learner retained",
+        }
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        return {"stage": "blocked", "error": str(error)[:400]}
+
+
 def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     python = root / "venvs/v100-continual/bin/python"
     dashboard = dashboard_update(root, folder, revision) if manifest["version"] >= 91 else {}
@@ -214,6 +263,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     match = re.fullmatch(r"0\.1\.3\+v100\.(\d+)", installed)
     if not match or int(match[1]) > manifest["version"]:
         raise ValueError("Managed updater refuses an unknown package or a downgrade")
+    remote_roles = remote_preparation(root, folder, revision) if manifest["version"] >= 96 else {}
     if installed != target:
         if manifest["version"] >= 91 and active_learning_cycle(root):
             return {
@@ -222,6 +272,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
                 "target": target,
                 "revision": revision,
                 "dashboard": dashboard,
+                "remote_qualification": remote_roles,
                 "scope": "Training and independent evaluation complete before a package switch",
             }
         if exclusive:
@@ -230,6 +281,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
                 "installed": installed,
                 "target": target,
                 "revision": revision,
+                "remote_qualification": remote_roles,
             }
         subprocess.run(
             ["/bin/bash", str(folder / manifest["linux_installer"]), revision], check=True
@@ -319,6 +371,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
         "source": source_receipt,
         "preparation_stage": observed.get("stage"),
         "dashboard": dashboard,
+        "remote_qualification": remote_roles,
         "version": target,
         "revision": revision,
         "scope": "Roles require successful host qualification; accepted learning weights retained",

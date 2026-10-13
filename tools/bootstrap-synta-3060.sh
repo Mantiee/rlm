@@ -39,7 +39,7 @@ revision,folder,script=sys.argv[1],Path(sys.argv[2]),Path(sys.argv[3])
 m=json.loads((folder/'manifest.json').read_text())
 assert m.get('node3060_installer')=='tools/bootstrap-synta-3060.sh'
 assert hashlib.sha256(script.read_bytes()).hexdigest()==m['files']['tools/bootstrap-synta-3060.sh'], 'Installer bytes differ from pinned manifest'
-for path in ('rlm/v100/owned_node.py','rlm/v100/owned_node_update.py','rlm/v100/release_selector.py','rlm/v100/compute_kernel.py','rlm/v100/compute_worker.py','rlm/v100/source_sync.py'):
+for path in ('rlm/v100/owned_node.py','rlm/v100/owned_node_update.py','rlm/v100/owned_maintenance.py','rlm/v100/release_selector.py','rlm/v100/compute_kernel.py','rlm/v100/compute_worker.py','rlm/v100/source_sync.py'):
     req=urllib.request.Request(f'https://raw.githubusercontent.com/Mantiee/rlm/{revision}/{path}',headers={'User-Agent':'SyntaOwned3060/1.0'})
     with urllib.request.urlopen(req,timeout=30) as r: data=r.read(2*2**20+1)
     assert len(data)<=2*2**20 and hashlib.sha256(data).hexdigest()==m['files'][path], 'Source checksum differs'
@@ -199,27 +199,14 @@ restore_services() {
 }
 trap restore_services ERR
 if [[ -n "$PREVIOUS" ]]; then
-  if "$PY" - <<'PY'
-import json,urllib.request,urllib.error
-req=urllib.request.Request('http://127.0.0.1:11435/api/synta-maintenance',data=b'{}',headers={'Content-Type':'application/json'})
-try:
-    with urllib.request.urlopen(req,timeout=3) as r:
-        assert json.load(r)['state']=='drained'
-except urllib.error.HTTPError as error:
-    if error.code==503: raise SystemExit(75)
-    raise
-except urllib.error.URLError:
-    # A stopped endpoint has no surviving node tasks; Ollama may still be generating.
-    with urllib.request.urlopen('http://127.0.0.1:11436/api/ps',timeout=3) as r: value=json.load(r)
-    if value.get('models'): raise SystemExit(75)
-PY
+  if "$PY" "$SOURCE/owned_maintenance.py"
   then
     :
   else
     FAILURE=$?
     if [[ "$FAILURE" -eq 75 ]]; then
       trap - ERR
-      echo 'New owned jobs arrived; update deferred before restart.'
+      echo 'Owned work did not drain within 60 seconds; update deferred before restart. Inspect waiting-for-owned-jobs reasons above.'
       exit 75
     fi
     restore_services "$FAILURE"

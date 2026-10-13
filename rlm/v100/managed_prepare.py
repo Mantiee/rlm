@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 import requests
-
 from rlm.v100.common import atomic_json
 from rlm.v100.model_candidates import prepare
 
@@ -205,6 +204,43 @@ def run(root: Path) -> dict:
     return record
 
 
+def remote_only(root: Path) -> dict:
+    """Qualify advisory Windows roles without running any V100 training/native pilot."""
+    from rlm.v100.model_roles import qualify
+
+    target = root / "research/model-roles/remote-preparation.json"
+    record = {
+        "stage": "qualifying-remote-roles",
+        "updated": time.time(),
+        "scope": "Independent advisory roles; accepted learner, LoRA and V100 endpoint unchanged",
+    }
+    atomic_json(target, record)
+    endpoint = helper_endpoint(root)
+    if endpoint is None:
+        record.update(stage="blocked", error="Owned Windows helper unavailable")
+    else:
+        profile = root / "research/researcher-rtx3090.json"
+        if profile.exists():
+            value = json.loads(profile.read_text())
+            value["runtime"]["base_url"] = endpoint
+            value["resources"]["require_adaptive_windows_guard"] = True
+            atomic_json(profile, value)
+        try:
+            record["roles"] = qualify(root)
+            record["stage"] = "qualified" if record["roles"].get("roles") else "no-role-admitted"
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            subprocess.SubprocessError,
+            requests.RequestException,
+        ) as error:
+            record.update(stage="blocked", error=str(error)[:400])
+    record["updated"] = time.time()
+    atomic_json(target, record)
+    return record
+
+
 def main() -> None:
     def interrupted(signum, frame):
         raise InterruptedError("Managed preparation interrupted; resume preserved mission profile")
@@ -212,8 +248,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True, type=Path)
+    parser.add_argument("--remote-only", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(run(args.root), indent=2))
+    print(json.dumps(remote_only(args.root) if args.remote_only else run(args.root), indent=2))
 
 
 if __name__ == "__main__":

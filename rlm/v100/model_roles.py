@@ -187,7 +187,7 @@ def qualify(root: Path) -> dict:
             "profile": baseline_profile,
             "models": sorted((m["name"], m["digest"]) for m in inventory["models"]),
             "panel": cases(),
-            "revision": "roles-v94",
+            "revision": "roles-v96",
         }
     )
     cache = root / "research/model-roles/qualification-cache.json"

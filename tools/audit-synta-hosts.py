@@ -96,6 +96,38 @@ def main():
         report["services"] = result.stdout[-12000:] + result.stderr[-2000:]
     except (OSError, subprocess.SubprocessError) as error:
         report["services"] = str(error)
+    report["receipts"]["updater_service"] = {}
+    for field, command in (
+        (
+            "state",
+            [
+                "systemctl",
+                "--user",
+                "show",
+                "synta-managed-update.service",
+                "--property=ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp",
+            ],
+        ),
+        (
+            "recent_log",
+            [
+                "journalctl",
+                "--user",
+                "-u",
+                "synta-managed-update.service",
+                "-n",
+                "12",
+                "--no-pager",
+                "-o",
+                "cat",
+            ],
+        ),
+    ):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            report["receipts"]["updater_service"][field] = (result.stdout + result.stderr)[-4000:]
+        except (OSError, subprocess.SubprocessError) as error:
+            report["receipts"]["updater_service"][field] = str(error)[:400]
     output = root / "research/host-audit.json"
     output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
     print(json.dumps(report, indent=2, ensure_ascii=False))

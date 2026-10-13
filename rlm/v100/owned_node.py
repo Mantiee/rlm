@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -57,6 +58,7 @@ class Node:
         self.cpu_lock = threading.Lock()
         self.generating = False
         self.maintenance = False
+        self.drain_until = 0.0
         self.processes = {}
         self.cpu_slots = max(
             1,
@@ -106,11 +108,26 @@ class Node:
         values = resource_budget(ram.available / 2**30, float(temperature), float(free) / 1024)
         if self.maintaining():
             values.update(ready=False, reason="Owned update window")
+        elif self.draining():
+            values.update(reason="Finishing owned jobs for an update; new work paused")
         with self.cpu_lock:
             active = len(self.processes)
+        updater_path = self.root.parent / "managed-update.json"
+        updater = {"stage": "unknown"}
+        try:
+            if updater_path.is_symlink() or updater_path.stat().st_size > 16384:
+                raise ValueError("Updater receipt is linked or oversized")
+            value = json.loads(updater_path.read_text())
+            if not isinstance(value, dict):
+                raise ValueError("Updater receipt must be an object")
+            updater = {key: value.get(key) for key in ("stage", "revision", "updated", "error")}
+        except (OSError, ValueError) as error:
+            updater["detail"] = str(error)[:200]
         return {
             **values,
-            "cpu_ready": not self.maintaining() and ram.available > 2**30,
+            "cpu_ready": not self.maintaining() and not self.draining() and ram.available > 2**30,
+            "maintenance_pending": self.draining(),
+            "updater": updater,
             "contract": CONTRACT,
             "updated": time.time(),
             "name": "debian-3060ti",
@@ -140,6 +157,23 @@ class Node:
     def maintaining(self) -> bool:
         return self.maintenance or (self.root.parent / "installing").exists()
 
+    def draining(self) -> bool:
+        return time.monotonic() < self.drain_until
+
+    def begin_maintenance(self) -> None:
+        # A renewable lease blocks new work without cancelling jobs already running.
+        # If the installer exits before acquiring a drain, admission resumes after 65 s.
+        self.drain_until = time.monotonic() + 65
+        if not self.gpu_lock.acquire(blocking=False):
+            raise BlockingIOError("Owned inference active; waiting for completion")
+        try:
+            with self.cpu_lock:
+                if self.processes:
+                    raise BlockingIOError("Owned CPU jobs active; waiting for completion")
+                self.maintenance = True
+        finally:
+            self.gpu_lock.release()
+
     def monitor(self):
         while True:
             try:
@@ -153,7 +187,7 @@ class Node:
                     ram_ready = False
                 self.state = {
                     "ready": False,
-                    "cpu_ready": not self.maintaining() and ram_ready,
+                    "cpu_ready": not self.maintaining() and not self.draining() and ram_ready,
                     "cpu_slots": self.cpu_slots,
                     "cpu_active": len(self.processes),
                     "contract": CONTRACT,
@@ -205,6 +239,7 @@ class Node:
             if (
                 len(self.processes) >= self.cpu_slots
                 or self.maintaining()
+                or self.draining()
                 or not self.state.get("cpu_ready")
             ):
                 raise BlockingIOError("Owned CPU capacity busy or telemetry unavailable")
@@ -338,13 +373,7 @@ class Handler(BaseHTTPRequestHandler):
                 and self.path == "/api/synta-maintenance"
                 and self.client_address[0] == "127.0.0.1"
             ):
-                acquired = node.gpu_lock.acquire(blocking=False)
-                if not acquired:
-                    raise BlockingIOError("Owned inference active")
-                with node.cpu_lock:
-                    if node.processes:
-                        raise BlockingIOError("Owned CPU jobs active")
-                    node.maintenance = True
+                node.begin_maintenance()
                 self.send_json(200, {"state": "drained"})
                 return
             if self.command == "GET" and self.path == "/api/synta-resources":
@@ -379,12 +408,12 @@ class Handler(BaseHTTPRequestHandler):
                 ):
                     raise ValueError("Model outside pinned dedicated-node allowlist")
                 if self.path == "/api/chat":
-                    if node.maintaining() or not node.state.get("ready"):
+                    if node.maintaining() or node.draining() or not node.state.get("ready"):
                         raise BlockingIOError(node.state.get("reason", "Node not ready"))
                     acquired = node.gpu_lock.acquire(blocking=False)
                     if not acquired:
                         raise BlockingIOError("Owned GPU inference busy")
-                    if node.maintaining():
+                    if node.maintaining() or node.draining():
                         raise BlockingIOError("Owned update window")
                     options = data.setdefault("options", {})
                     options["num_ctx"] = 32768
@@ -441,10 +470,22 @@ def main():
     parser.add_argument("--upstream-port", type=int, default=11436)
     args = parser.parse_args()
     node = Node(args.root.resolve(), args.source.resolve())
-    server = ThreadingHTTPServer((args.bind, args.port), Handler)
-    server.owner, server.node, server.upstream_port = args.owner, node, args.upstream_port
-    threading.Thread(target=node.monitor, daemon=True).start()
-    server.serve_forever()
+    with ExitStack() as stack:
+        server = stack.enter_context(ThreadingHTTPServer((args.bind, args.port), Handler))
+        servers = [server]
+        if args.bind == "192.168.0.9":
+            local = stack.enter_context(ThreadingHTTPServer(("127.0.0.1", args.port), Handler))
+            servers.append(local)
+        for endpoint in servers:
+            endpoint.owner, endpoint.node, endpoint.upstream_port = (
+                args.owner,
+                node,
+                args.upstream_port,
+            )
+        if len(servers) == 2:
+            threading.Thread(target=local.serve_forever, daemon=True).start()
+        threading.Thread(target=node.monitor, daemon=True).start()
+        server.serve_forever()
 
 
 if __name__ == "__main__":
