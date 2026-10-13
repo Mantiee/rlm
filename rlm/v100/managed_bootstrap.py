@@ -374,8 +374,17 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     dashboard = dashboard_update(root, folder, revision) if manifest["version"] >= 91 else {}
     remote_chat = remote_chat_update(root, dashboard, revision) if manifest["version"] >= 98 else {}
     watchdog = folder / "rlm/v100/mission_watchdog.py"
+    recovery = {"stage": "not-configured"}
     if watchdog.is_file():
-        subprocess.run([str(python), str(watchdog), "--root", str(root)], check=True, timeout=120)
+        try:
+            subprocess.run(
+                [str(python), str(watchdog), "--root", str(root)], check=True, timeout=120
+            )
+            recovery = {"stage": "completed"}
+        except (OSError, subprocess.SubprocessError) as error:
+            recovery = {"stage": "blocked", "error": str(error)[:400]}
+        recovery.update(revision=revision, updated=time.time())
+        save(root / "research/managed-mission-recovery.json", recovery)
     processes = subprocess.check_output(["ps", "-eo", "args="], text=True)
     exclusive = any(
         "rlm.v100.cli" in line
@@ -403,6 +412,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
                 "dashboard": dashboard,
                 "remote_chat": remote_chat,
                 "remote_qualification": remote_roles,
+                "mission_recovery": recovery,
                 "scope": "Training and independent evaluation complete before a package switch",
             }
         if exclusive:
@@ -412,6 +422,18 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
                 "target": target,
                 "revision": revision,
                 "remote_qualification": remote_roles,
+                "mission_recovery": recovery,
+            }
+        if recovery["stage"] == "blocked":
+            return {
+                "stage": "deferred-mission-recovery",
+                "installed": installed,
+                "target": target,
+                "revision": revision,
+                "dashboard": dashboard,
+                "remote_chat": remote_chat,
+                "remote_qualification": remote_roles,
+                "mission_recovery": recovery,
             }
         subprocess.run(
             ["/bin/bash", str(folder / manifest["linux_installer"]), revision], check=True
@@ -502,6 +524,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
         "preparation_stage": observed.get("stage"),
         "dashboard": dashboard,
         "remote_qualification": remote_roles,
+        "mission_recovery": recovery,
         "version": target,
         "revision": revision,
         "scope": "Roles require successful host qualification; accepted learning weights retained",

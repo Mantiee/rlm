@@ -8,7 +8,7 @@
     "tools/benchmark-synta-windows.ps1": "7875d9ce54f534bf3596e36e53e25f05c024d9900e83ef9cfef97ee995441c38",
     "tools/serve-v100-dashboard.py": "4e99ff46ed45cbd8b05febeae97a2781910527a844a7b7ff8965a6767936edaa",
     "tools/qualify-synta-models-debian.sh": "6ad0254352f4f888e255721b7900b26239da71a741e418018f88b77e25f0d0dd",
-    "rlm/v100/managed_bootstrap.py": "690abf05e17e2fa3471f60a8ab63800e36dd8f821d8d7a364b7ee512c102f847",
+    "rlm/v100/managed_bootstrap.py": "94ed93929c87db030b89d793fd71a935d9a4eaa315a0483e886f4d045039a258",
     "rlm/v100/inference_benchmark.py": "b65cd1dcdc1ba46cfad00fa768726d7a8b5f80cbccc7fccab13717894cf09c25",
     "rlm/v100/wikimedia_exports.py": "f3788e5ab9e2e6d9551b005d1a356052c26d565dc0c9a290d5f9762e521f2ab5",
     "rlm/v100/knowledge_rag.py": "f1bfb077a54003069d25609250071bcbff404485582b29b4ca726aa0cd9c6572",
