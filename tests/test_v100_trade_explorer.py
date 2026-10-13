@@ -125,7 +125,7 @@ class Element {
 }
 const document={getElementById:id=>nodes[id],createElement:t=>new Element(t)};
 function svg(tag,attrs,text){const n=new Element(tag);Object.assign(n,attrs);n.textContent=text||'';return n}
-for(const id of ['trade-series','trade-start','trade-end','trade-metric','trade-errors','trade-plot','trade-summary','trade-scope','trade-hover','trade-detail','trade-receipt'])nodes[id]=new Element('div');
+for(const id of ['trade-series','trade-start','trade-end','trade-metric','trade-errors','trade-plot','trade-summary','trade-explanation','trade-scope','trade-hover','trade-detail','trade-receipt'])nodes[id]=new Element('div');
 """
     program += functions
     program += r"""
@@ -138,8 +138,18 @@ markers[1].onclick();if(!nodes['trade-receipt'].open||JSON.parse(nodes['trade-de
 const retained=nodes['trade-receipt'];tradeStart=20;tradeEnd=90;tradeData={updated:2,series:[{...series,net_pnl:-20}],errors:[]};drawTrades();
 if(tradeChoice!=='real'||tradeStart!==20||tradeEnd!==90||nodes['trade-receipt']!==retained||!retained.open||tradeSelected!=='sell-proof')throw Error('Selection or expanded receipt reset');
 if(!nodes['trade-summary'].textContent.includes('-20.0000'))throw Error('Live P&L did not update');
+tradeSelected=null;tradeStart=0;tradeEnd=100;
+tradeData.series=[{...series,points:[{time:1,equity:10000,frictionless_equity:10000},{time:2,equity:9900,frictionless_equity:10050}]}];
+tradeMetric='frictionless';drawTrades();
+let curves=nodes['trade-plot'].children.filter(n=>n.tag==='polyline');
+if(curves.length!==2||curves[0].stroke!=='#85baff'||curves[1].stroke!=='#ff8989')throw Error('Cost-free view hides net loss');
+if(!nodes['trade-explanation'].textContent.includes('DIAGNOSTIC ONLY'))throw Error('Missing cost-free warning');
+tradeMetric='return';drawTrades();curves=nodes['trade-plot'].children.filter(n=>n.tag==='polyline');
+if(curves.length!==2||curves[0].stroke!=='#ff8989'||!curves[1]['stroke-dasharray'])throw Error('Net view hides cost comparison');
 """
-    result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=30)
+    result = subprocess.run(
+        ["node", "-"], input=program, text=True, capture_output=True, timeout=30
+    )
     assert result.returncode == 0, result.stderr
 
 

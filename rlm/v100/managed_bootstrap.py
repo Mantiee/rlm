@@ -176,6 +176,22 @@ def materialize(folder: Path, revision: str, manifest: dict) -> None:
     save(folder / "release.json", {**manifest, "revision": revision})
 
 
+def refresh_private_sync(root: Path, folder: Path) -> None:
+    """Refresh an already opted-in sync from the checksum-verified release bundle."""
+    destination = root / "tools/private-sync"
+    if not (destination / "private_sync.py").is_file():
+        return
+    for name in (
+        "rlm/v100/private_sync.py",
+        "rlm/v100/release_selector.py",
+        "tools/audit-synta-hosts.py",
+    ):
+        source = folder / name
+        temporary = destination / (source.name + ".new")
+        temporary.write_bytes(source.read_bytes())
+        os.replace(temporary, destination / source.name)
+
+
 def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     python = root / "venvs/v100-continual/bin/python"
     dashboard = dashboard_update(root, folder, revision) if manifest["version"] >= 91 else {}
@@ -368,6 +384,8 @@ def main() -> None:
                 print(json.dumps({"stage": "already-checked", "revision": revision}), flush=True)
                 return
         materialize(folder, revision, manifest)
+        if os.name != "nt":
+            refresh_private_sync(args.root, folder)
         bootstrap = args.root / "tools/managed-bootstrap"
         bootstrap.mkdir(parents=True, exist_ok=True)
         for module in ("managed_bootstrap", "inference_benchmark", "release_selector"):

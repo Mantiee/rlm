@@ -41,6 +41,7 @@ def probe(item):
 
 def main():
     from rlm.v100.mission import status
+    from rlm.v100.mission_view import snapshot
 
     root = Path.home() / "ai-v100"
     report = {
@@ -57,8 +58,10 @@ def main():
         "wiki_import": "knowledge/import-status.json",
         "wiki_index": "knowledge/index-progress.json",
         "wiki_goal_use": "knowledge/goal-use.json",
+        "private_sync": "private-sync/status.json",
     }.items():
         report["receipts"][name] = receipt(root / "research" / path)
+    report["receipts"]["current_activity"] = snapshot(root, report["mission"], {})
     reports = list((root / "research/model-roles").glob("*/qualification.json")) + list(
         (root / "research/owned-node").glob("*.qualification.json")
     )

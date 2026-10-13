@@ -6,9 +6,34 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rlm.v100 import private_sync, release_selector
+from rlm.v100.managed_bootstrap import refresh_private_sync
 
 
 class PrivateControlTests(unittest.TestCase):
+    def test_private_sync_refreshes_only_after_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "verified-release"
+            files = (
+                "rlm/v100/private_sync.py",
+                "rlm/v100/release_selector.py",
+                "tools/audit-synta-hosts.py",
+            )
+            for name in files:
+                path = folder / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"new verified source\n")
+            refresh_private_sync(root, folder)
+            destination = root / "tools/private-sync"
+            self.assertFalse(destination.exists())
+            destination.mkdir(parents=True)
+            (destination / "private_sync.py").write_bytes(b"old")
+            refresh_private_sync(root, folder)
+            for name in files:
+                self.assertEqual(
+                    (destination / Path(name).name).read_bytes(), b"new verified source\n"
+                )
+
     def test_public_repository_rejected_before_audit(self):
         with tempfile.TemporaryDirectory() as directory:
             with (

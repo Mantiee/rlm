@@ -1,4 +1,5 @@
 import bz2
+import json
 
 from rlm.v100.knowledge_rag import import_wiki, search
 
@@ -50,6 +51,47 @@ def test_bad_index_does_not_abort_operator_task(tmp_path, monkeypatch):
     monkeypatch.setattr(goals, "load_goal", lambda root: None)
     result = attach(tmp_path, [{"role": "user", "content": "business"}])
     assert "unavailable" in result[-1]["content"]
+
+
+def test_repeated_retrieval_replaces_archive_and_preserves_operator_task(tmp_path, monkeypatch):
+    from rlm.v100 import goals, knowledge_rag
+
+    path = tmp_path / "research/knowledge/passages.sqlite3"
+    path.parent.mkdir(parents=True)
+    path.touch()
+    monkeypatch.setattr(goals, "load_goal", lambda root: {"text": "income"})
+    monkeypatch.setattr(
+        knowledge_rag,
+        "search",
+        lambda *args: {
+            "passages": [
+                {
+                    "text": "x" * 100000,
+                    "title": "y" * 10000,
+                    "source": "https://en.wikipedia.org/wiki/Revenue",
+                    "revision": "9",
+                }
+            ]
+            * 8,
+            "seconds": 0.1,
+            "state": "retrieved",
+            "scope": "untrusted archive",
+        },
+    )
+    original = [
+        {"role": "user", "content": "Compare legal income experiments"},
+        {"role": "assistant", "content": "Keep this previous conclusion"},
+    ]
+    result = original
+    for _ in range(10):
+        result = knowledge_rag.attach(tmp_path, result)
+    assert result[:-1] == original
+    supplement = json.loads(result[-1]["content"])
+    assert len(supplement["supplemental_archive_data"]["passages"]) == 2
+    assert sum(len(p["text"]) for p in supplement["supplemental_archive_data"]["passages"]) == 1600
+    receipt = json.loads((path.parent / "goal-use.json").read_text())
+    assert receipt["excerpt_characters"] == 1600
+    assert len(result[-1]["content"]) < 4500
 
 
 def test_resume_preserves_existing_passage_rows_and_updates_changed_revision(tmp_path):

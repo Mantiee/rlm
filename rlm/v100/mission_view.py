@@ -2,6 +2,7 @@
 
 import json
 import time
+from importlib.metadata import version
 from pathlib import Path
 
 
@@ -27,6 +28,7 @@ def snapshot(root: Path, mission: dict, report: dict) -> dict:
         "knowledge": {},
         "history": {},
         "warnings": [],
+        "installed_package": version("rlms"),
     }
     run = Path(mission["run"]).resolve() if mission.get("run") else None
     if run and run.is_relative_to((root / "research/mission").resolve()):
@@ -65,6 +67,10 @@ def snapshot(root: Path, mission: dict, report: dict) -> dict:
         view["updater"] = read_receipt(root / "research/managed-update/status.json")
     except (OSError, ValueError) as error:
         view["updater"] = {"stage": "unknown", "error": str(error)[:180]}
+    view["updater"]["installation_confirmed"] = (
+        view["updater"].get("stage", "").startswith("package-ready")
+        and view["updater"].get("version") == view["installed_package"]
+    )
     for name, filename in (
         ("import", "import-status.json"),
         ("index", "index-progress.json"),
