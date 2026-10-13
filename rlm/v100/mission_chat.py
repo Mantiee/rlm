@@ -608,10 +608,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
     from rlm.v100.mission import status
+    from rlm.v100.mission_evidence import collect as collect_evidence
     from rlm.v100.planning import read as read_plans
     from rlm.v100.planning import update as update_plan
-
-    from rlm.v100.mission_evidence import collect as collect_evidence
     from rlm.v100.research_policy import settings
 
     # Authorization comes only from the current authenticated local user message,
@@ -803,6 +802,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     if path is None:
         raise BackendNotReady("Waiting for owned inference server")
     profile = copy.deepcopy(load_profile(path, root))
+    accepted_profile = copy.deepcopy(profile)
     from rlm.v100.model_roles import selected_profile
 
     planner = selected_profile(root, "planner")
@@ -813,9 +813,16 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             probe.timeout = min(probe.timeout, 5)
             backend_preflight(probe)
             profile = copy.deepcopy(chosen)
-        except requests.RequestException:
+        except (OSError, ValueError, requests.RequestException) as error:
             # No generation/tool execution has started; retain accepted local master.
-            pass
+            ActivityLog(root, "controller", "chat").write(
+                "errors",
+                "planner-preflight-rejected",
+                {
+                    "error": str(error)[:300],
+                    "scope": "Rejected planner unused; accepted backend still requires validation",
+                },
+            )
     profile["runtime"].update(enable_thinking=False, max_output_tokens=2048, max_timeout=120)
     client = helper_client(profile, root)
     client.activity_actor = "chat"
@@ -837,7 +844,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             actual = client.request("/props")
             if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
                 raise BackendNotReady("Waiting for the accepted serving model")
-    except (requests.RequestException, OSError) as serving_error:
+    except (requests.RequestException, OSError, ValueError) as serving_error:
+        profile = copy.deepcopy(accepted_profile)
         if not preferences(root).get("remote_helper_enabled", True):
             raise BackendNotReady(str(serving_error)) from serving_error
         if not profile.get("resources", {}).get("interactive_lab"):
@@ -875,7 +883,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                     backend_preflight(available)
                     client = available
                     break
-                except (OSError, requests.RequestException) as error:
+                except (OSError, ValueError, requests.RequestException) as error:
                     errors.append(str(error)[:240])
             else:
                 raise BackendNotReady(

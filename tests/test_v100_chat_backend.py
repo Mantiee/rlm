@@ -112,7 +112,10 @@ def test_wrong_cpu_endpoint_is_not_reused(tmp_path, monkeypatch):
     assert events[-1] == ("stop",)
 
 
-def test_chat_selects_same_accepted_master_during_gpu_training(tmp_path, monkeypatch):
+@pytest.mark.parametrize("rejected_planner", [False, True])
+def test_chat_selects_same_accepted_master_during_gpu_training(
+    tmp_path, monkeypatch, rejected_planner
+):
     accepted, cpu, _ = admitted(tmp_path, monkeypatch)
     cpu.timeout = 600
     cpu.sampling_args = {"max_tokens": 1024}
@@ -123,9 +126,25 @@ def test_chat_selects_same_accepted_master_during_gpu_training(tmp_path, monkeyp
         "status",
         lambda r: {"running": True, "state": {"phase": "training"}, "learning": {}},
     )
-    monkeypatch.setattr(mission_chat, "load_profile", lambda *a: accepted)
+    planner = tmp_path / "planner.json"
+    from rlm.v100 import model_roles
+
+    monkeypatch.setattr(
+        model_roles, "selected_profile", lambda *a: planner if rejected_planner else None
+    )
+    monkeypatch.setattr(
+        mission_chat,
+        "load_profile",
+        lambda path, *a: {"rejected": True} if path == planner else accepted,
+    )
     gpu = SimpleNamespace(request=lambda *a: {"model_path": "/candidate.gguf"}, model_name="v100")
-    monkeypatch.setattr(competition, "helper_client", lambda *a: gpu)
+
+    def factory(settings, *args):
+        if settings.get("rejected"):
+            raise ValueError("Remote model metadata or template changed")
+        return gpu
+
+    monkeypatch.setattr(competition, "helper_client", factory)
     manager = chat_backend.AcceptedCPUChat(tmp_path, tmp_path)
     seen = []
     monkeypatch.setattr(
@@ -204,15 +223,17 @@ def test_conversation_is_one_real_generation_without_template_or_tools(tmp_path)
         model_name="v100",
         timeout=180,
         template_args=lambda: {"chat_template_kwargs": {"enable_thinking": False}},
-        request=lambda endpoint, payload: calls.append((endpoint, payload))
-        or {
-            "choices": [
-                {
-                    "finish_reason": "stop",
-                    "message": {"content": "Cel pozostaje ten sam; nie ma dowodu zysku."},
-                }
-            ]
-        },
+        request=lambda endpoint, payload: (
+            calls.append((endpoint, payload))
+            or {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": "Cel pozostaje ten sam; nie ma dowodu zysku."},
+                    }
+                ]
+            }
+        ),
     )
     result = mission_chat.conversational_response(
         tmp_path,

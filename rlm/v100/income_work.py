@@ -9,13 +9,13 @@ import time
 from pathlib import Path
 
 import requests
+
+from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn
+from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.goal_learning import observe
 from rlm.v100.goals import load_goal
 from rlm.v100.income_opportunities import NUMBER_FIELDS, TEXT_FIELDS, register
-
-from rlm.v100.activity import ActivityLog
-from rlm.v100.common import atomic_json, load_profile
 
 STARTING_SOURCES = (
     (
@@ -34,11 +34,10 @@ class MasterNotReady(RuntimeError):
 def owned_advisor(root: Path, branch: str, reason: str):
     """Use an independently qualified advisory node while protected serving is unavailable."""
     from rlm.v100.competition import helper_client
-    from rlm.v100.remote_nodes import selected_node
-    from rlm.v100.serving import assert_served_expert
-
     from rlm.v100.mission_chat import backend_preflight, preferences
     from rlm.v100.remote_helper import remote_profile, selected_helper
+    from rlm.v100.remote_nodes import selected_node
+    from rlm.v100.serving import assert_served_expert
 
     # Chat can maintain a CPU copy of the accepted weights on its own endpoint.
     # Reuse only that already running copy; never launch competing CPU/GPU servers.
@@ -93,7 +92,7 @@ def owned_advisor(root: Path, branch: str, reason: str):
             client.timeout = 5
             backend_preflight(client)
             break
-        except (OSError, requests.RequestException) as error:
+        except (OSError, ValueError, requests.RequestException) as error:
             failures.append(str(error)[:180])
     else:
         raise MasterNotReady(reason + "; " + "; ".join(failures))
@@ -110,10 +109,9 @@ def owned_advisor(root: Path, branch: str, reason: str):
 def accepted_master(root: Path, branch: str):
     """Reuse a protected serving master, never launch a model or use a candidate."""
     from rlm.v100.competition import helper_client
-    from rlm.v100.serving import assert_served_expert
-
     from rlm.v100.mission_chat import backend_preflight, preferences
     from rlm.v100.model_roles import selected_profile
+    from rlm.v100.serving import assert_served_expert
 
     planner = selected_profile(root, "planner")
     if planner is not None and preferences(root).get("remote_helper_enabled", True):
@@ -130,8 +128,15 @@ def accepted_master(root: Path, branch: str):
             client.research_thinking_allowed = False
             client.activity_actor = "income-research-planner"
             return client
-        except requests.RequestException:
-            pass
+        except (OSError, ValueError, requests.RequestException) as error:
+            ActivityLog(root, branch, "income-research").write(
+                "errors",
+                "planner-preflight-rejected",
+                {
+                    "error": str(error)[:300],
+                    "scope": "Rejected planner unused; protected master/advisors still require validation",
+                },
+            )
     active = json.loads((root / "research/mission/active.json").read_text())
     run = Path(active["run"]).resolve()
     if not run.is_relative_to((root / "research/mission").resolve()):

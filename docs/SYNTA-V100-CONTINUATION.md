@@ -11,3 +11,7 @@ The 2026-10-13 21:22 UTC host audit confirms v99 package installation. Planner c
 Advisory repair can run from the verified source while an active learner cycle defers the v100 trainer package switch. The accepted Gemma foundation, adapters and finite quality gates remain intact.
 
 Remaining measured outcomes: end-to-end generated chat response; successful planner admission and executed income experiment; useful jobs on all three hosts and failover; task-qualified small GPU roles; inspected interrupted memory pilot; native optimization and extended context measurements; accepted independent weight improvement; verified payment; optional external free compute with an available account and lawful quota. None is established by this release announcement alone.
+
+## v101 backend fallback
+
+Optional planner identity/configuration failures are recorded before generation and allow the accepted local backend to be checked. The accepted native profile is retained separately while selecting a remote planner, so a later remote failure can still use the protected CPU copy. Failed helpers are skipped; no rejected model, changed pin or unaccepted candidate becomes an allowed backend. Income work uses the same preflight fallback policy.

@@ -344,14 +344,33 @@ def test_disabled_income_or_stale_goal_never_fetches(tmp_path, monkeypatch):
         drones.execute(tmp_path, income_job(goal))
 
 
-def test_native_researcher_checks_protected_profile_before_any_generation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("rejected_planner", [False, True])
+def test_native_researcher_checks_protected_profile_before_any_generation(
+    tmp_path, monkeypatch, rejected_planner
+):
     _, run = financial_world(tmp_path)
     atomic_json(run / "status.json", {"context_window": 8192})
     atomic_json(run / "profile-8192.json", {"runtime": {"model_name": "accepted"}})
     profile = {"runtime": {"model_name": "accepted"}}
-    monkeypatch.setattr(income_work, "load_profile", lambda *args: profile)
+    planner = tmp_path / "planner.json"
+    from rlm.v100 import model_roles
+
+    monkeypatch.setattr(
+        model_roles, "selected_profile", lambda *a: planner if rejected_planner else None
+    )
+    monkeypatch.setattr(
+        income_work,
+        "load_profile",
+        lambda path, *a: {"rejected": True} if path == planner else profile,
+    )
     client = SimpleNamespace(timeout=120, sampling_args={"max_tokens": 4096})
-    monkeypatch.setattr(competition, "helper_client", lambda *args: client)
+
+    def factory(settings, *args):
+        if settings.get("rejected"):
+            raise ValueError("Remote model metadata or template changed")
+        return client
+
+    monkeypatch.setattr(competition, "helper_client", factory)
     from rlm.v100 import serving
 
     called = []
