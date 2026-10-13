@@ -94,22 +94,22 @@ class GitHub:
         self.request("/repos/" + REPOSITORY + "/contents/" + path, "PUT", payload)
 
 
-def clean(value):
+def clean(value, string_limit: int = 1000):
     """Bounded receipts, with token-shaped values and sensitive keys removed."""
     if isinstance(value, dict):
         return {
-            k: clean(v)
+            k: clean(v, string_limit)
             for k, v in value.items()
             if not re.search(
                 r"(?:^|_)(password|secret|authorization|credential|token|cookie)(?:$|_)", k, re.I
             )
         }
     if isinstance(value, list):
-        return [clean(v) for v in value[:64]]
+        return [clean(v, string_limit) for v in value[:64]]
     if isinstance(value, str):
         text = re.sub(r"(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)", "[redacted]", value)
         text = re.sub(r"(?i)(?:bearer|token)\s+[A-Za-z0-9._-]+", "[redacted]", text)
-        return text[:1000]
+        return text[:string_limit]
     return value
 
 
@@ -170,6 +170,27 @@ def audit(root: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def trigger_update(revision: str, previous: dict) -> dict:
+    """Wake the existing updater after an approved release changes; never run arbitrary commands."""
+    if not re.fullmatch("[a-f0-9]{40}", revision):
+        raise ValueError("Updater trigger requires an immutable approved release")
+    if previous.get("desired_revision") == revision:
+        return {"stage": "unchanged"}
+    try:
+        subprocess.run(
+            ["systemctl", "--user", "start", "--no-block", "synta-managed-update.service"],
+            check=True,
+            timeout=15,
+        )
+        return {
+            "stage": "queued",
+            "revision": revision,
+            "scope": "Existing verified updater performs its normal checksum, training and recovery checks",
+        }
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"stage": "blocked", "error": str(error)[:300]}
+
+
 def run(root: Path) -> dict:
     if __package__:
         from rlm.v100.release_selector import validate
@@ -219,14 +240,20 @@ def run(root: Path) -> dict:
             )
         }
     )
+    # Explicitly authorized diagnostic snapshots need intact templates/parameters;
+    # ordinary status strings remain bounded to 1000 characters. Redaction applies
+    # before upload in both paths, and GitHub.private() has already verified privacy.
+    payload["role_metadata"] = clean(value.get("role_metadata", []), 65536)
     github.write("hosts/latest.json", payload, branch)
     target = root / "research/private-sync/approved-release.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(".new")
     temporary.write_text(json.dumps(choice))
     temporary.replace(target)
+    update_trigger = trigger_update(revision, previous)
     result = {
         "stage": "synced",
+        "update_trigger": update_trigger,
         "repository": REPOSITORY,
         "source_revision": revision
         if source_state in ("current", "mirrored")

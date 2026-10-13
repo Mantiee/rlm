@@ -79,6 +79,35 @@ class PrivateControlTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release_selector.validate(valid | change)
 
+    def test_diagnostic_metadata_preserves_templates_and_still_redacts_credentials(self):
+        template = "model template " * 1000
+        result = private_sync.clean(
+            {"template": template, "secret": "never upload", "detail": "Bearer abc123"}, 65536
+        )
+        self.assertEqual(result["template"], template)
+        self.assertNotIn("secret", result)
+        self.assertEqual(result["detail"], "[redacted]")
+        self.assertEqual(len(private_sync.clean(template)), 1000)
+
+    def test_release_change_wakes_only_existing_scoped_updater(self):
+        with patch.object(private_sync.subprocess, "run") as run:
+            self.assertEqual(
+                private_sync.trigger_update("a" * 40, {"desired_revision": "a" * 40})["stage"],
+                "unchanged",
+            )
+            run.assert_not_called()
+            self.assertEqual(
+                private_sync.trigger_update("b" * 40, {"desired_revision": "a" * 40})["stage"],
+                "queued",
+            )
+            self.assertEqual(
+                run.call_args.args[0],
+                ["systemctl", "--user", "start", "--no-block", "synta-managed-update.service"],
+            )
+            with self.assertRaises(ValueError):
+                private_sync.trigger_update("main; arbitrary command", {})
+            self.assertEqual(run.call_count, 1)
+
     def test_unconfigured_controller_preserves_public_updates(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertIsNone(release_selector.selection(Path(directory)))

@@ -15,3 +15,5 @@ Remaining measured outcomes: end-to-end generated chat response; successful plan
 ## v101 backend fallback
 
 Optional planner identity/configuration failures are recorded before generation and allow the accepted local backend to be checked. The accepted native profile is retained separately while selecting a remote planner, so a later remote failure can still use the protected CPU copy. Failed helpers are skipped; no rejected model, changed pin or unaccepted candidate becomes an allowed backend. Income work uses the same preflight fallback policy.
+
+The authorized private diagnostic export now includes role metadata with intact bounded templates and parameters while retaining credential redaction. A separate fixed read-only chat probe exercises the actual authenticated gateway, CSRF check, persisted queue and generated reply. Only the exact arithmetic answer with no actions/tool execution is verified; the receipt does not certify browser/phone routing or financial results.

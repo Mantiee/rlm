@@ -207,6 +207,42 @@ def fetch(url: str) -> bytes:
     raise RuntimeError("Metadata fetch retry budget exhausted")
 
 
+def queue_chat_probe(root: Path, dashboard: dict, revision: str) -> dict:
+    if (
+        dashboard.get("stage") != "ready"
+        or not (root / "research/remote-access/config.json").is_file()
+    ):
+        return {"stage": "not-configured"}
+    receipt = root / "research/chat-probe.json"
+    if receipt.is_file():
+        previous = json.loads(receipt.read_text())
+        if previous.get("revision") == revision and previous.get("stage") == "verified":
+            return previous
+    try:
+        active = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", "synta-chat-probe.service"],
+            timeout=15,
+            check=False,
+        )
+        if active.returncode == 0:
+            return {"stage": "already-running"}
+        target = Path(dashboard["code_path"]) / "rlm/v100/chat_probe.py"
+        unit = Path.home() / ".config/systemd/user/synta-chat-probe.service"
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text(
+            f"[Unit]\nDescription=Synta fixed read-only chat verification\n[Service]\nType=oneshot\nExecStart={root}/venvs/v100-continual/bin/python -u {target} --root {root} --revision {revision}\nNice=10\nTimeoutStartSec=4min\n"
+        )
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=15)
+        subprocess.run(
+            ["systemctl", "--user", "start", "--no-block", "synta-chat-probe.service"],
+            check=True,
+            timeout=15,
+        )
+        return {"stage": "queued", "revision": revision}
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return {"stage": "blocked", "error": str(error)[:400]}
+
+
 def release(revision: str | None = None) -> tuple[str, dict]:
     if revision is None:
         revision = json.loads(
@@ -373,6 +409,8 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
     python = root / "venvs/v100-continual/bin/python"
     dashboard = dashboard_update(root, folder, revision) if manifest["version"] >= 91 else {}
     remote_chat = remote_chat_update(root, dashboard, revision) if manifest["version"] >= 98 else {}
+    if manifest["version"] >= 101:
+        remote_chat = {**remote_chat, "probe": queue_chat_probe(root, dashboard, revision)}
     watchdog = folder / "rlm/v100/mission_watchdog.py"
     recovery = {"stage": "not-configured"}
     if watchdog.is_file():

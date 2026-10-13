@@ -61,6 +61,7 @@ def main():
         "private_sync": "private-sync/status.json",
         "remote_preparation": "model-roles/remote-preparation.json",
         "remote_chat_deployment": "remote-chat-deployment.json",
+        "chat_probe": "chat-probe.json",
         "mission_recovery": "mission-watchdog/status.json",
         "supervisor": "supervisor/status.json",
         "supervisor_pause": "supervisor/pause.json",
