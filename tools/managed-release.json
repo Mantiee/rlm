@@ -37,7 +37,7 @@
     "tools/install-synta-background-tasks.ps1": "e647e535f5f97a7fd3ef4b2a8f8451b224a935d11904dd0d7383aca239040478",
     "tools/update-synta-v92.sh": "b45e35b4caf7e652c04a060abcbee16cfc487d280a8ceccf7abab49f31486706",
     "tools/update-synta-v93.sh": "7dc4305296db2b3bdbdb2654563841c4269f1a5a015a0a10035e9e93a7351a7f",
-    "tools/audit-synta-hosts.py": "11eabbf2d3df9213b93047a53af4980305daa69d3ff5bc53857f3b395c0e39ec",
+    "tools/audit-synta-hosts.py": "6d9b98698e0991b35dd929a74fc75fb209c32410c66de2132d4e977d2a11480f",
     "tools/update-synta-v94.sh": "7d2958196896ac801b3eb04d592e4dce2a9bf6ef79ec15b438104fb77f3c13ea",
     "tools/setup-synta-private-sync.sh": "ff7a8def790be9cd8d51f84fccd846b568c32904771d65166725d4697da43e7f",
     "rlm/v100/private_sync.py": "1b84c3d80a45c5f5cec570d12e7b3354a2e8103ab9e75d37186ba900f033f429",

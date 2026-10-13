@@ -39,6 +39,13 @@ def probe(item):
         return name, {"reachable": False, "error": str(error)}
 
 
+def latest_role_report(root):
+    reports = list((root / "research/model-roles").glob("*/qualification.json"))
+    if not reports:
+        return {}
+    return receipt(max(reports, key=lambda path: path.stat().st_mtime))
+
+
 def main():
     from rlm.v100.mission import status
     from rlm.v100.mission_view import snapshot
@@ -88,8 +95,8 @@ def main():
             if snapshot_path.is_relative_to((root / "research").resolve()):
                 item["pinned_snapshot"] = receipt(snapshot_path)
         report["role_metadata"].append(item)
-    for entry in report["qualification_details"][:1]:
-        for candidate in entry["data"].get("reports", []):
+    for entry in [latest_role_report(root)]:
+        for candidate in entry.get("reports", []):
             snapshot_path = candidate.get("metadata_snapshot")
             if snapshot_path and candidate.get("role") == "planner":
                 snapshot_path = Path(snapshot_path).resolve()
@@ -118,6 +125,7 @@ def main():
         "synta-managed-update.service",
         "synta-model-preparation.service",
         "synta-role-qualification.service",
+        "synta-chat-probe.service",
         "*wikipedia*",
     ]
     try:
