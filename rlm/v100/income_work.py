@@ -426,7 +426,7 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
             job["branch"],
             {
                 "role": "researcher",
-                "brief": "Choose and EXECUTE one useful next experiment toward the income goal. Read income_opportunities and previous receipts before choosing work; archived proposals are hypotheses, not completed tests or income. Prefer a legal, automatable deliverable or measurable experiment. Human research/usability participation requires the actual human: record the specific operator step once and choose other useful work instead of repeating age/residency/account summaries or impersonating a participant. Inspect receipts and blockers; revise losing tests. Use legal public WWW, guest code/browser and eligible free compute. Real spendable capital is zero; test allocated PAPER capital after costs. Produce an artifact, commit a forecast or run a test; report exact receipts and missing inputs. No invented income, account access, payout or placeholder work.",
+                "brief": "Inspect income_opportunities and previous receipts. Choose and EXECUTE one useful legal experiment toward the income goal, not another eligibility summary. Revise losing tests. Produce an artifact, forecast or completed test with exact receipts. Spendable capital is zero; use existing PAPER balances after costs. Do not invent income, accounts or payouts.",
             },
             [
                 {
@@ -440,6 +440,7 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                         for key in ("state", "error", "result_path", "candidate_id", "dossier")
                     },
                     "previous_experiment_evidence": previous_evidence,
+                    "archive_contract": "Archived proposals are hypotheses, not completed tests or income. Prefer legal automatable deliverables. Human research/usability participation requires the actual human: record the specific operator step once, then choose other useful work instead of repeating age/residency/account summaries or impersonating a participant.",
                     "commissioning_strategy_failures": comparisons,
                     "experiment_contract": "Do not repeat eligibility summaries, proposal titles or rejected commissioning rules without new evidence. Choose a measurable deliverable or test and execute it. Read previous receipts; name the changed hypothesis and validation method. A cheaper-fee scenario needs venue evidence, not an invented reduction. Never invert signals just to manufacture historical gains.",
                     "execution_scope": "Public research, local deliverables and hypothetical funded tests are authorized. Respect source terms and resource limits. Exact external submissions use existing operator review; credentials, eligibility or acceptance of new service terms need the operator. No paid compute, real money or impersonation.",
