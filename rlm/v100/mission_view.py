@@ -41,7 +41,11 @@ def snapshot(root: Path, mission: dict, report: dict) -> dict:
                 if row.get("schema") != "v100-evaluation-progress-v1":
                     continue
                 age = max(0, now - row["source_updated"])
-                view["evaluation"] = {**row, "age_seconds": age, "stale": age > 900}
+                view["evaluation"] = {
+                    **row,
+                    "age_seconds": age,
+                    "stale": row.get("state") == "running" and age > 900,
+                }
                 if row.get("state") == "running" and age <= 900:
                     view["stage"] = "candidate evaluation"
                 break

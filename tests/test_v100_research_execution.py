@@ -364,8 +364,15 @@ def test_native_researcher_checks_protected_profile_before_any_generation(tmp_pa
         "assert_served_expert",
         lambda *args: (_ for _ in ()).throw(ValueError("Candidate serves endpoint")),
     )
-    with pytest.raises(ValueError, match="Candidate"):
+    with pytest.raises(income_work.MasterNotReady, match="Candidate"):
         income_work.accepted_master(tmp_path, "A")
+    advisory = SimpleNamespace(model_name="qualified advisory")
+    attempts = []
+    monkeypatch.setattr(
+        income_work, "owned_advisor", lambda r, b, reason: attempts.append(reason) or advisory
+    )
+    assert income_work.accepted_master(tmp_path, "A") is advisory
+    assert "Candidate serves endpoint" in attempts[0]
 
 
 def test_live_server_is_not_blocked_by_stopped_initial_server(tmp_path, monkeypatch):
@@ -381,6 +388,37 @@ def test_live_server_is_not_blocked_by_stopped_initial_server(tmp_path, monkeypa
     checked = []
     monkeypatch.setattr(serving, "assert_served_expert", lambda *a: checked.append(True))
     assert income_work.accepted_master(tmp_path, "A") is client and checked == [True]
+
+
+def test_income_reuses_only_verified_accepted_cpu_copy(tmp_path, monkeypatch):
+    from rlm.v100 import mission_chat, serving
+
+    _, run = financial_world(tmp_path)
+    accepted = {"server": {"model": "/accepted.gguf"}, "resources": {"device": "gpu"}}
+    cpu = {"server": {"model": "/accepted.gguf"}, "resources": {"device": "cpu"}}
+    atomic_json(run / "serving-active.json", accepted)
+    atomic_json(run / "accepted-cpu-chat.json", cpu)
+    monkeypatch.setattr(
+        income_work, "load_profile", lambda path, root: json.loads(path.read_text())
+    )
+    monkeypatch.setattr(mission_chat, "preferences", lambda root: {"remote_helper_enabled": False})
+    client = SimpleNamespace(timeout=120, sampling_args={})
+    monkeypatch.setattr(competition, "helper_client", lambda *args: client)
+    checked = []
+
+    def verify(client, profile, root):
+        checked.append(profile["resources"]["device"])
+        if profile["resources"]["device"] != "cpu":
+            raise ValueError("Candidate occupies GPU endpoint")
+
+    monkeypatch.setattr(serving, "assert_served_expert", verify)
+    assert income_work.accepted_master(tmp_path, "A") is client
+    assert checked == ["gpu", "cpu"]
+    assert client.activity_actor == "income-accepted-master-cpu"
+    cpu["server"]["model"] = "/rejected-candidate.gguf"
+    atomic_json(run / "accepted-cpu-chat.json", cpu)
+    with pytest.raises(income_work.MasterNotReady):
+        income_work.accepted_master(tmp_path, "A")
 
 
 def benchmark_world(tmp_path, monkeypatch):

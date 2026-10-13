@@ -37,6 +37,43 @@ def owned_advisor(root: Path, branch: str, reason: str):
     from rlm.v100.mission_chat import backend_preflight, preferences
     from rlm.v100.remote_helper import remote_profile, selected_helper
     from rlm.v100.remote_nodes import selected_node
+    from rlm.v100.serving import assert_served_expert
+
+    # Chat can maintain a CPU copy of the accepted weights on its own endpoint.
+    # Reuse only that already running copy; never launch competing CPU/GPU servers.
+    failures = []
+    try:
+        active = json.loads((root / "research/mission/active.json").read_text())
+        run = Path(active["run"]).resolve()
+        if not run.is_relative_to((root / "research/mission").resolve()):
+            raise ValueError("CPU advisor mission escaped its owned directory")
+        cpu_path = run / "accepted-cpu-chat.json"
+        accepted_path = next(
+            (
+                path
+                for path in (run / "serving-active.json", run / "learning/live.json")
+                if path.is_file()
+            ),
+            None,
+        )
+        if cpu_path.is_file() and accepted_path is not None:
+            cpu_profile = load_profile(cpu_path, root)
+            accepted = load_profile(accepted_path, root)
+            if cpu_profile["server"]["model"] != accepted["server"]["model"]:
+                raise ValueError("CPU advisor weights differ from the accepted master")
+            client = helper_client(cpu_profile, root, branch)
+            client.timeout = 5
+            assert_served_expert(client, cpu_profile, root)
+            client.timeout = 120
+            client.request_deadline = time.monotonic() + 150
+            client.enable_thinking = False
+            client.sampling_args = dict(client.sampling_args) | {"max_tokens": 1024}
+            client.research_token_ceiling = 1024
+            client.research_thinking_allowed = False
+            client.activity_actor = "income-accepted-master-cpu"
+            return client
+    except (OSError, ValueError, KeyError, requests.RequestException) as error:
+        failures.append(str(error)[:180])
 
     if not preferences(root).get("remote_helper_enabled", True):
         raise MasterNotReady(reason)
@@ -46,7 +83,6 @@ def owned_advisor(root: Path, branch: str, reason: str):
             candidates.append(selected_helper(root, role))
         except (OSError, ValueError):
             continue
-    failures = []
     for path in dict.fromkeys(p for p in candidates if p is not None):
         try:
             profile = load_profile(path, root)
@@ -125,8 +161,10 @@ def accepted_master(root: Path, branch: str):
     # candidate temporarily occupying the same endpoint is never used.
     try:
         assert_served_expert(client, profile, root)
-    except (FileNotFoundError, ProcessLookupError, requests.RequestException):
-        return owned_advisor(root, branch, "Accepted serving process or endpoint not ready")
+    except (FileNotFoundError, ProcessLookupError, ValueError, requests.RequestException) as error:
+        return owned_advisor(
+            root, branch, "Accepted serving process or endpoint not ready: " + str(error)[:180]
+        )
     client.timeout = 40
     client.request_deadline = time.monotonic() + 60
     client.enable_thinking = False
