@@ -10,7 +10,10 @@ from rlm.v100 import competition, managed_bootstrap, model_roles
 from rlm.v100.common import atomic_json
 
 
-@pytest.mark.parametrize("metadata_change", ["none", "ordering", "template"])
+@pytest.mark.parametrize(
+    "metadata_change",
+    ["none", "ordering", "template", "inherited", "inherited-failed", "inherited-changed"],
+)
 def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(
     tmp_path, monkeypatch, metadata_change
 ):
@@ -18,6 +21,7 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(
         "template": "pinned template",
         "tokenizer": "pinned tokenizer",
         "parameters": "temperature 0\nnum_ctx 32768",
+        "model_info": {"general.parameter_count": 27000},
     }
     metadata = model_roles.metadata_sha(info, model_roles.STABLE_METADATA)
     profile = {
@@ -44,6 +48,12 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(
         info["parameters"] = "num_ctx 32768\ntemperature 0"
     elif metadata_change == "template":
         info["template"] = "changed template"
+    elif metadata_change.startswith("inherited"):
+        snapshot = tmp_path / "research/helper-metadata/foreign/show.json"
+        atomic_json(snapshot, dict(info, model_info={"general.parameter_count": 9000}))
+        profile["resources"]["metadata_snapshot"] = str(snapshot.relative_to(tmp_path))
+        atomic_json(pinned, profile)
+        info["requires"] = "runtime-generated field"
     monkeypatch.setattr(
         model_roles, "selected_profile", lambda root, role: pinned if role == "planner" else None
     )
@@ -66,13 +76,21 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(
         return Client()
 
     monkeypatch.setattr(competition, "helper_client", factory)
-    monkeypatch.setattr(
-        model_roles,
-        "evaluate",
-        lambda client: {"passed": 20, "total": 20, "critical_passed": True, "seconds": 10},
-    )
+
+    def evaluate(client):
+        if metadata_change == "inherited-changed":
+            info["template"] = "changed during panel"
+        passed = metadata_change != "inherited-failed"
+        return {
+            "passed": 20 if passed else 19,
+            "total": 20,
+            "critical_passed": passed,
+            "seconds": 10,
+        }
+
+    monkeypatch.setattr(model_roles, "evaluate", evaluate)
     result = model_roles.qualify(tmp_path)
-    if metadata_change == "template":
+    if metadata_change in ("template", "inherited-failed", "inherited-changed"):
         assert result["roles"]["planner"]["profile"] == str(pinned)
         assert result["unresolved_compatibility"] == ["planner"]
         assert json.loads(original.read_text()) == baseline
@@ -93,6 +111,10 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(
     assert result["legacy_route"]["role"] == "planner"
     assert "fast" not in result["roles"]
     assert json.loads(pinned.read_text()) == profile
+    if metadata_change == "inherited":
+        report = json.loads(open(result["roles"]["planner"]["report"]).read())
+        assert report["metadata_migration"]["state"] == "same-digest-fresh-admission-verified"
+        assert report["metadata_migration"]["metadata_equivalence_proven"] is False
 
 
 def test_legacy_role_pin_recovers_only_parameter_order(tmp_path):
@@ -149,6 +171,57 @@ def test_metadata_migration_requires_verified_snapshot_and_rejects_escape(tmp_pa
         model_roles.compatible_metadata(
             tmp_path, dict(pin, metadata_snapshot="../foreign.json"), info
         )
+
+
+def test_six_parameter_groups_recover_the_exact_pin_beyond_the_old_budget(tmp_path):
+    keys = ["a", "b", "c", "d", "e", "f"]
+    info = {
+        "template": "unchanged",
+        "parameters": "\n".join(key + " 1" for key in keys),
+        "modelfile": "FROM unchanged\n" + "".join("PARAMETER " + key + " 1\n" for key in keys),
+    }
+    previous = dict(info)
+    previous["parameters"] = "\n".join(key + " 1" for key in reversed(keys))
+    previous["modelfile"] = "FROM unchanged\n" + "".join(
+        "PARAMETER " + key + " 1\n" for key in reversed(keys)
+    )
+    result = model_roles.compatible_metadata(
+        tmp_path,
+        {"metadata_sha256": model_roles.metadata_sha(previous, model_roles.STABLE_METADATA)},
+        info,
+    )
+    assert result["state"] == "legacy-pin-reproduced"
+    assert result["attempts"] == 720 * 720
+
+
+@pytest.mark.parametrize("valid_snapshot", [True, False])
+def test_readmission_does_not_override_a_valid_pin_or_same_model_snapshot(tmp_path, valid_snapshot):
+    previous = {"template": "original", "model_info": {"general.parameter_count": 27000}}
+    path = tmp_path / "research/snapshot.json"
+    atomic_json(path, previous)
+    resources = {
+        "metadata_snapshot": str(path),
+        "metadata_sha256": model_roles.metadata_sha(previous, model_roles.STABLE_METADATA)
+        if valid_snapshot
+        else "a" * 64,
+    }
+    with pytest.raises(ValueError, match="not proven"):
+        model_roles.inherited_snapshot_readmission(
+            tmp_path, resources, dict(previous, template="changed")
+        )
+
+
+def test_dashboard_reports_retained_incompatible_role_as_blocked(tmp_path):
+    from rlm.v100.model_policy import deployment
+
+    profile = tmp_path / "research/model-roles/old/profile.json"
+    atomic_json(profile, {"runtime": {"model_name": "qwen3.8:27b-q4_K_M"}})
+    atomic_json(
+        tmp_path / "research/model-roles/active.json",
+        {"roles": {"planner": {"profile": str(profile)}}, "unresolved_compatibility": ["planner"]},
+    )
+    row = next(row for row in deployment(tmp_path) if row["role"] == "planner")
+    assert row["state"] == "metadata compatibility blocked; historical admission retained"
 
 
 def test_role_qualification_has_one_owned_admission_lease(tmp_path, monkeypatch):

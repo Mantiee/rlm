@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from decimal import Decimal, InvalidOperation
-from itertools import islice, permutations, product
+from itertools import permutations
 from pathlib import Path
 
 import requests
@@ -94,25 +94,85 @@ def compatible_metadata(root: Path, resources: dict, info: dict) -> dict:
         and len(parameters.encode()) + len(modelfile.encode()) <= 32768
         and len(json.dumps(info).encode()) <= 256 * 1024
     ):
-        variants = product(
-            parameter_orders(parameters),
-            parameter_orders(modelfile, "PARAMETER "),
-        )
-        for attempt, (parameters, modelfile) in enumerate(islice(variants, 4096), 1):
-            candidate = dict(info)
-            if "parameters" in info:
-                candidate["parameters"] = parameters
-            if "modelfile" in info:
-                candidate["modelfile"] = modelfile
-            if metadata_sha(candidate, scheme) == expected:
-                return {
-                    "state": "legacy-pin-reproduced",
-                    "previous_scheme": scheme,
-                    "attempts": attempt,
-                }
+        attempt = 0
+        # Six distinct groups in each field produce at most 720 * 720 pairs.
+        # Hash immutable JSON once per Modelfile ordering, then copy that state.
+        keys = sorted(key for key in info if key != "modified_at")
+        if "parameters" in keys:
+            index = keys.index("parameters")
+            orders = [json.dumps(value).encode() for value in parameter_orders(parameters)]
+            for modelfile_order in parameter_orders(modelfile, "PARAMETER "):
+                candidate = dict(info)
+                if "modelfile" in info:
+                    candidate["modelfile"] = modelfile_order
+                parts = [
+                    json.dumps(key) + ": " + json.dumps(candidate[key], sort_keys=True)
+                    for key in keys
+                ]
+                prefix = "{" + ", ".join(parts[:index]) + (", " if index else "") + '"parameters": '
+                suffix = (
+                    (", " if index + 1 < len(parts) else "") + ", ".join(parts[index + 1 :]) + "}"
+                )
+                base = hashlib.sha256(prefix.encode())
+                for value in orders:
+                    attempt += 1
+                    digest = base.copy()
+                    digest.update(value)
+                    digest.update(suffix.encode())
+                    if digest.hexdigest() == expected:
+                        return {
+                            "state": "legacy-pin-reproduced",
+                            "previous_scheme": scheme,
+                            "attempts": attempt,
+                        }
+        else:
+            for modelfile_order in parameter_orders(modelfile, "PARAMETER "):
+                candidate = dict(info)
+                if "modelfile" in info:
+                    candidate["modelfile"] = modelfile_order
+                if metadata_sha(candidate, scheme) == expected:
+                    return {"state": "legacy-pin-reproduced", "previous_scheme": scheme}
     raise ValueError(
         "Compatibility migration cannot change pinned tokenizer/template metadata; exact legacy pin not reproduced"
     )
+
+
+def inherited_snapshot_readmission(root: Path, resources: dict, info: dict) -> dict:
+    """A foreign inherited snapshot requires fresh admission, never an equivalence claim."""
+    snapshot = resources.get("metadata_snapshot")
+    if not snapshot:
+        raise ValueError(
+            "Fresh metadata admission requires evidence of an inherited foreign snapshot"
+        )
+    path = (root / snapshot).resolve()
+    if (
+        not path.is_relative_to(root.resolve() / "research")
+        or not path.is_file()
+        or path.is_symlink()
+    ):
+        raise ValueError("Inherited snapshot must be an owned research file")
+    previous = json.loads(path.read_text())
+    scheme = resources.get("metadata_hash_scheme", STABLE_METADATA)
+    before = previous.get("model_info", {}).get("general.parameter_count")
+    after = info.get("model_info", {}).get("general.parameter_count")
+    if (
+        scheme != STABLE_METADATA
+        or metadata_sha(previous, scheme) == resources["metadata_sha256"]
+        or type(before) is not int
+        or type(after) is not int
+        or before <= 0
+        or after <= 0
+        or before == after
+    ):
+        raise ValueError("Snapshot is not proven to be inherited from another model")
+    return {
+        "state": "same-digest-fresh-admission-required",
+        "metadata_equivalence_proven": False,
+        "previous_pin": resources["metadata_sha256"],
+        "previous_snapshot_parameters": before,
+        "current_parameters": after,
+        "scope": "Same verified model digest; full panel and post-panel identity required before replacing the invalid inherited metadata binding",
+    }
 
 
 def selected_profile(root: Path, role: str) -> Path | None:
@@ -355,7 +415,7 @@ def qualify_locked(root: Path) -> dict:
     }
     roles = {}
     reports = []
-    for role, model in WINDOWS_ROLES:
+    for role, model in sorted(WINDOWS_ROLES, key=lambda candidate: candidate[0] not in migrations):
         if role in locked:
             continue
         if role in migrations and model != migrations[role]["runtime"]["model_name"]:
@@ -406,9 +466,14 @@ def qualify_locked(root: Path) -> dict:
             atomic_json(snapshot, info)
             report["metadata_snapshot"] = str(snapshot)
             if role in migrations:
-                report["metadata_migration"] = compatible_metadata(
-                    root, migrations[role]["resources"], info
-                )
+                try:
+                    report["metadata_migration"] = compatible_metadata(
+                        root, migrations[role]["resources"], info
+                    )
+                except ValueError:
+                    report["metadata_migration"] = inherited_snapshot_readmission(
+                        root, migrations[role]["resources"], info
+                    )
             profile["resources"]["metadata_sha256"] = metadata_sha(info, ORDERED_METADATA)
             profile["resources"]["metadata_snapshot"] = str(snapshot.relative_to(root))
             client = helper_client(profile, root)
@@ -446,6 +511,18 @@ def qualify_locked(root: Path) -> dict:
                         "updated": time.time(),
                     },
                 )
+            migration = report.get("metadata_migration", {})
+            if migration.get("state") == "same-digest-fresh-admission-required" and admitted_panel(
+                measurement
+            ):
+                if (
+                    metadata_sha(client.identity(), ORDERED_METADATA)
+                    != profile["resources"]["metadata_sha256"]
+                ):
+                    raise ValueError(
+                        "Same-digest fresh admission metadata changed during the panel"
+                    )
+                migration["state"] = "same-digest-fresh-admission-verified"
             report.update(
                 model_digest=profile["resources"]["model_digest"],
                 measurement=measurement,

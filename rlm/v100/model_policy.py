@@ -65,6 +65,8 @@ def deployment(root: Path) -> list[dict]:
                             "model": name,
                             "state": "retired"
                             if retired(name)
+                            else "metadata compatibility blocked; historical admission retained"
+                            if role in value.get("unresolved_compatibility", [])
                             else "qualified, current serving unverified",
                             "receipt": str(path),
                         }
