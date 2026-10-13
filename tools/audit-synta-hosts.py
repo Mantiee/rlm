@@ -29,6 +29,12 @@ def probe(item):
         if len(body) > 8 * 2**20:
             raise ValueError("Response exceeds audit byte budget")
         value = json.loads(body)
+        if name.endswith("_props"):
+            value = {
+                "model_path": value.get("model_path"),
+                "total_slots": value.get("total_slots"),
+                "context": value.get("default_generation_settings", {}).get("n_ctx"),
+            }
         if name == "dashboard":
             value = {
                 "collected_at": value.get("collected_at"),
@@ -46,6 +52,18 @@ def latest_role_report(root):
     if not reports:
         return {}
     return receipt(max(reports, key=lambda path: path.stat().st_mtime))
+
+
+def controller_tail(root, raw):
+    path = Path(raw).resolve()
+    if not path.is_relative_to((root / "research/mission").resolve()) or not path.is_file():
+        return []
+    try:
+        with path.open("rb") as handle:
+            handle.seek(max(0, path.stat().st_size - 16384))
+            return handle.read(16384).decode("utf-8", errors="replace").splitlines()[-48:]
+    except OSError as error:
+        return [str(error)[:300]]
 
 
 def chat_probe_queue(root, probe_receipt):
@@ -139,6 +157,8 @@ def main():
         "remote_preparation": "model-roles/remote-preparation.json",
         "remote_chat_deployment": "remote-chat-deployment.json",
         "chat_probe": "chat-probe.json",
+        "chat_active": "state/chat-active.json",
+        "cpu_server_receipt": "state/server-8094.json",
         "mission_recovery": "mission-watchdog/status.json",
         "supervisor": "supervisor/status.json",
         "supervisor_pause": "supervisor/pause.json",
@@ -147,6 +167,10 @@ def main():
     report["receipts"]["chat_probe_queue"] = chat_probe_queue(
         root, report["receipts"]["chat_probe"]
     )
+    report["receipts"]["controller_tail"] = controller_tail(root, report["mission"].get("log", ""))
+    run = Path(report["mission"].get("run", "")).resolve()
+    if run.is_relative_to((root / "research/mission").resolve()):
+        report["receipts"]["cpu_chat_status"] = receipt(run / "accepted-cpu-chat-status.json")
     report["receipts"]["current_activity"] = snapshot(root, report["mission"], {})
     reports = list((root / "research/model-roles").glob("*/qualification.json")) + list(
         (root / "research/owned-node").glob("*.qualification.json")
@@ -177,7 +201,11 @@ def main():
                     report["role_metadata"].append(
                         {"role": "planner-candidate", "current_snapshot": receipt(snapshot_path)}
                     )
-    urls = [("dashboard", "http://192.168.0.68:8765/api/status")]
+    urls = [
+        ("dashboard", "http://192.168.0.68:8765/api/status"),
+        ("accepted_cpu_props", "http://127.0.0.1:8094/props"),
+        ("native_gpu_props", "http://127.0.0.1:8088/props"),
+    ]
     for host, origin in (
         ("windows", "http://192.168.0.61:11435"),
         ("node3060", "http://192.168.0.9:11435"),
