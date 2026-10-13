@@ -274,6 +274,42 @@ def test_qualification_retries_transport_admission_but_not_wrong_answers(monkeyp
     assert len(calls) == 20
 
 
+def test_admission_waits_for_the_guard_and_never_retries_a_scored_answer(monkeypatch):
+    from rlm.v100 import agent
+
+    calls, delays = [], []
+    answers = {row["prompt"]: row["expected"] for row in model_roles.cases()}
+
+    def reply(client, messages, **kwargs):
+        calls.append(messages[0]["content"])
+        if len(calls) <= 4:
+            raise requests.ConnectionError(
+                "Windows adaptive guard unavailable: GPU temperature at least 75 C"
+            )
+        return {"content": json.dumps({"answer": answers[messages[0]["content"]]})}
+
+    monkeypatch.setattr(agent, "native_turn", reply)
+    monkeypatch.setattr(model_roles.time, "sleep", delays.append)
+    result = model_roles.evaluate(type("Client", (), {"timeout": 120})())
+    assert result["passed"] == 20 and result["cases"][0]["transport_attempts"] == 5
+    assert len(calls) == 24 and delays == [1, 2, 3, 4]
+
+
+def test_admission_cooldown_has_a_per_case_budget(monkeypatch):
+    from rlm.v100 import agent
+
+    clock = iter([0, 119])
+    monkeypatch.setattr(model_roles.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(model_roles.time, "sleep", lambda *a: pytest.fail("Budget exhausted"))
+    monkeypatch.setattr(
+        agent,
+        "native_turn",
+        lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("cooling down")),
+    )
+    with pytest.raises(requests.ConnectionError):
+        model_roles.evaluate(type("Client", (), {"timeout": 120})())
+
+
 def test_interrupted_metadata_download_retries_without_weakening_validation(monkeypatch):
     calls = []
     delays = []

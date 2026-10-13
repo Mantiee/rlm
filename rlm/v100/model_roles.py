@@ -287,7 +287,8 @@ def evaluate(client) -> dict:
         if production_timeout is not None:
             client.timeout = min(production_timeout, 120 if index == 0 else 30)
         started = time.monotonic()
-        for attempt in range(3):
+        admission_deadline = started + 120
+        for attempt in range(24):
             try:
                 message = native_turn(
                     client,
@@ -302,17 +303,21 @@ def evaluate(client) -> dict:
                     },
                 )
                 break
-            except requests.HTTPError as error:
+            except (requests.HTTPError, requests.ConnectionError) as error:
                 code = error.response.status_code if error.response is not None else None
+                remaining = (
+                    min(admission_deadline, getattr(client, "request_deadline", float("inf")))
+                    - time.monotonic()
+                )
                 if (
-                    code not in (502, 503)
-                    or attempt == 2
-                    or time.monotonic() + 2 >= getattr(client, "request_deadline", float("inf"))
+                    (isinstance(error, requests.HTTPError) and code not in (500, 502, 503))
+                    or attempt == 23
+                    or remaining <= 2
                 ):
                     raise
                 # This is a read-only fixed math/evidence probe. Retry transport
                 # admission, never a scored answer or a tool/action request.
-                time.sleep(attempt + 1)
+                time.sleep(min(attempt + 1, 5, remaining - 1))
         value = json_object(message.get("content"))
         rows.append(
             {

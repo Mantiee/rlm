@@ -1,6 +1,8 @@
 """Read-only local audit of the three explicitly owned Synta hosts."""
 
 import json
+import re
+import sqlite3
 import subprocess
 import time
 import urllib.request
@@ -46,6 +48,43 @@ def latest_role_report(root):
     return receipt(max(reports, key=lambda path: path.stat().st_mtime))
 
 
+def chat_probe_queue(root, probe_receipt):
+    identity, revision = probe_receipt.get("request_id", ""), probe_receipt.get("revision", "")
+    if not re.fullmatch("[a-f0-9]{32}", identity) or not re.fullmatch("[a-f0-9]{40}", revision):
+        return {"state": "no-saved-probe"}
+    path = root / "research/state/user-chat.sqlite3"
+    if not path.is_file() or path.is_symlink():
+        return {"state": "unavailable"}
+    try:
+        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.5) as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute(
+                "SELECT id,message,state,attempts,error,updated,CASE WHEN length(response)<=65536 THEN response END AS response FROM requests WHERE id=?",
+                (identity,),
+            ).fetchone()
+        if row is None:
+            return {"state": "missing"}
+        expected = f"What is 19 times 23? Reply with only 437. Do not use tools or change anything. Read-only verification ID: {revision}"
+        if row["message"] != expected:
+            return {"state": "rejected", "error": "Saved ID is not the fixed authorized probe"}
+        response = json.loads(row["response"]) if row["response"] else {}
+        return {
+            "id": identity,
+            "revision": revision,
+            "state": row["state"],
+            "attempts": row["attempts"],
+            "error": row["error"],
+            "updated": row["updated"],
+            "response": {
+                key: response.get(key)
+                for key in ("answer", "actions", "applied", "tool_receipts", "responder")
+            },
+            "scope": "Read-only observation of the one fixed probe; no other operator messages exported",
+        }
+    except (OSError, ValueError, sqlite3.Error) as error:
+        return {"state": "unavailable", "error": str(error)[:300]}
+
+
 def main():
     from rlm.v100.mission import status
     from rlm.v100.mission_view import snapshot
@@ -74,6 +113,9 @@ def main():
         "supervisor_pause": "supervisor/pause.json",
     }.items():
         report["receipts"][name] = receipt(root / "research" / path)
+    report["receipts"]["chat_probe_queue"] = chat_probe_queue(
+        root, report["receipts"]["chat_probe"]
+    )
     report["receipts"]["current_activity"] = snapshot(root, report["mission"], {})
     reports = list((root / "research/model-roles").glob("*/qualification.json")) + list(
         (root / "research/owned-node").glob("*.qualification.json")
