@@ -2,6 +2,8 @@
 
 import argparse
 import hashlib
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -190,6 +192,63 @@ def refresh_private_sync(root: Path, folder: Path) -> None:
         temporary = destination / (source.name + ".new")
         temporary.write_bytes(source.read_bytes())
         os.replace(temporary, destination / source.name)
+
+
+def refresh_bootstrap(root: Path, folder: Path) -> None:
+    """Install verified dependencies before replacing the standalone entrypoint."""
+    modules = ("inference_benchmark", "release_selector", "managed_bootstrap")
+    sources = [folder / f"rlm/v100/{module}.py" for module in modules]
+    for source in sources:
+        if not source.is_file():
+            raise FileNotFoundError(
+                "Bootstrap dependency missing from verified bundle: " + source.name
+            )
+        compile(source.read_bytes(), str(source), "exec")
+    bootstrap = root / "tools/managed-bootstrap"
+    bootstrap.mkdir(parents=True, exist_ok=True)
+    for source in sources:
+        destination = bootstrap / source.name
+        temporary = destination.with_suffix(".new")
+        temporary.write_bytes(source.read_bytes())
+        os.replace(temporary, destination)
+
+
+def bootstrap_selection(root: Path, peer: bool = False) -> str | None:
+    name = "rlm.v100.release_selector" if __package__ else "release_selector"
+    try:
+        module = importlib.import_module(name)
+    except ModuleNotFoundError as error:
+        if __package__ or error.name != name:
+            raise
+        revision, manifest = release()
+        artifact = "rlm/v100/release_selector.py"
+        expected = manifest["files"][artifact]
+        body = fetch(f"https://raw.githubusercontent.com/{REPOSITORY}/{revision}/{artifact}")
+        if hashlib.sha256(body).hexdigest() != expected:
+            raise ValueError("Missing bootstrap dependency checksum differs") from error
+        destination = Path(__file__).with_name("release_selector.py")
+        compile(body, str(destination), "exec")
+        temporary = destination.with_suffix(".new")
+        temporary.write_bytes(body)
+        os.replace(temporary, destination)
+        spec = importlib.util.spec_from_file_location(
+            "synta_recovered_release_selector", destination
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Recovered bootstrap dependency cannot be loaded") from error
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        print(
+            json.dumps(
+                {
+                    "stage": "bootstrap-dependency-restored",
+                    "revision": revision,
+                    "artifact": artifact,
+                }
+            ),
+            flush=True,
+        )
+    return module.selection(root, peer=peer)
 
 
 def remote_preparation(root: Path, folder: Path, revision: str) -> dict:
@@ -420,11 +479,8 @@ def main() -> None:
         else args.root / "logs/managed-update.json"
     )
     try:
-        if __package__:
-            from rlm.v100.release_selector import selection
-        else:
-            from release_selector import selection
-        revision, manifest = release(args.revision or selection(args.root, peer=os.name == "nt"))
+        selected = args.revision or bootstrap_selection(args.root, peer=os.name == "nt")
+        revision, manifest = release(selected)
         folder = args.root / "tools/managed-releases" / revision
         if state.exists():
             previous = json.loads(state.read_text())
@@ -439,15 +495,7 @@ def main() -> None:
         materialize(folder, revision, manifest)
         if os.name != "nt":
             refresh_private_sync(args.root, folder)
-        bootstrap = args.root / "tools/managed-bootstrap"
-        bootstrap.mkdir(parents=True, exist_ok=True)
-        for module in ("managed_bootstrap", "inference_benchmark", "release_selector"):
-            source = folder / f"rlm/v100/{module}.py"
-            if source.exists():
-                destination = bootstrap / (module + ".py")
-                temporary = destination.with_suffix(".new")
-                temporary.write_bytes(source.read_bytes())
-                os.replace(temporary, destination)
+        refresh_bootstrap(args.root, folder)
         save(state, {"stage": "release-verified", "revision": revision, "updated": time.time()})
         result = (
             windows(args.root, folder, revision, manifest)
@@ -456,7 +504,14 @@ def main() -> None:
         )
         save(state, {**result, "updated": time.time()})
         print(json.dumps(result), flush=True)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        ImportError,
+        KeyError,
+        subprocess.SubprocessError,
+    ) as error:
         save(
             state,
             {
