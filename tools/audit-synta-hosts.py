@@ -62,12 +62,42 @@ def chat_probe_queue(root, probe_receipt):
                 "SELECT id,message,state,attempts,error,updated,CASE WHEN length(response)<=65536 THEN response END AS response FROM requests WHERE id=?",
                 (identity,),
             ).fetchone()
+            recent = db.execute(
+                "SELECT id,message,state,CASE WHEN length(response)<=65536 THEN response END AS response FROM requests WHERE state='completed' AND message LIKE ? ORDER BY rowid DESC LIMIT 4",
+                (
+                    "What is 19 times 23? Reply with only 437. Do not use tools or change anything. Read-only verification ID: %",
+                ),
+            ).fetchall()
         if row is None:
             return {"state": "missing"}
         expected = f"What is 19 times 23? Reply with only 437. Do not use tools or change anything. Read-only verification ID: {revision}"
         if row["message"] != expected:
             return {"state": "rejected", "error": "Saved ID is not the fixed authorized probe"}
         response = json.loads(row["response"]) if row["response"] else {}
+        if not isinstance(response, dict):
+            raise ValueError("Fixed probe response is not an object")
+        history = []
+        for completed in recent:
+            candidate_revision = completed["message"].rsplit(": ", 1)[-1]
+            if (
+                not re.fullmatch("[a-f0-9]{40}", candidate_revision)
+                or completed["message"] != expected[:-40] + candidate_revision
+            ):
+                continue
+            answer = json.loads(completed["response"]) if completed["response"] else {}
+            if not isinstance(answer, dict):
+                continue
+            history.append(
+                {
+                    "id": completed["id"],
+                    "revision": candidate_revision,
+                    "state": completed["state"],
+                    "response": {
+                        key: answer.get(key)
+                        for key in ("answer", "actions", "applied", "tool_receipts", "responder")
+                    },
+                }
+            )
         return {
             "id": identity,
             "revision": revision,
@@ -79,6 +109,7 @@ def chat_probe_queue(root, probe_receipt):
                 key: response.get(key)
                 for key in ("answer", "actions", "applied", "tool_receipts", "responder")
             },
+            "recent_completed_fixed_probes": history,
             "scope": "Read-only observation of the one fixed probe; no other operator messages exported",
         }
     except (OSError, ValueError, sqlite3.Error) as error:

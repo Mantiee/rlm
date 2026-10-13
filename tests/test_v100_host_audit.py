@@ -45,6 +45,7 @@ def test_audit_observes_only_the_fixed_probe_without_mutating_the_queue(tmp_path
     before = path.read_bytes()
     result = audit.chat_probe_queue(tmp_path, {"request_id": identity, "revision": revision})
     assert result["state"] == "completed" and result["response"]["answer"] == "437"
+    assert result["recent_completed_fixed_probes"][0]["id"] == identity
     assert path.read_bytes() == before
     with sqlite3.connect(path) as db:
         db.execute("UPDATE requests SET message='private unrelated message'")
