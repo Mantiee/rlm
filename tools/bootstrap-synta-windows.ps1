@@ -8,7 +8,7 @@ $python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Existing owned Python runtime required before updater registration.' }
 $dir = Join-Path $root 'tools\managed-bootstrap'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-foreach ($name in @('managed_bootstrap','inference_benchmark')) {
+foreach ($name in @('managed_bootstrap','inference_benchmark','release_selector')) {
     Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/Mantiee/rlm/$Revision/rlm/v100/$name.py" -OutFile (Join-Path $dir ($name + '.py'))
 }
 $runner = Join-Path $dir 'managed_bootstrap.py'

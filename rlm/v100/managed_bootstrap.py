@@ -351,7 +351,11 @@ def main() -> None:
         else args.root / "logs/managed-update.json"
     )
     try:
-        revision, manifest = release(args.revision)
+        if __package__:
+            from rlm.v100.release_selector import selection
+        else:
+            from release_selector import selection
+        revision, manifest = release(args.revision or selection(args.root, peer=os.name == "nt"))
         folder = args.root / "tools/managed-releases" / revision
         if state.exists():
             previous = json.loads(state.read_text())
@@ -366,7 +370,7 @@ def main() -> None:
         materialize(folder, revision, manifest)
         bootstrap = args.root / "tools/managed-bootstrap"
         bootstrap.mkdir(parents=True, exist_ok=True)
-        for module in ("managed_bootstrap", "inference_benchmark"):
+        for module in ("managed_bootstrap", "inference_benchmark", "release_selector"):
             source = folder / f"rlm/v100/{module}.py"
             if source.exists():
                 destination = bootstrap / (module + ".py")

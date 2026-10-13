@@ -235,6 +235,7 @@ class OllamaResearchClient(LlamaCppClient):
             "qwen3.5:35b-a3b-q4_K_M",
             "qwen3.6:35b-a3b-q4_K_M",
             "gemma4:26b-a4b-it-q4_K_M",
+            "qwen3.8:27b-q4_K_M",
         ):
             raise ValueError("CPU expert offload is admitted only for the explicit MoE role")
         self.on_demand, self.allow_cpu_offload = on_demand, allow_cpu_offload
@@ -429,7 +430,18 @@ class OllamaResearchClient(LlamaCppClient):
             or info.get("remote_model")
             or len(info.get("template", "").encode()) > 16384
         ):
-            raise ValueError("Remote helper metadata differs from supported text byte-BPE model")
+            raise ValueError(
+                "Remote helper metadata differs: "
+                + json.dumps(
+                    {
+                        "family": info.get("details", {}).get("family"),
+                        "quantization": info.get("details", {}).get("quantization_level"),
+                        "tokenizer": info.get("model_info", {}).get("tokenizer.ggml.model"),
+                        "custom_system": bool(info.get("system")),
+                        "template_bytes": len(info.get("template", "").encode()),
+                    }
+                )
+            )
         if (
             self.metadata_sha256
             and metadata_sha(info, self.metadata_hash_scheme) != self.metadata_sha256
@@ -519,6 +531,9 @@ class OllamaResearchClient(LlamaCppClient):
             if self.require_adaptive_windows_guard:
                 guard = self.remote_request("/api/synta-resources")
                 check_guard(guard, self.dedicated_host)
+                threads = guard.get("cpu_threads")
+                if type(threads) is int and 1 <= threads <= 64:
+                    payload["options"]["num_thread"] = threads
                 if guard.get("throughput_enabled") is True and not self.dedicated_host:
                     duty = guard.get("duty_percent")
                     if type(duty) is int and 1 <= duty <= 100:

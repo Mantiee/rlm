@@ -490,6 +490,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
             )
     for identity, label, relative in (
         ("knowledge", "Wikipedia / RAG", "research/knowledge/import-status.json"),
+        ("private-sync", "Private GitHub synchronization", "research/private-sync/status.json"),
         ("knowledge-index", "Live Wikipedia index", "research/knowledge/index-progress.json"),
         ("managed-update", "Automatic GitHub updates", "research/managed-update/status.json"),
         ("mission-watchdog", "Mission recovery", "research/mission-watchdog/status.json"),

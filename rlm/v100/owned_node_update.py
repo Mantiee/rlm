@@ -27,10 +27,15 @@ def run(base: Path, state: Path) -> dict:
 
     target = state / "managed-update.json"
     try:
+        if __package__:
+            from rlm.v100.release_selector import selection
+        else:
+            from release_selector import selection
+        selected = selection(state, peer=True)
         ref = json.loads(
             read("https://api.github.com/repos/Mantiee/rlm/git/ref/heads/v100-rtx-reconnect")
         )
-        revision = ref["object"]["sha"]
+        revision = selected or ref["object"]["sha"]
         if not re.fullmatch("[a-f0-9]{40}", revision):
             raise ValueError("GitHub channel did not return an immutable revision")
         prefix = f"https://raw.githubusercontent.com/Mantiee/rlm/{revision}/"

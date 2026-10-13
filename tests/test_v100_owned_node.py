@@ -284,7 +284,9 @@ def test_cpu_error_does_not_disable_a_qualified_gpu(tmp_path, monkeypatch):
 def test_owned_updater_retries_incomplete_install_and_defers_busy_node(
     tmp_path, monkeypatch, installed, returncode, expected
 ):
-    from rlm.v100 import owned_node_update
+    from rlm.v100 import owned_node_update, release_selector
+
+    monkeypatch.setattr(release_selector, "selection", lambda *a, **kw: None)
 
     base, state = tmp_path / "base", tmp_path / "state"
     revision = "a" * 40

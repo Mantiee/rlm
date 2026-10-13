@@ -127,7 +127,10 @@ def evaluate(client) -> dict:
     from rlm.v100.tool_protocol import json_object
 
     rows = []
-    for case in cases():
+    production_timeout = client.timeout if hasattr(client, "timeout") else None
+    for index, case in enumerate(cases()):
+        if production_timeout is not None:
+            client.timeout = min(production_timeout, 120 if index == 0 else 30)
         started = time.monotonic()
         message = native_turn(
             client,
@@ -184,7 +187,7 @@ def qualify(root: Path) -> dict:
             "profile": baseline_profile,
             "models": sorted((m["name"], m["digest"]) for m in inventory["models"]),
             "panel": cases(),
-            "revision": "roles-v92",
+            "revision": "roles-v94",
         }
     )
     cache = root / "research/model-roles/qualification-cache.json"
@@ -231,7 +234,7 @@ def qualify(root: Path) -> dict:
             helper_duty_percent=100,
             max_vram_gib=ROLE_MODELS[model][1],
             on_demand=True,
-            allow_cpu_offload=model == "gemma4:26b-a4b-it-q4_K_M",
+            allow_cpu_offload=role == "planner",
             require_adaptive_windows_guard=True,
         )
         report = {"role": role, "model": model, "admitted": False, "baseline": baseline}
@@ -251,8 +254,8 @@ def qualify(root: Path) -> dict:
             info = client.identity()
             profile["resources"]["metadata_sha256"] = metadata_sha(info, STABLE_METADATA)
             client = helper_client(profile, root)
-            client.timeout = min(client.timeout, 30)
-            client.request_deadline = time.monotonic() + 180
+            client.timeout = min(client.timeout, 120)
+            client.request_deadline = time.monotonic() + 360
             measurement = evaluate(client)
             report.update(
                 model_digest=profile["resources"]["model_digest"],

@@ -7,7 +7,7 @@ PY="$ROOT/venvs/v100-continual/bin/python"
 FOLDER="$ROOT/tools/managed-bootstrap"
 [[ -x "$PY" && "$ROOT" != *" "* ]] || { echo "Existing Python and a path without spaces required" >&2; exit 1; }
 mkdir -p "$FOLDER" "$HOME/.config/systemd/user"
-for MODULE in managed_bootstrap inference_benchmark; do
+for MODULE in managed_bootstrap inference_benchmark release_selector; do
   curl -fL --retry 3 "https://raw.githubusercontent.com/Mantiee/rlm/$REV/rlm/v100/$MODULE.py" -o "$FOLDER/$MODULE.py"
 done
 "$PY" -m py_compile "$FOLDER/managed_bootstrap.py"
