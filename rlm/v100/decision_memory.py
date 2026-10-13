@@ -5,6 +5,7 @@ import json
 import time
 from pathlib import Path
 
+from rlm.v100.activity import redact
 from rlm.v100.common import atomic_json
 
 MAX_BYTES = 16384
@@ -80,6 +81,9 @@ def record(root: Path, messages: list[dict], response: dict, trace: list[dict]) 
         answer = response.get("answer") or response.get("conclusion") or response.get("summary")
         if not isinstance(answer, str) or not answer.strip():
             return
+        answer = redact(answer)
+        if not isinstance(answer, str):
+            answer = json.dumps(answer, ensure_ascii=False)
         note = {
             "task_sha256": hashlib.sha256(task.encode()).hexdigest(),
             "public_conclusion": answer[:700],

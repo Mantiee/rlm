@@ -75,6 +75,20 @@ def test_optional_memory_does_not_consume_near_full_context(tmp_path, monkeypatc
     assert decision_memory.attach(tmp_path, messages, 0) == messages
 
 
+def test_reasoning_tags_and_credentials_are_not_saved_as_public_notes(tmp_path, monkeypatch):
+    monkeypatch.setattr(decision_memory, "goal_id", lambda root: "a" * 64)
+    decision_memory.record(
+        tmp_path,
+        [{"role": "user", "content": "task"}],
+        {"answer": "<think>internal scratchpad</think> Public result. password=example-secret"},
+        [],
+    )
+    note = decision_memory.read(tmp_path, "a" * 64)[0]
+    assert "internal scratchpad" not in note["public_conclusion"]
+    assert "example-secret" not in note["public_conclusion"]
+    assert "Public result" in note["public_conclusion"]
+
+
 def test_invalid_or_missing_goal_does_not_block_memory(tmp_path, monkeypatch):
     def invalid(root):
         raise ValueError("invalid goal")

@@ -53,7 +53,7 @@
     "rlm/v100/mission_chat.py": "89a3a17ea330ece667b60e0ad1f8d473a2b66c79fc707fc9e42466129a308375",
     "rlm/v100/chat_progress.py": "cd537980d826d1e39ad01e2c47cf17877a8483b86af6eb20347bf8d424ec4f68",
     "rlm/v100/research_tools.py": "fcedb9179a9e51414f70afc6231ab57ae90d12a7cdbaac8abf846a91732d64bb",
-    "rlm/v100/decision_memory.py": "19867e7247fe94dd901dc68eb844af50a4c24bcd03116285d3296b61bc644c33",
+    "rlm/v100/decision_memory.py": "b6b5acc393435c365045b1d18e63b95741ec0752a8a0376f211ef0491a416c99",
     "tools/update-synta-v98.sh": "671162e9fd27382b9449ea68661e1468b37537f62c1bfb906a97578f1fa5203f"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
