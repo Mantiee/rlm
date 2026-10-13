@@ -60,10 +60,25 @@ def import_wiki(root: Path, path: Path, language: str, max_pages: int) -> dict:
         path.open("rb") as compressed,
         bz2.BZ2File(compressed) if path.suffix == ".bz2" else nullcontext(compressed) as stream,
     ):
-        database.execute("INSERT INTO passages(passages, rank) VALUES('automerge', 8)")
         previous = database.execute(
             "SELECT pages,chunks,complete FROM wiki_checkpoints WHERE artifact=?", (artifact,)
         ).fetchone()
+        if previous and previous[2] == 1 and max_pages >= previous[0]:
+            result = {
+                "pages_imported": previous[0],
+                "chunks_imported": previous[1],
+                "pages_reused": previous[0],
+                "pages_written": 0,
+                "seconds": time.monotonic() - started,
+                "state": "verified-complete-checkpoint",
+                "scope": "Same archive SHA and committed index checkpoint; no XML rescan or weight updates",
+                "license": "Preserve Wikipedia attribution and applicable share-alike terms",
+            }
+            save_index_progress(
+                root, {**result, "stage": "part-indexed", "part": path.name, "updated": time.time()}
+            )
+            return result
+        database.execute("INSERT INTO passages(passages, rank) VALUES('automerge', 8)")
         resume_pages, chunks = previous[:2] if previous else (0, 0)
         events = ET.iterparse(stream, events=("start", "end"))
         _, document = next(events)

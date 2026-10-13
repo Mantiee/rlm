@@ -119,6 +119,35 @@ def test_resume_preserves_existing_passage_rows_and_updates_changed_revision(tmp
     assert search(tmp_path, "cashflow")["passages"][0]["revision"] == "10"
 
 
+def test_complete_archive_checkpoint_skips_xml_but_partial_checkpoint_resumes(
+    tmp_path, monkeypatch
+):
+    from rlm.v100 import knowledge_rag
+
+    dump = tmp_path / "wiki.xml.bz2"
+    dump.write_bytes(
+        bz2.compress(
+            b"<mediawiki><page><title>Revenue</title><ns>0</ns><revision><id>9</id><text>Revenue costs.</text></revision></page></mediawiki>"
+        )
+    )
+    first = import_wiki(tmp_path, dump, "en", 1)
+    assert first["pages_written"] == 1
+    assert "state" not in import_wiki(tmp_path, dump, "en", 10)
+    monkeypatch.setattr(
+        knowledge_rag.ET,
+        "iterparse",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("complete archive should not be rescanned")
+        ),
+    )
+    result = import_wiki(tmp_path, dump, "en", 10)
+    assert result["state"] == "verified-complete-checkpoint"
+    assert result["pages_reused"] == 1 and result["pages_written"] == 0
+    dump.write_bytes(bz2.compress(b"<mediawiki/>"))
+    with __import__("pytest").raises(AssertionError, match="should not be rescanned"):
+        import_wiki(tmp_path, dump, "en", 10)
+
+
 def test_rag_timeout_keeps_master_responsive(tmp_path, monkeypatch):
     import time
 
