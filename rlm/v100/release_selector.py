@@ -10,12 +10,16 @@ SCHEMA = "synta-approved-release-v1"
 
 
 def validate(value: dict) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Approved release must be a JSON object")
     if value.get("schema") != SCHEMA or value.get("repository") != "Mantiee/rlm":
         raise ValueError("Unknown approved release source")
     if value.get("mode") not in ("follow-published", "pinned"):
         raise ValueError("Unknown release selection mode")
-    if value["mode"] == "pinned" and not re.fullmatch("[a-f0-9]{40}", value.get("revision", "")):
-        raise ValueError("Release pin requires an immutable commit")
+    if value["mode"] == "pinned":
+        revision = value.get("revision")
+        if not isinstance(revision, str) or not re.fullmatch("[a-f0-9]{40}", revision):
+            raise ValueError("Release pin requires an immutable commit")
     return {k: value[k] for k in ("schema", "repository", "mode", "revision") if k in value}
 
 

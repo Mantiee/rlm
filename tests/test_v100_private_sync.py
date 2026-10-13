@@ -45,7 +45,12 @@ class PrivateControlTests(unittest.TestCase):
             "revision": "a" * 40,
         }
         self.assertEqual(release_selector.validate(valid)["revision"], "a" * 40)
-        for change in ({"revision": "main"}, {"repository": "other/repo"}, {"mode": "shell"}):
+        for change in (
+            {"revision": "main"},
+            {"revision": 123},
+            {"repository": "other/repo"},
+            {"mode": "shell"},
+        ):
             with self.assertRaises(ValueError):
                 release_selector.validate(valid | change)
 
