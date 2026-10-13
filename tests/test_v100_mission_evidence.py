@@ -171,7 +171,7 @@ def test_ordinary_chat_gets_host_evidence_before_model_can_guess(tmp_path, monke
         activity_context={},
     )
     monkeypatch.setattr(competition, "helper_client", lambda *args: client)
-    result = mission_chat.respond(tmp_path, run, {"message": "Czy trenujesz?"})
+    result = mission_chat.respond(tmp_path, run, {"message": "Jak przebiega trening wag?"})
     evidence = json.loads(seen[0]["content"].split("Verified current facts: ", 1)[1])
     assert evidence["learning"]["completed_cycles"] == 0
     assert evidence["phase"] == "baseline-before-weight-updates"
