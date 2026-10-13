@@ -145,18 +145,32 @@ def evaluate(client) -> dict:
         if production_timeout is not None:
             client.timeout = min(production_timeout, 120 if index == 0 else 30)
         started = time.monotonic()
-        message = native_turn(
-            client,
-            [{"role": "user", "content": case["prompt"]}],
-            response_format={
-                "type": "json_object",
-                "schema": {
-                    "type": "object",
-                    "required": ["answer"],
-                    "properties": {"answer": {"type": ["string", "number"]}},
-                },
-            },
-        )
+        for attempt in range(3):
+            try:
+                message = native_turn(
+                    client,
+                    [{"role": "user", "content": case["prompt"]}],
+                    response_format={
+                        "type": "json_object",
+                        "schema": {
+                            "type": "object",
+                            "required": ["answer"],
+                            "properties": {"answer": {"type": ["string", "number"]}},
+                        },
+                    },
+                )
+                break
+            except requests.HTTPError as error:
+                code = error.response.status_code if error.response is not None else None
+                if (
+                    code not in (502, 503)
+                    or attempt == 2
+                    or time.monotonic() + 2 >= getattr(client, "request_deadline", float("inf"))
+                ):
+                    raise
+                # This is a read-only fixed math/evidence probe. Retry transport
+                # admission, never a scored answer or a tool/action request.
+                time.sleep(attempt + 1)
         value = json_object(message.get("content"))
         rows.append(
             {
@@ -165,6 +179,7 @@ def evaluate(client) -> dict:
                 "answer": value.get("answer"),
                 "passed": score_answer(value.get("answer"), case["expected"], case["kind"]),
                 "seconds": time.monotonic() - started,
+                "transport_attempts": attempt + 1,
             }
         )
     return {

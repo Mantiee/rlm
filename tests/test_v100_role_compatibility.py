@@ -4,6 +4,7 @@ from http.client import RemoteDisconnected
 from urllib.error import HTTPError
 
 import pytest
+import requests
 
 from rlm.v100 import competition, managed_bootstrap, model_roles
 from rlm.v100.common import atomic_json
@@ -77,6 +78,39 @@ def test_dense_planner_migration_keeps_foundation_and_routes_old_workers(tmp_pat
 def test_offload_permission_is_architecture_specific():
     assert not model_roles.offload_allowed("qwen3.8:27b-q4_K_M")
     assert model_roles.offload_allowed("gemma4:26b-a4b-it-q4_K_M")
+
+
+def test_qualification_retries_transport_admission_but_not_wrong_answers(monkeypatch):
+    from rlm.v100 import agent
+
+    calls = []
+    delays = []
+    prompts = {row["prompt"]: row["expected"] for row in model_roles.cases()}
+
+    def reply(client, messages, **kwargs):
+        calls.append(messages[0]["content"])
+        if len(calls) <= 2:
+            response = requests.Response()
+            response.status_code = 503
+            raise requests.HTTPError("model loading", response=response)
+        return {"content": json.dumps({"answer": prompts[messages[0]["content"]]})}
+
+    monkeypatch.setattr(agent, "native_turn", reply)
+    monkeypatch.setattr(model_roles.time, "sleep", delays.append)
+    result = model_roles.evaluate(type("Client", (), {"timeout": 120})())
+    assert result["passed"] == 20
+    assert result["cases"][0]["transport_attempts"] == 3
+    assert len(calls) == 22 and delays == [1, 2]
+
+    calls.clear()
+
+    def wrong(client, messages, **kwargs):
+        calls.append(1)
+        return {"content": '{"answer":"wrong"}'}
+
+    monkeypatch.setattr(agent, "native_turn", wrong)
+    assert model_roles.evaluate(type("Client", (), {"timeout": 120})())["passed"] == 0
+    assert len(calls) == 20
 
 
 def test_interrupted_metadata_download_retries_without_weakening_validation(monkeypatch):
