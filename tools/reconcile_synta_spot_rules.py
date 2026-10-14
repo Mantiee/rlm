@@ -28,8 +28,11 @@ def propose(state, publication):
         if not original.get("feed_id", "").startswith("kraken:"):
             continue
         code = original["feed_id"].split(":", 1)[1]
+        # Other registered instruments remain untouched and retain their gates.
+        if code not in BASES:
+            continue
         rows = [row for row in publication["result"].values() if row.get("altname") == code]
-        if len(rows) != 1 or code not in BASES:
+        if len(rows) != 1:
             raise ValueError("Unknown or missing registered Kraken pair")
         row = rows[0]
         if (
@@ -110,6 +113,7 @@ def main():
                 item["feed_id"].split(":", 1)[1]
                 for item in book.state()["instruments"].values()
                 if item.get("feed_id", "").startswith("kraken:")
+                and item["feed_id"].split(":", 1)[1] in BASES
             }
         )
         if not codes or not set(codes).issubset(BASES):

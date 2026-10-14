@@ -116,3 +116,18 @@ def test_other_rule_changes_or_relaxation_require_manual_migration(recovery, fie
     publication["result"]["XXBTZUSD"][field] = value
     with pytest.raises(ValueError):
         module.propose(book.state(), publication)
+
+
+def test_unrelated_watchlist_instrument_is_preserved(recovery):
+    module, book, _, publication, evidence, _ = recovery
+    with book.db:
+        state = book.state()
+        state["instruments"]["OTHER"] = {
+            **state["instruments"]["TEST"],
+            "feed_id": "kraken:OTHERUSD",
+        }
+        book.record(state, "test-fixture", {})
+    before = book.state()["instruments"]["OTHER"]
+    proposal = module.propose(book.state(), publication)
+    module.reconcile(book, publication, evidence, sha(proposal))
+    assert book.state()["instruments"]["OTHER"] == before
