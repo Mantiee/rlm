@@ -152,7 +152,8 @@ def test_goal_observer_failure_does_not_block_quote_refresh(tmp_path, monkeypatc
     )
 
 
-def test_trusted_live_renderer_runs_on_older_layout_without_actor_sections():
+@pytest.mark.parametrize("paper_labs", [False, True])
+def test_trusted_live_renderer_runs_on_older_layout_without_actor_sections(paper_labs):
     import shutil
     import subprocess
 
@@ -175,6 +176,23 @@ const setInterval=()=>{};
 const fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(sample)});
 const sample={collected_at:1,mission:{running:true,state:{phase:'research'}},report:{},live:{agents:[{label:'A / researcher',state:'tool-start',task:'Fetch public source',declaration:'<script>Unverified hypothesis</script>',result:'status: ready',source:'timeline.jsonl'}],actors:[{label:'Windows CPU',state:'idle',workers:[{name:'windows-cpu',phase:'idle',reason:'ready'}]},{label:'V100',state:'measured',metrics:{utilization:91}}],goals:{long:{text:'Operator goal'}},events:[{actor:'master',kind:'inference-start'}]}};
 """
+    if paper_labs:
+        program = program.replace(
+            "report:{}",
+            "report:"
+            + json.dumps(
+                {
+                    "paper_labs": [
+                        {
+                            "id": "sample-v3",
+                            "state": "recorded",
+                            "accounts": {"A": {"cash": 10000, "units": 0, "gross_equity": 10000}},
+                            "gross_curve": [{"ts": "2026-10-14T20:00:00Z", "a": 10000, "b": 9999}],
+                        }
+                    ]
+                }
+            ),
+        )
     for identity in dashboard_layout.REQUIRED_IDS:
         program += f"new Element('div').id={json.dumps(identity)};\n"
     program += dashboard_layout.APP_SCRIPT
@@ -186,7 +204,11 @@ const old={dataset:{key:'reader'},open:false};let disclosures=[old];document.que
 const next={dataset:{key:'reader'},open:true};disclosures=[next];restoreDisclosures();if(next.open)throw Error('User-closed detail reopened');
 next.open=true;rememberDisclosures();const newer={dataset:{key:'reader'},open:false};disclosures=[newer];restoreDisclosures();if(!newer.open)throw Error('User-open detail lost');
 """
-    result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
+    if paper_labs:
+        program += "\nif(nodes['paper-labs-view'].children[0].children[0].textContent!=='sample-v3')throw Error('Experimental wallet missing');\n"
+    result = subprocess.run(
+        ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=5
+    )
     assert result.returncode == 0, result.stderr
 
 

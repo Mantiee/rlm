@@ -55,7 +55,7 @@
     "rlm/v100/research_tools.py": "72ea6c9443a426b312f55232b17a55347f2935536be9330d47c351ee5985b6b4",
     "rlm/v100/decision_memory.py": "03af73225f358b6c7b0bd60318ea372dc2cd51c7537f1bab5de4dbc51cabb72b",
     "tools/update-synta-v98.sh": "671162e9fd27382b9449ea68661e1468b37537f62c1bfb906a97578f1fa5203f",
-    "rlm/v100/dashboard_layout.py": "7c3560f4baa80827131581005e6c86f6201d7ec42b487dc255d39157a0bb490e",
+    "rlm/v100/dashboard_layout.py": "649d67eadee0cb7ba057145277f56627fdf3b553392f9fecf6162d4594772759",
     "tools/update-synta-v99.sh": "b78f2e702d60077cf71c609ec9c6eaf8d60c05b22a19918c1987e68ed764fb93",
     "tools/update-synta-v100.sh": "79fe723f02ba6c50a5ec9d223a105bac26d9f3d100bbb8d847138d1eaa9316b8",
     "rlm/v100/remote_nodes.py": "df584ff0175eb84d02455c47d13573d3221df4efafb0b8281754dd8f5dd69529",
@@ -75,7 +75,9 @@
     "tools/update-synta-v104.sh": "ce68ad9b13145b999025c2f78c85de3af22a6e902449fa290ccbda9490e14e4b",
     "rlm/v100/package_recovery.py": "6837d502d264951d67d83c0fbdeeed8bee48092905f4523412fc37b74588b6b3",
     "tools/synta_income_learning.py": "f7ac12fe9d09b594ece39c3357f831121e891e1a9acc82fe777e330360dc9189",
-    "tools/reconcile_synta_spot_rules.py": "19f7cd76b6f4a01be117c7fcb1553a34d8066d0a121a4529102f6c4f03d33428"
+    "tools/reconcile_synta_spot_rules.py": "19f7cd76b6f4a01be117c7fcb1553a34d8066d0a121a4529102f6c4f03d33428",
+    "rlm/v100/dashboard_snapshot.py": "649505ec97fdb7fcb106e5b847794c7f0c6534c7b4d724a5acefa103e2b396b6",
+    "rlm/v100/paper_labs_snapshot.py": "34cc055e3c9ae3a10c45c4d312d8fac7387ee72376e914ce436ad92d4d5e7656"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

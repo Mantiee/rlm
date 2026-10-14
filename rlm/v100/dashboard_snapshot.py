@@ -13,6 +13,9 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
     from rlm.v100.planning import read
 
     result = financial_supplement(root, report, errors)
+    from rlm.v100.paper_labs_snapshot import snapshot as paper_labs
+
+    result["paper_labs"] = paper_labs(root)
     if mission.get("run"):
         path = Path(mission["run"]) / "learning/heartbeat.json"
         if path.exists() and path.stat().st_size <= 16384:

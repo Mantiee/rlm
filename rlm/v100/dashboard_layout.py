@@ -31,7 +31,28 @@ const layoutVersion='__LAYOUT_SHA__';let latestSnapshot=null,latestInference=nul
 function inferenceStamp(live){return Math.max(0,...(live?.events||[]).map(e=>Date.parse(e.time)||0))}
 function mergeInference(data,live){return {...data,live:{...data.live,events:live.events,agents:[...(live.agents||[]),...(data.live?.agents||[]).filter(a=>a.source==='research/state/drones.sqlite3')]}}}
 function card(label,value){const node=document.createElement('div');node.className='card';node.dataset.key='metric-'+label;const title=document.createElement('small');title.textContent=label;const strong=document.createElement('strong');strong.className='value';strong.textContent=fmt(value);node.append(title,strong);$('cards').append(node)}
+function paperLabsPanel(data){
+ const p=panel('paper-labs-panel','Oddzielne eksperymenty paper — pochodzenie i wycena',$('paper').parentElement||$('paper'));
+ let body=$('paper-labs-view');if(!body){body=document.createElement('div');body.id='paper-labs-view';p.append(body)}body.replaceChildren();
+ const labs=data.report?.paper_labs||[];
+ if(!labs.length){textField(body,'Stan','Brak odczytu ksiąg eksperymentalnych');return}
+ for(const lab of labs){
+  const section=document.createElement('div'),title=document.createElement('h3');title.textContent=lab.id;section.append(title);body.append(section);
+  textField(section,'Księga',lab.ledger);textField(section,'Stan odczytu',lab.state);textField(section,'Błąd',lab.error);
+  textField(section,'Wiek zapisanego notowania',typeof lab.tick_age_seconds==='number'?Math.round(lab.tick_age_seconds)+' s':'UNKNOWN');
+  textField(section,'Aktualność notowania',lab.quote_stale===true?'STALE':lab.quote_stale===false?'Ostatni zapis w ciągu 180 s; źródło i FX wymagają osobnej weryfikacji':'UNKNOWN');
+  for(const [branch,a] of Object.entries(lab.accounts||{}))textField(section,'Portfel '+branch,`Gotówka ${fmt(a.cash)} PLN | Jednostki ${fmt(a.units)} | Wycena brutto ${fmt(a.gross_equity)} PLN`);
+  textField(section,'Podstawa wyceny',lab.valuation);textField(section,'Pełne koszty wykonania','UNKNOWN — promocja zablokowana');
+  textField(section,'Kapitał początkowy / P&L','UNKNOWN — baza nie zapisuje pochodzenia kapitału początkowego');textField(section,'Zakres',lab.scope);
+  const curve=(lab.gross_curve||[]).filter(row=>Number.isFinite(row.a)&&Number.isFinite(row.b));
+  if(curve.length){const chart=svg('svg',{viewBox:'0 0 800 220',role:'img','aria-label':lab.id+' gross MTM A/B'}),values=curve.flatMap(row=>[row.a,row.b]);let lo=Math.min(...values),hi=Math.max(...values),pad=Math.max(1,(hi-lo)*.1);lo-=pad;hi+=pad;
+   for(const [key,color] of [['a','#57b7ff'],['b','#f9c36b']]){const points=curve.map((row,i)=>`${40+740*i/Math.max(1,curve.length-1)},${15+170*(hi-row[key])/(hi-lo)}`).join(' ');chart.append(svg('polyline',{points,fill:'none',stroke:color,'stroke-width':2}))}section.append(chart);textField(section,'Krzywa',lab.curve_valuation+' | A niebieski, B żółty | '+curve[0].ts+' → '+curve.at(-1).ts)
+  }else textField(section,'Krzywa',lab.curve_valuation||'Brak porównywalnych punktów');
+  detailsField(section,'Ostatnie zapisane wykonania (osobna księga)',JSON.stringify(lab.recent_fills||[]),lab.id+'-fills');
+ }
+}
 function workView(data){
+paperLabsPanel(data);
 modelDeploymentView(data);
 for(const id of ['actors','goals','events']){if(!$(id)){const node=document.createElement(id==='goals'?'pre':'div');node.id=id;if(id==='actors')node.className='grid';$('cards').after(node)}}
 agentView(data);
