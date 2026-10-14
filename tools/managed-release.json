@@ -65,7 +65,7 @@
     "rlm/v100/remote_access.py": "01c87f6eb03f5ca4f08f37c8f1ae87f375777d1cebefa0893d66896811950d56",
     "rlm/v100/chat_commands.py": "64f19ecc7f8aebf71789348bb96c4bf01f89287a0a5e7c2d83027162d823cab0",
     "rlm/v100/streaming.py": "a6825da6c7b252c19d81f275d3bdf5fe75831a15efa6fa81b58489572f3f2fcd",
-    "rlm/v100/dashboard_insights.py": "2c0e614640da51886692c2901638e12ec4861d52624ece3e23648f4d3eb980cb",
+    "rlm/v100/dashboard_insights.py": "a4f30c84a9df38fdb9109aafd0953bd7af57d862f73405f2cfd02f8b1d1f44fa",
     "tools/windows-maintenance.ps1": "dc23007cead3f2813b311cf638c8a258211df0d7e485480dae14933c36f8db4c",
     "rlm/v100/chat_backend.py": "1e1669b0575eb24c6296528ecad688b344b4318b36c928fef528e52e3f9f9721",
     "rlm/v100/competition.py": "9ce6c8c38959848c596c9ce2e30e57f5739132f78c431375bcf8d4413ae800bc",

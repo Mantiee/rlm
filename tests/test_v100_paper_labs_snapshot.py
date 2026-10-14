@@ -1,8 +1,13 @@
 """Separate sidecar provenance and read-only accounting in the main dashboard."""
 
+import shutil
 import sqlite3
+import subprocess
 from datetime import UTC, datetime
 
+import pytest
+
+from rlm.v100.dashboard_insights import SCRIPT
 from rlm.v100.paper_labs_snapshot import snapshot
 
 
@@ -78,3 +83,20 @@ def test_failure_in_one_ledger_does_not_hide_other(tmp_path):
     results = snapshot(tmp_path, 1800000000)
     assert results[0]["state"] == "unavailable"
     assert results[1]["state"] == "recorded"
+
+
+@pytest.mark.parametrize("identity", ["paper-labs-panel", "trade-explorer", "paper"])
+def test_wallet_and_canonical_sections_are_visible_under_trading(identity):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable")
+    program = (
+        SCRIPT
+        + "\nif(dashboardSectionGroup({id:"
+        + repr(identity)
+        + ",querySelector:()=>null})!=='trades')throw Error('Wallet hidden outside Trading');"
+    )
+    result = subprocess.run(
+        [node, "-"], input=program, encoding="utf-8", capture_output=True, timeout=5
+    )
+    assert result.returncode == 0, result.stderr

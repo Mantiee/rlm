@@ -3,11 +3,12 @@
 SCRIPT = r"""
 let dashboardTab='overview';
 const dashboardTabs=[['overview','Overview'],['trades','Trading'],['income','Other income'],['learning','Learning'],['activity','Agents & resources'],['diagnostics','Evidence archive']];
+const dashboardGroups={diagnostics:['timeline-panel','action-archive'],trades:['trade-explorer','backtests','paper','paper-labs-panel'],income:['income-panel','source-panel'],learning:['goal-learning-panel','evaluation'],activity:['resource-panel','agent-panel','plan-panel'],overview:['live-mission-board','overview-panel','current-activity-panel','model-deployment-panel']};
+function dashboardSectionGroup(n){let group='diagnostics';for(const [key,ids] of Object.entries(dashboardGroups))if(ids.some(id=>n.id===id||n.querySelector('#'+id)))group=key;return group}
 function dashboardNavigation(){
  let nav=document.getElementById('mission-navigation');
  if(!nav){nav=document.createElement('nav');nav.id='mission-navigation';nav.setAttribute('aria-label','Dashboard sections');for(const [key,label] of dashboardTabs){const b=document.createElement('button');b.textContent=label;b.dataset.tab=key;b.onclick=()=>{dashboardTab=key;dashboardNavigation()};nav.append(b)}document.getElementById('cards').before(nav)}
- const groups={diagnostics:['timeline-panel','action-archive'],trades:['trade-explorer','backtests','paper'],income:['income-panel','source-panel'],learning:['goal-learning-panel','evaluation'],activity:['resource-panel','agent-panel','plan-panel'],overview:['live-mission-board','overview-panel','current-activity-panel','model-deployment-panel']};
- for(const n of document.querySelectorAll('body > section, body > details')){let group='diagnostics';for(const [key,ids] of Object.entries(groups))if(ids.some(id=>n.id===id||n.querySelector('#'+id)))group=key;n.hidden=group!==dashboardTab;n.dataset.dashboardGroup=group}
+ for(const n of document.querySelectorAll('body > section, body > details')){const group=dashboardSectionGroup(n);n.hidden=group!==dashboardTab;n.dataset.dashboardGroup=group}
  for(const b of nav.children){b.setAttribute('aria-pressed',String(b.dataset.tab===dashboardTab))}
  const cards=document.getElementById('cards');cards.hidden=dashboardTab!=='overview';
  // Repair older custom guest tables with four headers but six data columns.
