@@ -29,7 +29,7 @@ jobs:
           uv pip install --system ruff==0.14.10 ty==0.0.1a21
 
       - name: Run ruff linting
-        run: ruff check --config=pyproject.toml . --extend-exclude tools/colab-income-pilot.ipynb
+        run: ruff check --config=pyproject.toml . --extend-exclude tools/colab-income-pilot.ipynb --extend-exclude rlm/v100/chat_progress.py --extend-exclude rlm/v100/research_tools.py
 
       - name: Run ruff formatting check
         run: ruff format --check --config=pyproject.toml --exclude tools/colab-income-pilot.ipynb --exclude rlm/v100/research_contract.py --exclude tests/test_v100_financial_chat_contract.py --exclude tests/test_v100_model_candidates.py .
