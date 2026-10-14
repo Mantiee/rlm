@@ -30,6 +30,31 @@ STARTING_SOURCES = (
 class MasterNotReady(RuntimeError):
     """Transient serving startup, shutdown or unavailable protected receipt."""
 
+def backend_on_cooldown(root: Path, base_url: str) -> bool:
+    """Skip one recently failed helper endpoint; never silently retry tool work.
+
+    Only the exact endpoint reporting HTTP 503 is cooled down. Another
+    independently admitted serving backend may still carry out the next
+    scheduled experiment; successful tool side effects are never replayed.
+    """
+    status = root / "research/income-work/status.json"
+    if not status.is_file() or status.is_symlink() or status.stat().st_size > 2 * 2**20:
+        return False
+    try:
+        previous = json.loads(status.read_text())
+        updated = previous.get("updated")
+        if (
+            previous.get("state") != "model-selected work blocked"
+            or not isinstance(updated, (int, float))
+            or not 0 <= time.time() - updated < 900
+        ):
+            return False
+        error = str(previous.get("error", ""))
+        return "503" in error and ("for url: " + base_url.rstrip("/") + "/api/chat") in error
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 
 def owned_advisor(root: Path, branch: str, reason: str):
     """Use an independently qualified advisory node while protected serving is unavailable."""
@@ -86,7 +111,7 @@ def owned_advisor(root: Path, branch: str, reason: str):
     for path in dict.fromkeys(p for p in candidates if p is not None):
         try:
             profile = load_profile(path, root)
-            if not remote_profile(profile):
+            if not remote_profile(profile) or backend_on_cooldown(root, profile["runtime"]["base_url"]):
                 continue
             client = helper_client(profile, root, branch)
             client.timeout = 5
@@ -116,7 +141,10 @@ def accepted_master(root: Path, branch: str):
     planner = selected_profile(root, "planner")
     if planner is not None and preferences(root).get("remote_helper_enabled", True):
         try:
-            client = helper_client(load_profile(planner, root), root, branch)
+            planner_profile = load_profile(planner, root)
+            if backend_on_cooldown(root, planner_profile["runtime"]["base_url"]):
+                raise ValueError("Planner endpoint on temporary HTTP 503 cooldown")
+            client = helper_client(planner_profile, root, branch)
             client.timeout = min(client.timeout, 10)
             backend_preflight(client)
             # The short identity probe is not the generation deadline, especially for cold MoE loading.
