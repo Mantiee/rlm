@@ -227,6 +227,7 @@ def main():
         "synta-model-preparation.service",
         "synta-role-qualification.service",
         "synta-chat-probe.service",
+        "synta-remote.service",
         "*wikipedia*",
     ]
     try:
@@ -266,6 +267,40 @@ def main():
             report["receipts"]["updater_service"][field] = (result.stdout + result.stderr)[-4000:]
         except (OSError, subprocess.SubprocessError) as error:
             report["receipts"]["updater_service"][field] = str(error)[:400]
+    report["receipts"]["remote_gateway_service"] = {}
+    for field, command in (
+        (
+            "state",
+            [
+                "systemctl",
+                "--user",
+                "show",
+                "synta-remote.service",
+                "--property=ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp",
+            ],
+        ),
+        (
+            "recent_log",
+            [
+                "journalctl",
+                "--user",
+                "-u",
+                "synta-remote.service",
+                "-n",
+                "12",
+                "--no-pager",
+                "-o",
+                "cat",
+            ],
+        ),
+    ):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            report["receipts"]["remote_gateway_service"][field] = (result.stdout + result.stderr)[
+                -900:
+            ]
+        except (OSError, subprocess.SubprocessError) as error:
+            report["receipts"]["remote_gateway_service"][field] = str(error)[:400]
     output = root / "research/host-audit.json"
     output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
     print(json.dumps(report, indent=2, ensure_ascii=False))

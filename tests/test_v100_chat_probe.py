@@ -1,4 +1,6 @@
 import json
+from types import SimpleNamespace
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -150,3 +152,53 @@ def test_fixed_canary_retries_503_with_finite_attempts_and_retains_failures(
         assert all(mission_chat.inspect(tmp_path, i)["state"] == "failed" for i in calls[:-1])
         chat_probe.run(*args)
         assert len(calls) == expected
+
+
+def test_probe_waits_for_listener_after_restart_without_reposting_a_question(tmp_path, monkeypatch):
+    atomic_json(tmp_path / "research/remote-access/config.json", CONFIG)
+    build = chat_probe.build_opener
+    original = mission_chat.submit
+    starts, posts = [], []
+
+    def opener(*args):
+        actual = build(*args)
+
+        def open_request(req, **kwargs):
+            if req.get_method() == "GET" and req.full_url.endswith("/api/chat"):
+                starts.append(1)
+                if len(starts) == 1:
+                    raise URLError(ConnectionRefusedError("listener restarting"))
+            return actual.open(req, **kwargs)
+
+        return SimpleNamespace(open=open_request)
+
+    def respond(root, message):
+        identity = original(root, message)
+        posts.append(identity)
+        result = {"answer": "437", "actions": [], "applied": [], "responder": {"model": "admitted"}}
+        with mission_chat.connect(root) as db:
+            db.execute(
+                "UPDATE requests SET state='completed',response=? WHERE id=?",
+                (json.dumps(result), identity),
+            )
+        return identity
+
+    monkeypatch.setattr(chat_probe, "build_opener", opener)
+    monkeypatch.setattr(mission_chat, "submit", respond)
+    monkeypatch.setattr(mission_chat, "direct_facts", lambda *a: None)
+    with gateway(tmp_path) as (server, _):
+        result = chat_probe.run(tmp_path, "e" * 40, 5, server.server_port)
+    assert result["stage"] == "verified" and len(starts) == 2 and len(posts) == 1
+
+
+def test_probe_never_retries_an_authentication_rejection(tmp_path, monkeypatch):
+    atomic_json(tmp_path / "research/remote-access/config.json", CONFIG)
+    calls = []
+
+    def open_request(req, **kwargs):
+        calls.append(req.get_method())
+        raise HTTPError(req.full_url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(chat_probe, "build_opener", lambda *a: SimpleNamespace(open=open_request))
+    result = chat_probe.run(tmp_path, "f" * 40, 1)
+    assert result["stage"] == "blocked" and calls == ["GET"]

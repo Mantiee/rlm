@@ -37,7 +37,7 @@
     "tools/install-synta-background-tasks.ps1": "e647e535f5f97a7fd3ef4b2a8f8451b224a935d11904dd0d7383aca239040478",
     "tools/update-synta-v92.sh": "b45e35b4caf7e652c04a060abcbee16cfc487d280a8ceccf7abab49f31486706",
     "tools/update-synta-v93.sh": "7dc4305296db2b3bdbdb2654563841c4269f1a5a015a0a10035e9e93a7351a7f",
-    "tools/audit-synta-hosts.py": "4ef1ebc1e17b519593f090ba6ab02f470771c6628b43aa18e775aff77cfb9ef1",
+    "tools/audit-synta-hosts.py": "2ddf190030978c03c6bda9656956273b81c99e40d816e9ce20ca15499421e778",
     "tools/update-synta-v94.sh": "7d2958196896ac801b3eb04d592e4dce2a9bf6ef79ec15b438104fb77f3c13ea",
     "tools/setup-synta-private-sync.sh": "ff7a8def790be9cd8d51f84fccd846b568c32904771d65166725d4697da43e7f",
     "rlm/v100/private_sync.py": "1b84c3d80a45c5f5cec570d12e7b3354a2e8103ab9e75d37186ba900f033f429",
@@ -59,7 +59,7 @@
     "tools/update-synta-v99.sh": "b78f2e702d60077cf71c609ec9c6eaf8d60c05b22a19918c1987e68ed764fb93",
     "tools/update-synta-v100.sh": "79fe723f02ba6c50a5ec9d223a105bac26d9f3d100bbb8d847138d1eaa9316b8",
     "rlm/v100/remote_nodes.py": "57cbd9e98787f6df996e01d7dd2c6a53bfecb7d9eb96fdc84b98a3151f457065",
-    "rlm/v100/chat_probe.py": "af0397aa35156b7aad7084be58633c4484aab66d47c055e3481bb2c96eb6ce6b",
+    "rlm/v100/chat_probe.py": "b81479415a41ad1333495e627b4489876481c0e4c265f2314f22a95dae3f8b66",
     "tools/update-synta-v102.sh": "5c0168ad730bf83b1664565036844a8edd78d82fcd4f6b5db3c47aeca60fe217",
     "rlm/v100/chat_readonly.py": "625f623fae213ddf75ac65e997ed734d30543010f7a4062bcb56107f30ff2677",
     "rlm/v100/remote_access.py": "df75203eaaa9361a8344000f8371abb9934d7734f85961667d30cd6f4541b2b9"

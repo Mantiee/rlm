@@ -6,6 +6,7 @@ import json
 import re
 import time
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 from rlm.v100.common import atomic_json
@@ -39,20 +40,36 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
             headers=headers,
             data=json.dumps(data).encode() if data else None,
         )
-        with opener.open(req, timeout=5) as response:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Chat probe observation budget exhausted")
+        with opener.open(req, timeout=min(5, remaining)) as response:
             body = response.read(8 * 2**20 + 1)
         if len(body) > 8 * 2**20:
             raise ValueError("Probe response exceeds 8 MiB")
         return json.loads(body)
 
     atomic_json(receipt, result)
+    deadline = time.monotonic() + timeout
     try:
         from rlm.v100.model_roles import selected_profile
 
         planner = selected_profile(root, "planner")
         admission = hashlib.sha256(planner.read_bytes()).hexdigest() if planner else None
         result["planner_admission"] = admission
-        session = request("/api/chat")
+        ready_deadline = min(deadline, time.monotonic() + 30)
+        while True:
+            try:
+                session = request("/api/chat")
+                break
+            except HTTPError:
+                raise
+            except OSError:
+                if time.monotonic() >= ready_deadline:
+                    raise RuntimeError(
+                        "Authenticated gateway did not become ready within the probe budget"
+                    ) from None
+                time.sleep(min(0.5, ready_deadline - time.monotonic()))
         headers.update(
             {
                 "Origin": config["origin"],
@@ -90,7 +107,6 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
             raise ValueError("Gateway returned an invalid chat request ID")
         result.update(stage="waiting", request_id=identity, transport_attempts=attempts)
         atomic_json(receipt, result)
-        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             row = request("/api/chat/" + identity)
             response = row.get("response") or {}
