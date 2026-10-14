@@ -51,8 +51,8 @@
     "rlm/v100/model_roles.py": "aea05da751fa2eefcb2cc7c5728987dcb0f63126ad43fe75042c1db5495cad70",
     "tools/update-synta-v97.sh": "c6b8837bec771b6476fcb1545b31780f998283505e432e975cccdc14216c8389",
     "rlm/v100/mission_chat.py": "0f540c6e1e292bbaa2761b6b7b346b070f215d599b7ec3db9ac82c68c1e2b050",
-    "rlm/v100/chat_progress.py": "cd537980d826d1e39ad01e2c47cf17877a8483b86af6eb20347bf8d424ec4f68",
-    "rlm/v100/research_tools.py": "fcedb9179a9e51414f70afc6231ab57ae90d12a7cdbaac8abf846a91732d64bb",
+    "rlm/v100/chat_progress.py": "283930c0cf67e148eb72bc3caabd795269e88a9cf7d5741ff05b10dd0a376411",
+    "rlm/v100/research_tools.py": "72ea6c9443a426b312f55232b17a55347f2935536be9330d47c351ee5985b6b4",
     "rlm/v100/decision_memory.py": "03af73225f358b6c7b0bd60318ea372dc2cd51c7537f1bab5de4dbc51cabb72b",
     "tools/update-synta-v98.sh": "671162e9fd27382b9449ea68661e1468b37537f62c1bfb906a97578f1fa5203f",
     "rlm/v100/dashboard_layout.py": "7c3560f4baa80827131581005e6c86f6201d7ec42b487dc255d39157a0bb490e",
@@ -69,7 +69,9 @@
     "tools/windows-maintenance.ps1": "dc23007cead3f2813b311cf638c8a258211df0d7e485480dae14933c36f8db4c",
     "rlm/v100/chat_backend.py": "1e1669b0575eb24c6296528ecad688b344b4318b36c928fef528e52e3f9f9721",
     "rlm/v100/competition.py": "9ce6c8c38959848c596c9ce2e30e57f5739132f78c431375bcf8d4413ae800bc",
-    "tools/update-synta-v103.sh": "d64e012cd49eb9332040f5543380240eea98d7ef61b3c6bfb159d9a0d96504df"
+    "tools/update-synta-v103.sh": "d64e012cd49eb9332040f5543380240eea98d7ef61b3c6bfb159d9a0d96504df",
+    "tools/synta_live_paper_v3.py": "69ed0e6595113013b2a7c2ab1aa8fe83a91f92844a841ab9da0dd88a8f5c24ed",
+    "tools/synta_accelerator_v1.py": "b47ce993360c5da4b920ef6ebaa68570cc649acaf4caae9a00b1d49b74deec8e"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

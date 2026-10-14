@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -31,5 +32,7 @@ def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
     assert "no service changed" in content.lower()
     assert "No mission profile to preserve" in content
     assert "flock -n -x 9" in content
-    parsed = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+    bash = shutil.which("bash")
+    assert bash, "Bash is required to validate the Linux installer"
+    parsed = subprocess.run([bash, "-n", str(script)], capture_output=True, text=True)
     assert parsed.returncode == 0, parsed.stderr
