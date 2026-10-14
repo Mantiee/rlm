@@ -50,14 +50,30 @@ def status(root: Path) -> dict:
     progress = json.loads(learning.read_text()) if learning.exists() else {}
     state = json.loads(phase.read_text()) if phase.exists() else {"phase": "starting"}
     evaluation = Path(result["run"]) / f"baseline-{state.get('context_window')}.progress.json"
+    cycles = progress.get("cycles") or []
+    last_cycle = cycles[-1] if cycles else None
+    active_phase = state.get("phase", "unknown")
+    # A running controller is not evidence of actual trading or earned income.
+    # Keep these signals explicit for machine-readable dashboards and CLI users.
     return {
         **result,
         "running": running,
         "state": state,
         "evaluation": json.loads(evaluation.read_text()) if evaluation.exists() else None,
+        "income_execution": {
+            "mode": "paper-research-only",
+            "real_orders_enabled": False,
+            "verified_earnings": None,
+            "earnings_status": "not measured by mission-status",
+            "phase": active_phase,
+        },
         "learning": {
-            "completed_cycles": len(progress.get("cycles", [])),
-            "last_cycle": progress.get("cycles", [None])[-1] if progress.get("cycles") else None,
+            "completed_cycles": len(cycles),
+            "last_cycle": last_cycle,
+            "stage": progress.get("stage"),
+            "cycle_in_progress": progress.get("cycle_in_progress"),
+            "reason": progress.get("reason"),
+            "updated": progress.get("updated"),
             "live_profile": progress.get("live_profile"),
         },
     }

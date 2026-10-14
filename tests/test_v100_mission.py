@@ -513,3 +513,38 @@ def test_first_update_can_use_verified_seed_then_failed_upgrade_retains_parent(
     assert result["cycles"][1]["status"] == "no new verified and admitted examples"
     assert json.dumps(profile, sort_keys=True) == original
     assert json.loads((output / "live.json").read_text()) == profile
+
+
+def test_mission_status_distinguishes_research_from_real_income(tmp_path, monkeypatch):
+    run = tmp_path / "research/mission/run-example"
+    run.mkdir(parents=True)
+    atomic_json(
+        tmp_path / "research/mission/active.json",
+        {
+            "pid": 1234,
+            "process_start": "start",
+            "run": str(run),
+            "log": str(run / "controller.log"),
+        },
+    )
+    atomic_json(run / "status.json", {"phase": "research-and-learning-loop"})
+    (run / "learning").mkdir()
+    atomic_json(
+        run / "learning/state.json",
+        {
+            "stage": "candidate-training-and-independent-tests",
+            "cycle_in_progress": 4,
+            "reason": "verification pending",
+            "cycles": [{"cycle": 3, "status": "upgrade failed"}],
+        },
+    )
+    monkeypatch.setattr(mission, "process_identity", lambda pid: "start")
+    result = mission.status(tmp_path)
+    assert result["running"] is True
+    assert result["income_execution"]["mode"] == "paper-research-only"
+    assert result["income_execution"]["real_orders_enabled"] is False
+    assert result["income_execution"]["verified_earnings"] is None
+    assert result["learning"]["stage"] == "candidate-training-and-independent-tests"
+    assert result["learning"]["cycle_in_progress"] == 4
+    assert result["learning"]["reason"] == "verification pending"
+    assert result["learning"]["completed_cycles"] == 1
