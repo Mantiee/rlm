@@ -9,6 +9,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from rlm.v100.common import atomic_json
+from rlm.v100.cpu_experiments import run_integrity_experiment
 from rlm.v100.competition import evolve, helper_client, managed_server, require_idle_gpu
 from rlm.v100.experiments import SharedLab, load_duel
 from rlm.v100.insights import extend_pool
@@ -82,6 +83,7 @@ def learn_loop(
     state = {
         "schema": "v100-continuous-v1",
         "cycles": history,
+        "cpu_experiments": [],
         "live_profile": str(live),
         "goal": goal,
         "scope": "Automatic verified-data training and finite development-gated activation, not a universal no-forgetting guarantee",
@@ -98,6 +100,16 @@ def learn_loop(
             cycle += 1
             prepare_inputs(root, current_pool, suite)
             atomic_json(live, current)
+            # CPU integrity work is independent of the remote researcher and GPU.
+            # Persist its receipt before entering any blocking inference request.
+            cpu_receipt = run_integrity_experiment(current_pool, output / "cpu-experiments", cycle)
+            state["cpu_experiments"].append({
+                "id": cpu_receipt["id"],
+                "status": cpu_receipt["status"],
+                "receipt": str(output / "cpu-experiments" / (cpu_receipt["id"] + ".json")),
+            })
+            atomic_json(output / "state.json", state)
+            print("CPU experiment:", cpu_receipt["id"], cpu_receipt["status"], flush=True)
             if paper is not None:
                 paper.phase("serving-rnd", cycle, current)
             # Serve the current version during R&D/waiting. Only our own inference
