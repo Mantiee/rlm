@@ -1056,7 +1056,9 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         from rlm.v100.dashboard_editor import status as dashboard_status
 
         dashboard_before = dashboard_status(root)
-    if profile.get("resources", {}).get("interactive_lab"):
+    # Tool permission belongs to the accepted operator configuration, not the
+    # serving role profile (which only declares model/transport resources).
+    if accepted_profile.get("resources", {}).get("interactive_lab"):
         from rlm.v100.research_tools import research_turn
 
         client.research_owner = "A"

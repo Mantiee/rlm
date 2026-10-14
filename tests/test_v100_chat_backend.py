@@ -328,3 +328,51 @@ def test_connection_failures_stop_retrying_and_release_next_request(tmp_path, mo
     assert mission_chat.inspect(tmp_path, first)["state"] == "failed"
     assert mission_chat.inspect(tmp_path, second)["state"] == "completed"
     assert seen == [first, second]
+
+
+@pytest.mark.parametrize("operator_tools", [True, False])
+def test_selected_planner_does_not_replace_operator_tool_policy(
+    tmp_path, monkeypatch, operator_tools
+):
+    from rlm.v100 import agent, model_roles
+
+    accepted = profile(tmp_path)
+    accepted["resources"] = {"interactive_lab": operator_tools}
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    planner_path = tmp_path / "planner.json"
+    planner = copy.deepcopy(accepted)
+    planner["runtime"]["backend"] = "ollama-research"
+    planner["resources"] = {"device": "remote", "interactive_lab": not operator_tools}
+    monkeypatch.setattr(model_roles, "selected_profile", lambda *a: planner_path)
+    monkeypatch.setattr(
+        mission_chat, "load_profile", lambda path, *a: planner if path == planner_path else accepted
+    )
+    client = SimpleNamespace(
+        model_name="planner", timeout=600, sampling_args={"max_tokens": 1024}, activity_context={}
+    )
+    monkeypatch.setattr(competition, "helper_client", lambda *a: client)
+    monkeypatch.setattr(mission_chat, "backend_preflight", lambda *a: None)
+    monkeypatch.setattr(mission, "status", lambda *a: {"running": True, "state": {}})
+    calls = []
+
+    def research(client, messages, schema, root):
+        calls.append("tools")
+        from rlm.v100.planning import read
+
+        return {
+            "content": '{"answer":"Recorded plan checked.","actions":[]}',
+            "research_trace": [{"tool": "get_plan", "result": read(root)}],
+        }
+
+    def native(*a, **k):
+        calls.append("native")
+        return {"content": '{"answer":"No tool permissions.","actions":[]}'}
+
+    monkeypatch.setattr(research_tools, "research_turn", research)
+    monkeypatch.setattr(agent, "native_turn", native)
+    result = mission_chat.respond(
+        tmp_path, tmp_path, {"message": "Inspect the configured plan using get_plan"}
+    )
+    assert calls == (["tools"] if operator_tools else ["native"])
+    assert bool(result["tool_receipts"]) == operator_tools
+    assert planner["resources"]["interactive_lab"] == (not operator_tools)
