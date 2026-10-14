@@ -15,11 +15,11 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 import urllib3
-
-from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn, research_output_limit, tool_schema, tool_turn
 from rlm.v100.insights import PROOF_DOMAINS
 from rlm.v100.tool_protocol import json_object
+
+from rlm.v100.activity import ActivityLog
 
 COMPACT_CPU_TOOLS = {
     "search_memory",
