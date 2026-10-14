@@ -58,7 +58,9 @@ def test_dispatch_failure_is_recorded_and_rate_limited(tmp_path, monkeypatch):
     assert len(attempts) == 2
 
 
-def test_cuda_pilot_uses_idle_gpu_worker_without_inference_qualification(tmp_path, monkeypatch):
+def test_cuda_pilot_uses_idle_gpu_worker_without_inference_qualification(
+    tmp_path, monkeypatch
+):
     config = tmp_path / "research/compute-config.json"
     config.parent.mkdir(parents=True)
     config.write_text("{}")
