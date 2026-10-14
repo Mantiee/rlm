@@ -138,7 +138,14 @@ def work(root: Path, stop: threading.Event) -> None:
                     and failure.response is not None
                     and failure.response.status_code in (502, 503)
                 )
-                state = PENDING if transient and row["attempts"] < 2 else "failed"
+                if isinstance(failure, requests.ConnectionError) and "heavy game running" in str(
+                    failure
+                ):
+                    # This saved request is action-free. The command worker can
+                    # use the accepted CPU fallback under the operator's policy.
+                    state = "gateway-pending"
+                else:
+                    state = PENDING if transient and row["attempts"] < 2 else "failed"
                 error = str(failure)[:500]
             with connect(root) as db:
                 db.execute(

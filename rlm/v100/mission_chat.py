@@ -919,7 +919,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 selected_helper(root, "planner"),
                 selected_helper(root, "fast"),
             ]
-            errors = []
+            errors = ["Accepted CPU: " + cpu_detail] if cpu_detail else []
             for candidate in dict.fromkeys(p for p in candidates if p is not None):
                 try:
                     helper = load_profile(candidate, root)

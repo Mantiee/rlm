@@ -47,17 +47,31 @@ def submit(root: Path, message: str) -> str:
     return identity
 
 
-def response(root: Path, row: dict) -> dict:
+def response(root: Path, row: dict, accepted_cpu=None) -> dict:
     from rlm.v100.mission import status
     from rlm.v100.mission_chat import respond
 
     mission = status(root)
     directory = Path(mission.get("run", root / "research/mission"))
     row["deadline"] = time.monotonic() + 180
-    return respond(root, directory, row)
+    return (
+        respond(root, directory, row, accepted_cpu)
+        if accepted_cpu is not None
+        else respond(root, directory, row)
+    )
 
 
 def work(root: Path, stop: threading.Event) -> None:
+    from rlm.v100.chat_backend import AcceptedCPUChat
+
+    accepted_cpu = AcceptedCPUChat(root, root / "research/gateway-chat", stop)
+    try:
+        serve(root, stop, accepted_cpu)
+    finally:
+        accepted_cpu.close()
+
+
+def serve(root: Path, stop: threading.Event, accepted_cpu) -> None:
     folder = root / "research/state"
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / "gateway-commands.lock").open("a") as lease:
@@ -82,6 +96,7 @@ def work(root: Path, stop: threading.Event) -> None:
                 ),
             )
         while not stop.wait(0.2):
+            accepted_cpu.maintain()
             with connect(root) as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute(
@@ -97,7 +112,7 @@ def work(root: Path, stop: threading.Event) -> None:
                 )
             result = None
             try:
-                result = response(root, row)
+                result = response(root, row, accepted_cpu)
                 if not isinstance(result.get("answer"), str) or not result["answer"].strip():
                     raise ValueError("Empty gateway command reply rejected")
                 state = "failed" if result.get("execution_status") == "failed" else "completed"

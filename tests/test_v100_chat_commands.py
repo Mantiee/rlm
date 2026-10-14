@@ -36,10 +36,10 @@ def test_authenticated_gateway_executes_command_without_trainer_worker(tmp_path,
     )
     calls = []
 
-    def respond(root, directory, row):
+    def respond(root, directory, row, accepted_cpu=None):
         calls.append(row["id"])
         # Exercise a real persisted control operation, not an arithmetic canary.
-        return original(root, directory, row)
+        return original(root, directory, row, accepted_cpu)
 
     original = mission_chat.respond
     monkeypatch.setattr(mission_chat, "respond", respond)
@@ -140,3 +140,27 @@ def test_command_probe_requires_actual_tool_receipt(tmp_path, monkeypatch):
 def test_greeting_followed_by_income_question_is_read_only():
     assert mission_chat.conversation_question("hejka kiedy bedziesz zarabial?")
     assert not mission_chat.conversation_question("hejka kiedy zaczniesz? uruchom zadanie")
+
+
+def test_gateway_command_owns_accepted_cpu_fallback_and_closes_it(tmp_path, monkeypatch):
+    from rlm.v100 import chat_backend
+
+    events = []
+    manager = type(
+        "CPU", (), {"maintain": lambda self: None, "close": lambda self: events.append("closed")}
+    )()
+    monkeypatch.setattr(chat_backend, "AcceptedCPUChat", lambda *a: manager)
+
+    def respond(root, directory, row, accepted_cpu):
+        assert accepted_cpu is manager
+        return {"answer": "Accepted CPU reply", "actions": [], "applied": []}
+
+    monkeypatch.setattr(mission_chat, "respond", respond)
+    identity = chat_commands.submit(tmp_path, "Execute task")
+    stop = threading.Event()
+    worker = threading.Thread(target=chat_commands.work, args=(tmp_path, stop))
+    worker.start()
+    assert wait_result(tmp_path, identity)["state"] == "completed"
+    stop.set()
+    worker.join(2)
+    assert events == ["closed"]

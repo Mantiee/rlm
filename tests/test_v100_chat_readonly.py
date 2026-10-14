@@ -165,3 +165,29 @@ def test_transient_readonly_generation_retries_without_tools(tmp_path, monkeypat
     result = mission_chat.inspect(tmp_path, identity)
     assert result["state"] == "completed" and result["attempts"] == 2
     assert result["response"]["actions"] == []
+
+
+def test_game_paused_question_hands_off_to_accepted_cpu_command_worker(tmp_path, monkeypatch):
+    admitted(tmp_path, monkeypatch, lambda *a: None)
+    monkeypatch.setattr(
+        chat_readonly,
+        "response",
+        lambda *a: (_ for _ in ()).throw(
+            requests.ConnectionError("Windows adaptive guard unavailable: heavy game running")
+        ),
+    )
+    identity = chat_readonly.submit(tmp_path, "What is this?")
+    stop = threading.Event()
+    worker = threading.Thread(target=chat_readonly.work, args=(tmp_path, stop))
+    worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with mission_chat.connect(tmp_path) as db:
+            state = db.execute("SELECT state FROM requests WHERE id=?", (identity,)).fetchone()[0]
+        if state == "gateway-pending":
+            break
+        time.sleep(0.02)
+    stop.set()
+    worker.join(2)
+    assert state == "gateway-pending"
+    assert mission_chat.inspect(tmp_path, identity)["route"] == "gateway-commands"
