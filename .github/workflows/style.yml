@@ -28,7 +28,7 @@ jobs:
         run: ruff check --config=pyproject.toml . --extend-exclude tools/colab-income-pilot.ipynb
 
       - name: Run ruff formatting check
-        run: ruff format --check --config=pyproject.toml .
+        run: ruff format --check --config=pyproject.toml . --extend-exclude tools/colab-income-pilot.ipynb
 
       - name: Run ty type checking
         run: ty check --exit-zero --output-format=concise
