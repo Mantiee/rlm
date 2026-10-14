@@ -469,22 +469,12 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
             {
                 "role": "researcher",
                 "brief": (
-                    "Independently choose and EXECUTE one measurable, lawful income "
-                    "experiment using available evidence. No predetermined asset, "
-                    "strategy, domain, outcome, return target or trade direction. "
-                    "First compare previous failed tests and current constraints; "
-                    "prefer completing an existing blocked experiment with new "
-                    "evidence over inventing another proposal. Select your own "
-                    "hypothesis, falsification rule, independent baseline and "
-                    "verification method. Produce a completed test or tangible "
-                    "artifact with exact tool receipts; explicitly mark 'blocked' "
-                    "when a required source or execution permission is missing. "
-                    "Do not classify a source read, tool invocation, forecast, "
-                    "paper HOLD or training step as profit. Report actual net "
-                    "receipts separately. Real spendable capital is zero; use "
-                    "only existing paper balances and fees, without resetting "
-                    "them. Never fabricate orders, wins, payouts or accounts."
-                ),
+                    "Independently choose and EXECUTE one measurable, legal income "
+                    "experiment. Prefer completing an unfinished test over more "
+                    "proposals. Use chronological evidence, costs and a baseline. "
+                    "Record exact tool and outcome receipts; mark blocked tests "
+                    "honestly. Never invent profits, accounts, trades or payouts."
+                )
             },
             [
                 {
