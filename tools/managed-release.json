@@ -74,7 +74,8 @@
     "tools/synta_accelerator_v1.py": "b47ce993360c5da4b920ef6ebaa68570cc649acaf4caae9a00b1d49b74deec8e",
     "tools/update-synta-v104.sh": "ce68ad9b13145b999025c2f78c85de3af22a6e902449fa290ccbda9490e14e4b",
     "rlm/v100/package_recovery.py": "6837d502d264951d67d83c0fbdeeed8bee48092905f4523412fc37b74588b6b3",
-    "tools/synta_income_learning.py": "f7ac12fe9d09b594ece39c3357f831121e891e1a9acc82fe777e330360dc9189"
+    "tools/synta_income_learning.py": "f7ac12fe9d09b594ece39c3357f831121e891e1a9acc82fe777e330360dc9189",
+    "tools/reconcile_synta_spot_rules.py": "3ce1102dd8f7e95d352f938be95aaaf8b938ee8ac9c30106ee325af70c7c564b"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
