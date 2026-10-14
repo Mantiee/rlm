@@ -87,6 +87,12 @@ def main():
         if args.action == "snapshot"
         else restore(args.root, args.destination)
     )
+    if args.action == "snapshot":
+        result = {
+            "version": result["version"],
+            "files": len(result["hashes"]),
+            "snapshot": str(args.destination),
+        }
     print(json.dumps(result), flush=True)
 
 

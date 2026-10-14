@@ -31,6 +31,10 @@ restore_after_failure() {
   trap - EXIT
   echo "Update failed with exit $failure. Checking preserved mission recovery." >&2
   if [[ "$PACKAGE_CHANGED" -eq 1 ]]; then
+    if ! systemctl --user stop v100-mission.service; then
+      echo 'Cannot stop the new runtime safely; package rollback deferred.' >&2
+      exit "$failure"
+    fi
     if ! "$PY" "$RECOVERY_HELPER" restore --root "$AI_V100_ROOT" --destination "$PACKAGE_BACKUP"; then
       echo 'Package rollback failed. Mission remains stopped; inspect preserved snapshot.' >&2
       exit "$failure"

@@ -72,8 +72,8 @@
     "tools/update-synta-v103.sh": "d64e012cd49eb9332040f5543380240eea98d7ef61b3c6bfb159d9a0d96504df",
     "tools/synta_live_paper_v3.py": "69ed0e6595113013b2a7c2ab1aa8fe83a91f92844a841ab9da0dd88a8f5c24ed",
     "tools/synta_accelerator_v1.py": "b47ce993360c5da4b920ef6ebaa68570cc649acaf4caae9a00b1d49b74deec8e",
-    "tools/update-synta-v104.sh": "62c6ddf8cf5ff203df91cdcfa0fb36657e895fb929df4a0baeb0a152f979a0b7",
-    "rlm/v100/package_recovery.py": "afb6b95fc9f9afa7d3b86a2450c12c5abb503341aa11c807e42ab2c20f4dd91c"
+    "tools/update-synta-v104.sh": "ce68ad9b13145b999025c2f78c85de3af22a6e902449fa290ccbda9490e14e4b",
+    "rlm/v100/package_recovery.py": "6837d502d264951d67d83c0fbdeeed8bee48092905f4523412fc37b74588b6b3"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
