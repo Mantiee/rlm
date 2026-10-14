@@ -394,7 +394,29 @@ class OllamaResearchClient(LlamaCppClient):
             ) as response:
                 if 300 <= response.status_code < 400:
                     raise ValueError("Remote helper redirected the request")
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError as failure:
+                    body = bytearray()
+                    for block in response.iter_content(512):
+                        body.extend(block)
+                        if len(body) > 2048:
+                            break
+                    detail = None
+                    if len(body) <= 2048:
+                        try:
+                            packet = json.loads(body)
+                        except (ValueError, UnicodeError):
+                            packet = None
+                        if isinstance(packet, dict) and isinstance(packet.get("error"), str):
+                            detail = packet["error"][:300]
+                    if detail:
+                        raise requests.HTTPError(
+                            str(failure) + "; remote error: " + detail,
+                            response=response,
+                            request=failure.request,
+                        ) from failure
+                    raise
                 if endpoint == "/api/chat" and data and data.get("stream"):
                     from rlm.v100.streaming import ollama_reply
 

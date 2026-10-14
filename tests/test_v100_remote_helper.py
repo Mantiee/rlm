@@ -999,3 +999,30 @@ def test_long_lived_old_profile_resolves_new_qualified_role(transport, tmp_path,
     instance = competition.helper_client(old, tmp_path)
     assert instance.model_name == current["runtime"]["model_name"]
     assert old["runtime"]["model_name"] == remote_helper.MODEL
+
+
+@pytest.mark.parametrize(
+    "status,detail",
+    [(503, "Owned helper maintenance"), (500, "model runner has unexpectedly stopped")],
+)
+def test_http_failures_retain_bounded_owned_backend_reason(monkeypatch, status, detail):
+    response = requests.Response()
+    response.status_code = status
+    response.url = URL + "/api/chat"
+    response._content = json.dumps({"error": detail}).encode()
+    response._content_consumed = True
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def post(self, *args, **kwargs):
+            return response
+
+    monkeypatch.setattr(remote_helper.requests, "Session", Session)
+    with pytest.raises(requests.HTTPError, match=detail) as failure:
+        client().remote_request("/api/chat", {"model": remote_helper.MODEL})
+    assert failure.value.response.status_code == status
