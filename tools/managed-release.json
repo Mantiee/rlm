@@ -17,7 +17,7 @@
     "tools/attach-synta-3060.sh": "b16079c4a9f66fee567740e41012877d0e90e9708bfa9b475da2fc5db5e51fbf",
     "rlm/v100/owned_node.py": "3fe455f4bb36866c7e60379550f298b482d9a21ba79cdc67e0b60cb25044b2a2",
     "rlm/v100/owned_node_update.py": "37b44f6a05616309d27f6d12a7a225810596d288af0b4a18c64af86afb019f48",
-    "rlm/v100/compute_kernel.py": "e7785afb18e44ab41558a7be890e301b2a2f431e5921c93e018a9358264cac0f",
+    "rlm/v100/compute_kernel.py": "4de170205910ee4b0989a0d6f28170add12a260b8182d03a5d4022befa769857",
     "rlm/v100/compute_worker.py": "1b2c8b8ede53193b87b65dab4302b408e4c82ab5309132e3077430f49761a3ba",
     "tools/install-synta-watchdog.sh": "61a73b76a327828f45472d15b975dd46bc32a824e960bce03e5846f4e664b0ac",
     "rlm/v100/mission_watchdog.py": "b37816bbb0989b338cb9ae978f3788c376297ef3577f6cadbc10a2b9a60dbe2f",
