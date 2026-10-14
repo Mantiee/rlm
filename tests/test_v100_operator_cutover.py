@@ -15,7 +15,7 @@ def test_operator_cutover_has_valid_bash_syntax_and_explicit_consent():
     assert "trap recover_on_failure EXIT" in script
     assert "--resume" in script
     assert "systemctl --user stop v100-mission.service" in script
-    assert "bash \"$INSTALLER\" \"$REV\"" in script
+    assert 'bash "$INSTALLER" "$REV"' in script
     assert "NEEDS_RECOVERY=0" in script
     assert "0.1.3+v100.103" in script
     assert "v100.102" in script
