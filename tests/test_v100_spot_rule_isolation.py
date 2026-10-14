@@ -12,9 +12,7 @@ from rlm.v100 import (
 from rlm.v100.common import atomic_json
 
 
-def test_changed_spot_rules_suspend_crypto_polls_without_killing_observer(
-    tmp_path, monkeypatch
-):
+def test_changed_spot_rules_suspend_crypto_polls_without_killing_observer(tmp_path, monkeypatch):
     root = tmp_path
     ledger = root / "research/paper/ledger.sqlite3"
     ledger.parent.mkdir(parents=True)
