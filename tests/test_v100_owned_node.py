@@ -337,9 +337,7 @@ def test_income_advisor_reuses_qualified_node_without_launching_master(tmp_path,
 
 
 
-def test_cuda_jobs_require_dedicated_resource_budget_not_model_qualification(
-    tmp_path, monkeypatch
-):
+def test_cuda_jobs_require_dedicated_resource_budget_not_model_qualification(tmp_path, monkeypatch):
     import psutil
 
     monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(total=16 * 2**30))
@@ -354,12 +352,8 @@ def test_cuda_jobs_require_dedicated_resource_budget_not_model_qualification(
         "cpu_ready": True,
         "free_vram_gib": 2.75,
         "temperature_c": 40,
-        "kernel_sha256": hashlib.sha256(
-            (source / "compute_kernel.py").read_bytes()
-        ).hexdigest(),
-        "worker_sha256": hashlib.sha256(
-            (source / "compute_worker.py").read_bytes()
-        ).hexdigest(),
+        "kernel_sha256": hashlib.sha256((source / "compute_kernel.py").read_bytes()).hexdigest(),
+        "worker_sha256": hashlib.sha256((source / "compute_worker.py").read_bytes()).hexdigest(),
     }
     value = job("c" * 24)
     value.update(
@@ -404,6 +398,4 @@ def test_cuda_lane_dispatched_independently_of_finance_model_qualification(tmp_p
     gpu = json.loads((mailbox / "workers/debian-3060ti-gpu.json").read_text())
     assert gpu["device"] == "cuda" and gpu["phase"] == "idle"
     assert gpu["gpu_enabled"]
-    assert json.loads((mailbox / "workers/debian-3060ti-cpu.json").read_text())[
-        "device"
-    ] == "cpu"
+    assert json.loads((mailbox / "workers/debian-3060ti-cpu.json").read_text())["device"] == "cpu"
