@@ -147,8 +147,9 @@ def queue_job(
     layers: int = 1,
     learning_rate: float = 0.001,
     provenance: dict | None = None,
+    device: str = "cpu",
 ) -> dict:
-    """Publish a frozen host-owned dataset to the same pinned CPU kernel."""
+    """Publish a frozen dataset to the pinned tiny CPU/CUDA kernel."""
     if branch not in ("A", "B") or not isinstance(purpose, str) or not 1 <= len(purpose) <= 600:
         raise ValueError("Choose A/B and a bounded compute experiment purpose")
     records = list((root / "research/compute-jobs").glob("*/state.json"))
@@ -174,7 +175,7 @@ def queue_job(
         "width": width,
         "layers": layers,
         "context": 256,
-        "device": "cpu",
+        "device": device,
         "threads": 2,
         "seconds": 120,
         "learning_rate": learning_rate,
