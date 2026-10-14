@@ -204,7 +204,10 @@ def main():
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             path=self.path.split('?',1)[0]
-            if path=='/':data=PAGE.encode();typ='text/html; charset=utf-8'
+            if path=='/':
+                dashboard=Path(__file__).with_name('synta_live_dashboard_v4.html')
+                data=dashboard.read_bytes() if dashboard.is_file() else PAGE.encode()
+                typ='text/html; charset=utf-8'
             elif path=='/api/status':data=json.dumps(lab.status(),ensure_ascii=False).encode();typ='application/json; charset=utf-8'
             else:self.send_error(404);return
             self.send_response(200);self.send_header('Content-Type',typ);self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
