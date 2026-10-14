@@ -51,7 +51,7 @@ class Accelerator:
         if len(prices)<300:raise ValueError('Too few closed candles')
         cut=int(len(prices)*.65);train=prices[:cut];test=prices[cut-65:]
         rng=random.Random(20261014);configs=set()
-        while len(configs)<1000:
+        while len(configs)<10000:
             w=rng.choice([3,5,8,10,12,15,20,25,30,45,60])
             entry=rng.choice([.0003,.0006,.001,.0015,.002,.003,.004,.006,.009,.012,.02,.03])
             exit_=rng.choice([-.008,-.004,-.002,-.001,0,.001])
@@ -67,6 +67,11 @@ class Accelerator:
                 with self.lock:self.state.update(trials=n,duration_s=round(time.monotonic()-started,2))
         # Select by TRAIN only. Test results are reported but NEVER used for ranking.
         results.sort(key=lambda x:(x[1]['net_pct'], -x[1]['max_dd_pct']),reverse=True)
+        # Promotion uses only the top TRAIN candidate. The held-out segment is a one-time veto, not a leaderboard.
+        leader=results[0]
+        leader_cfg,leader_train,leader_test=leader
+        eligible=(leader_train['net_pct']>0 and leader_train['trades']>=5 and leader_test['net_pct']>0 and leader_test['trades']>=5 and leader_test['max_dd_pct']<5)
+        candidate=dict(window=leader_cfg[0],entry=leader_cfg[1],exit=leader_cfg[2],stop=leader_cfg[3],holding=leader_cfg[4],train=leader_train,test=leader_test,eligible=eligible,reason='TRAIN leader; held-out veto, minimum 5 fills in each period and positive net return' if eligible else 'NO EDGE: insufficient positive net performance or fills in held-out data')
         top=[]
         for cfg,a,b in results[:15]:
             w,entry,exit_,stop,hold=cfg
@@ -81,7 +86,7 @@ class Accelerator:
              'active_test_of_top15':sum(1 for x in top if x['test']['trades']>0),
              'source':'Kraken public OHLC 1m; last incomplete excluded',
              'limitations':'Historical simulation only. Signals use previous closed candle, fill next close; 110bps per side, no order book or executable FX. Train ranked, held-out test shown, no forward guarantee. GPU not used.',
-             'gpu':'NOT VERIFIED / NOT USED'}
+             'gpu':'NOT VERIFIED / NOT USED','candidate':candidate}
         with self.lock:self.state=out
         self.cache.parent.mkdir(parents=True,exist_ok=True)
         tmp=self.cache.with_suffix('.tmp');tmp.write_text(json.dumps(out,ensure_ascii=False));tmp.replace(self.cache)
