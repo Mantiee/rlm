@@ -10,9 +10,10 @@ def test_cpu_pilots_queue_once_and_recover_receipts(tmp_path, monkeypatch):
     config.parent.mkdir(parents=True)
     config.write_text("{}")
     calls = []
+    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": []})
 
-    def queue(root, branch, architecture, steps, purpose, domain):
-        calls.append((branch, architecture, steps, domain))
+    def queue(root, branch, architecture, steps, purpose, domain, device="cpu"):
+        calls.append((branch, architecture, steps, domain, device))
         return {"id": branch + "-job", "state": "queued"}
 
     monkeypatch.setattr(cpu_pilots, "propose", queue)
@@ -20,8 +21,8 @@ def test_cpu_pilots_queue_once_and_recover_receipts(tmp_path, monkeypatch):
     first = cpu_pilots.schedule_cpu_pilots(tmp_path, folder)
     assert [row["state"] for row in first] == ["queued", "queued"]
     assert calls == [
-        ("A", "gru", 40, "arithmetic"),
-        ("B", "transformer", 40, "arithmetic"),
+        ("A", "gru", 40, "arithmetic", "cpu"),
+        ("B", "transformer", 40, "arithmetic", "cpu"),
     ]
     assert cpu_pilots.schedule_cpu_pilots(tmp_path, folder) == first
     assert len(calls) == 2
@@ -29,6 +30,7 @@ def test_cpu_pilots_queue_once_and_recover_receipts(tmp_path, monkeypatch):
 
 
 def test_unconfigured_compute_blocks_without_faking_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": []})
     monkeypatch.setattr(
         cpu_pilots, "propose", lambda *args: (_ for _ in ()).throw(AssertionError())
     )
@@ -42,6 +44,7 @@ def test_dispatch_failure_is_recorded_and_rate_limited(tmp_path, monkeypatch):
     config.parent.mkdir(parents=True)
     config.write_text("{}")
     attempts = []
+    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": []})
 
     def fail(*args):
         attempts.append(1)
@@ -53,3 +56,28 @@ def test_dispatch_failure_is_recorded_and_rate_limited(tmp_path, monkeypatch):
     assert first[0]["reason"] == "ValueError: queue saturated"
     assert cpu_pilots.schedule_cpu_pilots(tmp_path, tmp_path / "receipts") == first
     assert len(attempts) == 2
+
+
+def test_cuda_pilot_uses_idle_gpu_worker_without_inference_qualification(tmp_path, monkeypatch):
+    config = tmp_path / "research/compute-config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}")
+    monkeypatch.setattr(
+        cpu_pilots,
+        "inspect",
+        lambda root: {
+            "workers": [
+                {"phase": "idle", "stale": False, "device": "cuda"}
+            ]
+        },
+    )
+    devices = []
+
+    def queue(root, branch, architecture, steps, purpose, domain, device="cpu"):
+        devices.append(device)
+        return {"id": branch + "-job", "state": "queued"}
+
+    monkeypatch.setattr(cpu_pilots, "propose", queue)
+    result = cpu_pilots.schedule_cpu_pilots(tmp_path, tmp_path / "receipts")
+    assert devices == ["cpu", "cuda"]
+    assert [row["device"] for row in result] == ["cpu", "cuda"]
