@@ -967,6 +967,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 "accepted_model_sha256": accepted_cpu.sha256 if cpu_master else None,
                 "cpu_admission_detail": cpu_detail,
             },
+            generation_timeout=60 if cpu_master else 20,
         )
     # Old requests are context only for an explicit referential follow-up.
     # A standalone new request must never inherit another request's work.

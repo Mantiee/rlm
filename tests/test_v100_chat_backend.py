@@ -416,3 +416,31 @@ def test_cpu_child_never_raises_inherited_service_priority(monkeypatch, inherite
     monkeypatch.setattr(competition.os, "setpriority", setpriority)
     competition.lower_cpu_priority(123)
     assert calls == ([(123, 10)] if inherited < 10 else [])
+
+
+def test_cpu_question_has_bounded_sixty_second_generation_window(tmp_path, monkeypatch):
+    accepted, cpu, _ = admitted(tmp_path, monkeypatch)
+    cpu.timeout = 600
+    cpu.sampling_args = {"max_tokens": 1024}
+    cpu.activity_context = {}
+    cpu.template_args = lambda: {}
+    cpu.request = lambda *a: (
+        {"choices": [{"finish_reason": "stop", "message": {"content": "437"}}]}
+        if a[0] == "/v1/chat/completions"
+        else {"model_path": accepted["server"]["model"]}
+    )
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    monkeypatch.setattr(
+        mission, "status", lambda *a: {"running": True, "state": {"phase": "training"}}
+    )
+    gpu = SimpleNamespace(model_name="v100", request=lambda *a: {"model_path": "/candidate.gguf"})
+    monkeypatch.setattr(competition, "helper_client", lambda *a: gpu)
+    manager = chat_backend.AcceptedCPUChat(tmp_path, tmp_path)
+    try:
+        result = mission_chat.respond(
+            tmp_path, tmp_path, {"message": "What is 19 times 23?"}, manager
+        )
+        assert result["answer"] == "437" and result["responder"]["accepted_master_on_cpu"]
+        assert cpu.timeout == 60 and not result["actions"]
+    finally:
+        manager.close()
