@@ -10,7 +10,7 @@ def test_cpu_pilots_queue_once_and_recover_receipts(tmp_path, monkeypatch):
     config.parent.mkdir(parents=True)
     config.write_text("{}")
     calls = []
-    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": []})
+    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": [], "jobs": []})
 
     def queue(root, branch, architecture, steps, purpose, domain, device="cpu"):
         calls.append((branch, architecture, steps, domain, device))
@@ -30,7 +30,7 @@ def test_cpu_pilots_queue_once_and_recover_receipts(tmp_path, monkeypatch):
 
 
 def test_unconfigured_compute_blocks_without_faking_job(tmp_path, monkeypatch):
-    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": []})
+    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": [], "jobs": []})
     monkeypatch.setattr(
         cpu_pilots, "propose", lambda *args: (_ for _ in ()).throw(AssertionError())
     )
@@ -44,9 +44,9 @@ def test_dispatch_failure_is_recorded_and_rate_limited(tmp_path, monkeypatch):
     config.parent.mkdir(parents=True)
     config.write_text("{}")
     attempts = []
-    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": []})
+    monkeypatch.setattr(cpu_pilots, "inspect", lambda root: {"workers": [], "jobs": []})
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         attempts.append(1)
         raise ValueError("queue saturated")
 
@@ -66,9 +66,8 @@ def test_cuda_pilot_uses_idle_gpu_worker_without_inference_qualification(tmp_pat
         cpu_pilots,
         "inspect",
         lambda root: {
-            "workers": [
-                {"phase": "idle", "stale": False, "device": "cuda"}
-            ]
+            "workers": [{"phase": "idle", "stale": False, "device": "cuda"}],
+            "jobs": []
         },
     )
     devices = []
