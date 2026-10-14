@@ -103,11 +103,13 @@ def learn_loop(
             # CPU integrity work is independent of the remote researcher and GPU.
             # Persist its receipt before entering any blocking inference request.
             cpu_receipt = run_integrity_experiment(current_pool, output / "cpu-experiments", cycle)
-            state["cpu_experiments"].append({
-                "id": cpu_receipt["id"],
-                "status": cpu_receipt["status"],
-                "receipt": str(output / "cpu-experiments" / (cpu_receipt["id"] + ".json")),
-            })
+            state["cpu_experiments"].append(
+                {
+                    "id": cpu_receipt["id"],
+                    "status": cpu_receipt["status"],
+                    "receipt": str(output / "cpu-experiments" / (cpu_receipt["id"] + ".json")),
+                }
+            )
             atomic_json(output / "state.json", state)
             print("CPU experiment:", cpu_receipt["id"], cpu_receipt["status"], flush=True)
             if paper is not None:
