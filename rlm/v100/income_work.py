@@ -30,6 +30,7 @@ STARTING_SOURCES = (
 class MasterNotReady(RuntimeError):
     """Transient serving startup, shutdown or unavailable protected receipt."""
 
+
 def backend_on_cooldown(root: Path, base_url: str) -> bool:
     """Skip one recently failed helper endpoint; never silently retry tool work.
 
@@ -111,7 +112,9 @@ def owned_advisor(root: Path, branch: str, reason: str):
     for path in dict.fromkeys(p for p in candidates if p is not None):
         try:
             profile = load_profile(path, root)
-            if not remote_profile(profile) or backend_on_cooldown(root, profile["runtime"]["base_url"]):
+            if not remote_profile(profile) or backend_on_cooldown(
+                root, profile["runtime"]["base_url"]
+            ):
                 continue
             client = helper_client(profile, root, branch)
             client.timeout = 5
