@@ -21,6 +21,7 @@ def schedule_cpu_pilots(root: Path, output: Path) -> list[dict]:
     results = []
     try:
         available = inspect(root)
+        jobs_by_id = {job["id"]: job for job in available["jobs"]}
         gpu_workers = [
             worker for worker in available["workers"]
             if worker.get("phase") == "idle"
@@ -28,11 +29,17 @@ def schedule_cpu_pilots(root: Path, output: Path) -> list[dict]:
             and worker.get("device") == "cuda"
         ]
     except (OSError, ValueError, KeyError):
+        jobs_by_id = {}
         gpu_workers = []
     for branch, architecture in PILOTS:
         receipt = output / f"cpu-pilot-{branch}.json"
         previous = json.loads(receipt.read_text()) if receipt.is_file() else {}
         if previous.get("state") == "queued":
+            latest = jobs_by_id.get(previous.get("id"), {})
+            if latest:
+                previous["state"] = latest.get("state", "queued")
+                previous["updated"] = time.time()
+                atomic_json(receipt, previous)
             results.append(previous)
             continue
         if previous.get("retry_at", 0) > time.time():
