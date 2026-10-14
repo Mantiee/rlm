@@ -6,16 +6,18 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_managed_channel_is_a_genuine_pinned_new_package():
     manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
     config = (ROOT / "pyproject.toml").read_text()
-    assert manifest["version"] == 104
-    assert 'version = "0.1.3+v100.104"' in config
+    assert manifest["version"] == 105
+    assert 'version = "0.1.3+v100.105"' in config
     installer = manifest["linux_installer"]
-    assert installer == "tools/update-synta-v104.sh"
+    assert installer == "tools/update-synta-v105.sh"
     content = (ROOT / installer).read_bytes()
     assert manifest["files"][installer] == hashlib.sha256(content).hexdigest()
 
@@ -38,8 +40,9 @@ def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
     assert parsed.returncode == 0, parsed.stderr
 
 
-def test_v104_keeps_resource_policy_and_has_package_rollback():
-    content = (ROOT / "tools/update-synta-v104.sh").read_text()
+@pytest.mark.parametrize("release", [104, 105])
+def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release):
+    content = (ROOT / f"tools/update-synta-v{release}.sh").read_text()
     assert "active candidate training/evaluation retained".lower() in content.lower()
     assert "flock -n -x 9" in content
     assert '"$RECOVERY_HELPER" restore' in content
@@ -47,10 +50,12 @@ def test_v104_keeps_resource_policy_and_has_package_rollback():
     assert "resource-policy.json" not in content
     assert "attach-synta-3060.sh" not in content
     assert "synta-owned-nodes.service" not in content
-    assert "0.1.3+v100.104" in content
+    assert f"0.1.3+v100.{release}" in content
     bash = shutil.which("bash")
     assert bash
     parsed = subprocess.run(
-        [bash, "-n", str(ROOT / "tools/update-synta-v104.sh")], capture_output=True, text=True
+        [bash, "-n", str(ROOT / f"tools/update-synta-v{release}.sh")],
+        capture_output=True,
+        text=True,
     )
     assert parsed.returncode == 0, parsed.stderr

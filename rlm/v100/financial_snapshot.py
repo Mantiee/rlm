@@ -7,7 +7,7 @@ from pathlib import Path
 
 def live_ledger(root: Path) -> dict:
     """Check one consistent state and its last event, without replaying all history."""
-    from rlm.v100.paper import PaperBook, number, sha, timestamp
+    from rlm.v100.paper import PaperBook, execution_cost_blocker, number, sha, timestamp
 
     book = PaperBook(root, read_only=True)
     try:
@@ -43,6 +43,10 @@ def live_ledger(root: Path) -> dict:
         ]
         for symbol in state["instruments"]:
             quote = state["quotes"].get(symbol)
+            profile = state["fee_profiles"][state["instruments"][symbol]["fee_profile"]]
+            cost_blocker = execution_cost_blocker(profile, quote or {})
+            if cost_blocker:
+                blockers.append(symbol + ": " + cost_blocker)
             if not quote:
                 blockers.append("missing quote: " + symbol)
             elif (now - timestamp(quote["available_at"])).total_seconds() > state["risk"][

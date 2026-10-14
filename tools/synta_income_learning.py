@@ -144,6 +144,13 @@ def ledger_diagnostics(data, now):
     profiles = state.get("fee_profiles", {})
     for symbol, instrument in state.get("instruments", {}).items():
         profile = profiles.get(instrument.get("fee_profile"), {})
+        if (
+            profile.get("execution_costs_verified") is False
+            or "assumptions" in str(profile.get("cost_evidence", "")).casefold()
+        ):
+            diagnostics.append(
+                f"{symbol}: koszty FX/slippage UNKNOWN; publikacja opłat nie weryfikuje pełnego wykonania"
+            )
         try:
             expiry = datetime.fromisoformat(profile["valid_until"].replace("Z", "+00:00"))
             if expiry.tzinfo is None:

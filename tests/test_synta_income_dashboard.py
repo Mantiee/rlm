@@ -56,6 +56,25 @@ def test_missing_fee_is_reported(panel):
     assert any("ważności opłat" in item for item in issues)
 
 
+def test_refreshed_fee_with_assumed_execution_costs_remains_unknown(panel):
+    now = 1800000000
+    data = {
+        "last_decision_time": datetime.fromtimestamp(now, UTC).isoformat(),
+        "state": {
+            "instruments": {"BTC": {"fee_profile": "new"}},
+            "fee_profiles": {
+                "new": {
+                    "valid_until": datetime.fromtimestamp(now + 1000, UTC).isoformat(),
+                    "cost_evidence": "FX and slippage are explicit paper assumptions",
+                }
+            },
+        },
+    }
+    issues = panel.ledger_diagnostics(data, now)
+    assert len(issues) == 1
+    assert "FX/slippage UNKNOWN" in issues[0]
+
+
 def test_stale_heartbeat_and_queued_cuda_do_not_claim_training(panel, tmp_path):
     now = 1800000000
     run = tmp_path / "research/mission/run-current"

@@ -87,6 +87,19 @@ def identifier(value: str) -> str:
     return value
 
 
+def execution_cost_blocker(profile: dict, quote: dict) -> str | None:
+    """Published venue fees do not certify assumed slippage or reference FX."""
+    if (
+        profile.get("execution_costs_verified") is False
+        or "assumptions" in str(profile.get("cost_evidence", "")).casefold()
+    ):
+        return "Execution costs UNKNOWN: fee publication does not verify assumed FX/slippage"
+    fx = quote.get("fx")
+    if isinstance(fx, dict) and "reference" in str(fx.get("note", "")).casefold():
+        return "Execution FX UNKNOWN: a reference rate is not an executable conversion quote"
+    return None
+
+
 def source_fields(value: dict, now: datetime) -> None:
     url = urlparse(value.get("source_url", ""))
     if url.scheme != "https" or not url.hostname or url.username or url.password:
@@ -488,6 +501,9 @@ class PaperBook:
                 profile = state["fee_profiles"][instrument["fee_profile"]]
                 if timestamp(profile["valid_until"]) <= self.clock():
                     raise ValueError("Fee evidence expired; new decisions cannot assume zero costs")
+                cost_blocker = execution_cost_blocker(profile, state["quotes"][symbol])
+                if cost_blocker:
+                    raise ValueError(cost_blocker)
                 if proposal["action"] == "open":
                     if (
                         self.clock() - timestamp(state["quotes"][symbol]["observed_at"])
@@ -853,6 +869,19 @@ class PaperBook:
                         "symbol": symbol,
                         "action": "cancel",
                         "reason": "expired-fees",
+                        "order_id": order["id"],
+                    }
+                )
+                continue
+            cost_blocker = execution_cost_blocker(profile, quote)
+            if cost_blocker:
+                result.append(
+                    {
+                        "branch": branch,
+                        "symbol": symbol,
+                        "action": "cancel",
+                        "reason": "unverified-execution-costs",
+                        "detail": cost_blocker,
                         "order_id": order["id"],
                     }
                 )
