@@ -57,6 +57,7 @@ def status(root: Path) -> dict:
         "evaluation": json.loads(evaluation.read_text()) if evaluation.exists() else None,
         "learning": {
             "completed_cycles": len(progress.get("cycles", [])),
+            "cpu_experiments": progress.get("cpu_experiments", [])[-5:],
             "last_cycle": progress.get("cycles", [None])[-1] if progress.get("cycles") else None,
             "live_profile": progress.get("live_profile"),
         },
