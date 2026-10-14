@@ -9,8 +9,8 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from rlm.v100.common import atomic_json
-from rlm.v100.cpu_experiments import run_integrity_experiment
 from rlm.v100.competition import evolve, helper_client, managed_server, require_idle_gpu
+from rlm.v100.cpu_experiments import run_integrity_experiment
 from rlm.v100.experiments import SharedLab, load_duel
 from rlm.v100.insights import extend_pool
 from rlm.v100.protection import assert_candidate_output, file_hash
