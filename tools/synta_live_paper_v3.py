@@ -87,7 +87,7 @@ class Lab:
             self.news=items;self.news_error=None
         except Exception as e:self.news_error=str(e)[:150]
     def history_refresh(self):
-        if time.time()-self.hist_checked<3600:return
+        if time.time()-self.hist_checked<60:return
         self.hist_checked=time.time()
         try:
             d=jget('https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1')
