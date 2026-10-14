@@ -38,8 +38,6 @@ def backend_on_cooldown(root: Path, base_url: str) -> bool:
     independently admitted serving backend may still carry out the next
     scheduled experiment; successful tool side effects are never replayed.
     """
-    if not base_url:
-        return False
     if not isinstance(base_url, str) or not base_url:
         return False
     status = root / "research/income-work/status.json"
