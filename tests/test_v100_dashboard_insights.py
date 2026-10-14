@@ -119,3 +119,11 @@ def test_live_mission_board_embedded_in_served_html():
     assert "Simulation, not real income" in html
     assert "Snapshot age:" in html
     assert "liveMissionBoard(data);" in html
+
+
+def test_live_mission_board_belongs_to_overview_tab():
+    from rlm.v100.dashboard_insights import SCRIPT
+
+    overview_group = SCRIPT.split("overview:[", 1)[1].split("]", 1)[0]
+    assert "'live-mission-board'" in overview_group
+    assert "function liveMissionBoard(data)" in SCRIPT
