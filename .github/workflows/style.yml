@@ -32,7 +32,7 @@ jobs:
         run: ruff check --config=pyproject.toml . --extend-exclude tools/colab-income-pilot.ipynb --extend-exclude rlm/v100/chat_progress.py --extend-exclude rlm/v100/research_tools.py
 
       - name: Run ruff formatting check
-        run: ruff format --check --config=pyproject.toml --exclude tools/colab-income-pilot.ipynb --exclude rlm/v100/research_contract.py --exclude tests/test_v100_financial_chat_contract.py --exclude tests/test_v100_model_candidates.py .
+        run: ruff format --diff --config=pyproject.toml --exclude tools/colab-income-pilot.ipynb --exclude rlm/v100/research_contract.py --exclude tests/test_v100_financial_chat_contract.py --exclude tests/test_v100_model_candidates.py .
 
       - name: Run ty type checking
         run: ty check --exit-zero --output-format=concise
