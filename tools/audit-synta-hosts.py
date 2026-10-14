@@ -159,6 +159,8 @@ def main():
         "chat_probe": "chat-probe.json",
         "chat_command_probe": "chat-command-probe.json",
         "chat_active": "state/chat-active.json",
+        "gateway_cpu_chat": "gateway-chat/accepted-cpu-chat-status.json",
+        "gateway_cpu_startup": "gateway-chat/accepted-cpu-chat.startup.json",
         "cpu_server_receipt": "state/server-8094.json",
         "mission_recovery": "mission-watchdog/status.json",
         "supervisor": "supervisor/status.json",

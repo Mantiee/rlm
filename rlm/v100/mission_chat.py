@@ -901,6 +901,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             raise BackendNotReady(str(serving_error)) from serving_error
         if accepted_cpu is not None and profile.get("resources", {}).get("accepted_cpu_chat"):
             try:
+                accepted_cpu.deadline = request.get("deadline", time.monotonic() + 180)
                 client = accepted_cpu.get(profile)
                 generation_timeout = min(client.timeout, 60)
                 cpu_master = True

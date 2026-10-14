@@ -376,3 +376,43 @@ def test_selected_planner_does_not_replace_operator_tool_policy(
     assert calls == (["tools"] if operator_tools else ["native"])
     assert bool(result["tool_receipts"]) == operator_tools
     assert planner["resources"]["interactive_lab"] == (not operator_tools)
+
+
+def test_cpu_verification_deadline_does_not_wait_for_a_stalled_disk_read(tmp_path, monkeypatch):
+    import time
+
+    accepted, _, events = admitted(tmp_path, monkeypatch)
+    manager = chat_backend.AcceptedCPUChat(tmp_path, tmp_path)
+    release = threading.Event()
+
+    def stalled(*a, **k):
+        release.wait(2)
+        return "a" * 64
+
+    monkeypatch.setattr(chat_backend, "file_hash", stalled)
+    manager.deadline = time.monotonic() + 0.05
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError, match="verification exceeded"):
+            manager.get(accepted)
+        assert time.monotonic() - started < 1
+        assert not events and manager.client is None
+        state = json.loads((tmp_path / "accepted-cpu-chat-status.json").read_text())
+        assert state["stage"] == "weight-verification-failed"
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize("inherited", [0, 10, 19])
+def test_cpu_child_never_raises_inherited_service_priority(monkeypatch, inherited):
+    calls = []
+    monkeypatch.setattr(competition.os, "getpriority", lambda *a: inherited)
+
+    def setpriority(kind, pid, target):
+        if target < inherited:
+            raise PermissionError("Unprivileged service cannot raise priority")
+        calls.append((pid, target))
+
+    monkeypatch.setattr(competition.os, "setpriority", setpriority)
+    competition.lower_cpu_priority(123)
+    assert calls == ([(123, 10)] if inherited < 10 else [])

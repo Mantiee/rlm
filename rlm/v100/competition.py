@@ -73,6 +73,12 @@ def guard_cpu_process(
             return
 
 
+def lower_cpu_priority(pid: int) -> None:
+    """Only lower scheduling priority; never undo a service's inherited nice."""
+    if os.getpriority(os.PRIO_PROCESS, pid) < 10:
+        os.setpriority(os.PRIO_PROCESS, pid, 10)
+
+
 @contextmanager
 def managed_server(
     profile_path: Path, root: Path, log_path: Path, cancel: threading.Event | None = None
@@ -235,7 +241,7 @@ def managed_server(
                 verification_stop.set()
             startup("waiting-for-health", pid=process.pid)
             if cpu:
-                os.setpriority(os.PRIO_PROCESS, process.pid, 10)
+                lower_cpu_priority(process.pid)
             with requests.Session() as session:
                 session.trust_env = False
                 while True:

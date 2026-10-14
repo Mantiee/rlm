@@ -59,6 +59,7 @@ class AcceptedCPUChat:
         self.sha256 = None
         self.profile = None
         self.stop = stop or threading.Event()
+        self.deadline = None
 
     def close(self) -> None:
         active = self.client is not None
@@ -80,15 +81,77 @@ class AcceptedCPUChat:
         ):
             self.close()
 
+    def verify_weights(self, model: Path, deadline: float) -> str:
+        done, cancel = threading.Event(), threading.Event()
+        result, failures = [], []
+        last_update = [0.0]
+
+        def check() -> None:
+            if cancel.is_set() or self.stop.is_set():
+                raise RuntimeError("CPU weight verification cancelled")
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Accepted CPU weight verification exceeded its startup budget")
+
+        def progress(path: Path, completed: int, total: int) -> None:
+            check()
+            now = time.monotonic()
+            if now - last_update[0] >= 1 or completed == total:
+                last_update[0] = now
+                atomic_json(
+                    self.directory / "accepted-cpu-chat-status.json",
+                    {
+                        "available": False,
+                        "stage": "verifying-accepted-weights",
+                        "bytes_verified": completed,
+                        "bytes_total": total,
+                        "updated": time.time(),
+                        "model": str(path),
+                    },
+                )
+
+        def verify() -> None:
+            try:
+                result.append(file_hash(model, check=check, progress=progress))
+            except Exception as failure:
+                failures.append(failure)
+            finally:
+                done.set()
+
+        threading.Thread(
+            target=verify, daemon=True, name="accepted-cpu-weight-verification"
+        ).start()
+        try:
+            while not done.wait(0.1):
+                check()
+            check()
+            if failures:
+                raise failures[0]
+            return result[0]
+        except Exception as failure:
+            atomic_json(
+                self.directory / "accepted-cpu-chat-status.json",
+                {
+                    "available": False,
+                    "stage": "weight-verification-failed",
+                    "error": str(failure),
+                    "updated": time.time(),
+                },
+            )
+            raise
+        finally:
+            cancel.set()
+
     def get(self, accepted: dict):
         if self.stop.is_set():
             raise RuntimeError("Mission is stopping; CPU chat cannot start")
+        deadline = min(time.monotonic() + 90, self.deadline or float("inf"))
         model = Path(accepted["server"]["model"])
         stat = model.stat()
         identity = (str(model.resolve()), stat.st_size, stat.st_mtime_ns)
         if self.identity != identity:
             self.close()
         if self.client is not None:
+            self.client.request_deadline = deadline
             try:
                 assert_served_expert(
                     self.client, self.profile, self.root, {"files": {"model-gguf": self.sha256}}
@@ -109,7 +172,9 @@ class AcceptedCPUChat:
         profile["resources"]["max_rss_gib"] = stat.st_size / 2**30 * 1.5 + 2
         path = self.directory / "accepted-cpu-chat.json"
         atomic_json(path, profile)
-        self.sha256 = file_hash(model)
+        self.sha256 = self.verify_weights(model, deadline)
+        profile["runtime"]["max_timeout"] = max(1, int(deadline - time.monotonic()))
+        atomic_json(path, profile)
         try:
             actual = self.stack.enter_context(
                 managed_server(
@@ -117,10 +182,13 @@ class AcceptedCPUChat:
                 )
             )
             client = helper_client(actual, self.root)
+            client.request_deadline = deadline
+            client.timeout = 5
             assert_served_expert(client, actual, self.root, {"files": {"model-gguf": self.sha256}})
         except Exception:
             self.close()
             raise
+        client.timeout = 600
         self.client, self.identity = client, identity
         self.profile = actual
         self.last_used = time.monotonic()

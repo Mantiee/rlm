@@ -37,7 +37,7 @@
     "tools/install-synta-background-tasks.ps1": "e647e535f5f97a7fd3ef4b2a8f8451b224a935d11904dd0d7383aca239040478",
     "tools/update-synta-v92.sh": "b45e35b4caf7e652c04a060abcbee16cfc487d280a8ceccf7abab49f31486706",
     "tools/update-synta-v93.sh": "7dc4305296db2b3bdbdb2654563841c4269f1a5a015a0a10035e9e93a7351a7f",
-    "tools/audit-synta-hosts.py": "c70f067f0c9836551693b77bc34a5bfc3d2b84c3c93f859140ccd53032439b03",
+    "tools/audit-synta-hosts.py": "95f61296d6bae5f65fd1e543a7738f1ecbc06f021de2b7137f0e025374ebe7a8",
     "tools/update-synta-v94.sh": "7d2958196896ac801b3eb04d592e4dce2a9bf6ef79ec15b438104fb77f3c13ea",
     "tools/setup-synta-private-sync.sh": "ff7a8def790be9cd8d51f84fccd846b568c32904771d65166725d4697da43e7f",
     "rlm/v100/private_sync.py": "1b84c3d80a45c5f5cec570d12e7b3354a2e8103ab9e75d37186ba900f033f429",
@@ -50,7 +50,7 @@
     "rlm/v100/managed_prepare.py": "68603387f6b2b8acf34cc1abc9126b31d241b710e5cc71c220e3d865eb560be5",
     "rlm/v100/model_roles.py": "aea05da751fa2eefcb2cc7c5728987dcb0f63126ad43fe75042c1db5495cad70",
     "tools/update-synta-v97.sh": "c6b8837bec771b6476fcb1545b31780f998283505e432e975cccdc14216c8389",
-    "rlm/v100/mission_chat.py": "8361966632861cc5463b361a169c98af22b0e4da6f0cb4f4f516d8959ffeba45",
+    "rlm/v100/mission_chat.py": "a70920a64b0d300fa9edb8b9fce7a6952c7c364453da3f0654221cb40fe323ba",
     "rlm/v100/chat_progress.py": "cd537980d826d1e39ad01e2c47cf17877a8483b86af6eb20347bf8d424ec4f68",
     "rlm/v100/research_tools.py": "fcedb9179a9e51414f70afc6231ab57ae90d12a7cdbaac8abf846a91732d64bb",
     "rlm/v100/decision_memory.py": "03af73225f358b6c7b0bd60318ea372dc2cd51c7537f1bab5de4dbc51cabb72b",
@@ -66,7 +66,9 @@
     "rlm/v100/chat_commands.py": "64f19ecc7f8aebf71789348bb96c4bf01f89287a0a5e7c2d83027162d823cab0",
     "rlm/v100/streaming.py": "a6825da6c7b252c19d81f275d3bdf5fe75831a15efa6fa81b58489572f3f2fcd",
     "rlm/v100/dashboard_insights.py": "be562f2bb630c774eaa8b2bc3146c2aa9993dece2c3d70c6b97659fb730bca02",
-    "tools/windows-maintenance.ps1": "dc23007cead3f2813b311cf638c8a258211df0d7e485480dae14933c36f8db4c"
+    "tools/windows-maintenance.ps1": "dc23007cead3f2813b311cf638c8a258211df0d7e485480dae14933c36f8db4c",
+    "rlm/v100/chat_backend.py": "1e1669b0575eb24c6296528ecad688b344b4318b36c928fef528e52e3f9f9721",
+    "rlm/v100/competition.py": "9ce6c8c38959848c596c9ce2e30e57f5739132f78c431375bcf8d4413ae800bc"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
