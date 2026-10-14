@@ -17,7 +17,9 @@ def _measure(path: Path) -> dict:
         if line.strip():
             # Compare canonical examples, not whitespace variations in JSON.
             record = json.loads(line)
-            canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            canonical = json.dumps(
+                record, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            )
             hashes.append(hashlib.sha256(canonical.encode()).hexdigest())
     return {
         "records": len(hashes),
@@ -36,7 +38,7 @@ def run_integrity_experiment(pool: Path, output: Path, cycle: int) -> dict:
     if type(cycle) is not int or cycle < 1:
         raise ValueError("Cycle must be a positive integer")
     pool, output = pool.resolve(), output.resolve()
-    if not pool.is_file() or output == pool or output.is_relative_to(pool.parent / pool.name):
+    if not pool.is_file() or output == pool:
         raise ValueError("Invalid experiment paths")
     output.mkdir(parents=True, exist_ok=True)
     experiment_id = f"cpu-pool-integrity-{cycle:04d}"
@@ -53,8 +55,11 @@ def run_integrity_experiment(pool: Path, output: Path, cycle: int) -> dict:
     report = {
         "schema": "v100-cpu-experiment-v1",
         "id": experiment_id,
-        "hypothesis": "The verified training pool has no duplicate canonical records",
-        "scope": "CPU data integrity only; not proof of source independence, model improvement, or income",
+        "hypothesis": "The training pool has no duplicate canonical records",
+        "scope": (
+            "CPU data integrity only; not proof of source independence, "
+            "model improvement, or income"
+        ),
         "worker": "local-cpu",
         "input": str(pool),
         "started_at": started,
@@ -75,8 +80,10 @@ def run_integrity_experiment(pool: Path, output: Path, cycle: int) -> dict:
         independent = _measure(pool)
         identical = independent == measurement
         status = (
-            "INCONCLUSIVE" if not measurement["records"]
-            else "ACCEPTED" if identical and measurement["duplicate_records"] == 0
+            "INCONCLUSIVE"
+            if not measurement["records"]
+            else "ACCEPTED"
+            if identical and measurement["duplicate_records"] == 0
             else "REJECTED"
         )
         report["evaluation"] = {
