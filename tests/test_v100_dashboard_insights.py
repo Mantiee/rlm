@@ -127,3 +127,13 @@ def test_live_mission_board_belongs_to_overview_tab():
     overview_group = SCRIPT.split("overview:[", 1)[1].split("]", 1)[0]
     assert "'live-mission-board'" in overview_group
     assert "function liveMissionBoard(data)" in SCRIPT
+
+
+def test_live_board_reads_verified_paper_ledger_and_current_evaluation():
+    from rlm.v100.dashboard_insights import SCRIPT
+
+    assert 'report.live_paper?.branches||{}' in SCRIPT
+    assert 'report.current_activity||{}' in SCRIPT
+    assert 'Candidate evaluation' in SCRIPT
+    assert 'Paper fills' in SCRIPT
+    assert 'RTX 3060 Ti' in SCRIPT
