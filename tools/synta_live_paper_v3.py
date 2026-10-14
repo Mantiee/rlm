@@ -24,11 +24,11 @@ PAGE="""<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="v
 <script>
 const E=x=>document.getElementById(x), fmt=x=>Number(x).toLocaleString('pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2})+' PLN',esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function plot(data){let c=E('chart'),g=c.getContext('2d');g.fillStyle='#07111e';g.fillRect(0,0,c.width,c.height);if(!data.length)return;let v=data.flatMap(r=>[r.a,r.b]),lo=Math.min(...v)-2,hi=Math.max(...v)+2;for(let [k,color] of [['a','#60bdff'],['b','#f4b966']]){g.strokeStyle=color;g.lineWidth=2;g.beginPath();data.forEach((r,i)=>{let x=30+(c.width-55)*i/Math.max(1,data.length-1),y=12+(c.height-35)*(hi-r[k])/(hi-lo);i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();g.fillStyle=color;g.fillText(k.toUpperCase()+': '+fmt(data.at(-1)[k]),40+(k==='b'?300:0),c.height-8)}}
-async function refresh(){try{let r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let d=await r.json();E('state').textContent=d.blocker?'BLOKADA: '+d.blocker:'● Odbieranie notowań · '+d.time;E('state').className=d.blocker?'warn':'green';for(let k of ['a','b']){let x=d.accounts[k];E(k).textContent=fmt(x.equity);E(k+'p').textContent='P&L '+fmt(x.pnl)+' · '+x.pnl_pct.toFixed(3)+'% · gotówka '+fmt(x.cash)+' · BTC '+x.qty.toFixed(7);E(k+'p').className=x.pnl>=0?'green':'red'}E('rpm').textContent=d.decisions_last_min;E('count').textContent='Łącznie '+d.decisions+' ocen · '+d.fills.length+' filli · '+d.ticks+' notowań';E('learning').textContent='Backtesty '+d.tests.length+' · GPU: '+d.gpu;E('market').textContent='BTC bid/ask '+(d.quote?d.quote.bid.toFixed(2)+' / '+d.quote.ask.toFixed(2)+' PLN':'brak')+' · kurs USD/PLN '+d.fx+' · ostatnie '+(d.quote?.ts||'brak');plot(d.chart);
+async function refresh(){try{let r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let d=await r.json();E('state').textContent=d.blocker?'BLOKADA: '+d.blocker:'● Odbieranie notowań · '+d.time;E('state').className=d.blocker?'warn':'green';for(let k of ['a','b']){let x=d.accounts[k];E(k).textContent=fmt(x.equity);E(k+'p').textContent='P&L '+fmt(x.pnl)+' · '+x.pnl_pct.toFixed(3)+'% · gotówka '+fmt(x.cash)+' · BTC '+x.qty.toFixed(7);E(k+'p').className=x.pnl>=0?'green':'red'}E('rpm').textContent=d.decisions_last_min;E('count').textContent='Łącznie '+d.decisions+' ocen · '+d.fills.length+' filli · '+d.ticks+' notowań';E('learning').textContent='Backtesty '+d.tests.length+' · hipotezy '+d.hypotheses+' · sprawdzone '+d.hypotheses_scored+' · GPU: '+d.gpu;E('market').textContent='BTC bid/ask '+(d.quote?d.quote.bid.toFixed(2)+' / '+d.quote.ask.toFixed(2)+' PLN':'brak')+' · kurs USD/PLN '+d.fx+' · ostatnie '+(d.quote?.ts||'brak');plot(d.chart);
 E('fills').innerHTML=d.fills.length?'<table><tr><th>UTC</th><th>Strategia</th><th>Akcja</th><th>PLN</th></tr>'+d.fills.map(x=>'<tr><td>'+esc(x.ts)+'</td><td>'+esc(x.branch)+'</td><td>'+esc(x.side)+'</td><td>'+x.amount.toFixed(2)+'</td></tr>').join('')+'</table>':'Brak filli — brak wymuszonych zakupów';
 E('tests').innerHTML=d.tests.length?'<table><tr><th>Okno</th><th>Próg</th><th>Walidacja netto</th><th>Transakcje</th></tr>'+d.tests.slice(0,12).map(x=>'<tr><td>'+x.window+'</td><td>'+x.threshold+'%</td><td>'+x.test_pct.toFixed(3)+'%</td><td>'+x.trades+'</td></tr>').join('')+'</table>':'Ładowanie historii OHLC…';
 E('news').innerHTML=d.news.length?d.news.map(x=>'<p><small>'+esc(x.date)+'</small> · '+esc(x.title)+' <a target="_blank" rel="noopener" href="'+esc(x.url)+'">źródło</a></p>').join(''):'Brak potwierdzonych newsów';
-E('debug').textContent=JSON.stringify({quote_age_seconds:d.quote_age,fees:d.fee_evidence,fx_date:d.fx_date,news_error:d.news_error,history_error:d.history_error,warning:d.warning},null,2)}catch(e){E('state').textContent='Błąd panelu: '+e}}
+E('debug').textContent=JSON.stringify({hipotezy_top10:d.hypotheses_rank,quote_age_seconds:d.quote_age,fees:d.fee_evidence,fx_date:d.fx_date,news_error:d.news_error,history_error:d.history_error,warning:d.warning},null,2)}catch(e){E('state').textContent='Błąd panelu: '+e}}
 refresh();setInterval(refresh,2000);
 </script></body></html>"""
 
@@ -43,6 +43,12 @@ class Lab:
         CREATE TABLE IF NOT EXISTS fills(id INTEGER PRIMARY KEY,ts TEXT,branch TEXT,side TEXT,amount REAL,qty REAL,price REAL,fee REAL,reason TEXT);
         CREATE TABLE IF NOT EXISTS tests(id INTEGER PRIMARY KEY,ts TEXT,window INTEGER,threshold REAL,train_pct REAL,test_pct REAL,trades INTEGER);""")
         for b in 'ab':self.db.execute("INSERT OR IGNORE INTO accounts VALUES(?,?,?,?,?)",(b,10000.,0.,0.,10000.))
+        self.db.execute("""CREATE TABLE IF NOT EXISTS hypotheses(
+ id INTEGER PRIMARY KEY, tick_id INTEGER NOT NULL, ts TEXT NOT NULL,
+ variant TEXT NOT NULL, window INTEGER NOT NULL, threshold REAL NOT NULL,
+ signal INTEGER NOT NULL, price REAL NOT NULL, future_price REAL,
+ correct INTEGER)""")
+        self.db.execute("CREATE INDEX IF NOT EXISTS idx_hyp_tick ON hypotheses(tick_id)")
         self.db.commit();self.last_test=0
     def account(self,b):return self.db.execute("SELECT cash,qty,entry,peak FROM accounts WHERE branch=?",(b,)).fetchone()
     def equity(self,b,bid):
@@ -151,6 +157,20 @@ class Lab:
         self.db.execute("INSERT INTO ticks(ts,bid,ask,a,b) VALUES(?,?,?,?,?)",(ts,bid,ask,self.equity('a',bid),self.equity('b',bid)))
         self.db.execute("DELETE FROM ticks WHERE id < (SELECT MAX(id)-100000 FROM ticks)")
         self.db.execute("DELETE FROM decisions WHERE ts<?",(time.time()-86400,))
+        # 48 competing forecasts per tick. Each is evaluated only after 30 NEW ticks.
+        tick_id=self.db.execute("SELECT MAX(id) FROM ticks").fetchone()[0]
+        if len(history)>=20:
+            for w in (3,5,8,12,16,19):
+                move=history[-1]/history[-1-w]-1
+                for threshold in (.0005,.001,.002,.004):
+                    for variant,direction in (('trend',1),('reversal',-1)):
+                        signal=1 if move*direction>threshold else (-1 if move*direction < -threshold else 0)
+                        self.db.execute("INSERT INTO hypotheses(tick_id,ts,variant,window,threshold,signal,price) VALUES(?,?,?,?,?,?,?)",
+                                        (tick_id,ts,variant,w,threshold,signal,bid))
+        self.db.execute("""UPDATE hypotheses SET future_price=?,
+          correct=CASE WHEN signal=0 THEN NULL WHEN (?-price)*signal>0 THEN 1 ELSE 0 END
+          WHERE future_price IS NULL AND tick_id<=?""",(bid,bid,tick_id-30))
+        self.db.execute("DELETE FROM hypotheses WHERE tick_id<?",(tick_id-10000,))
         self.db.commit();self.backtests()
     def status(self):
         with self.lock:
@@ -162,7 +182,14 @@ class Lab:
             fills=[dict(ts=t,branch=b,side=s,amount=a) for t,b,s,a in self.db.execute("SELECT ts,branch,side,amount FROM fills ORDER BY id DESC LIMIT 30")]
             tests=[dict(window=w,threshold=t,train_pct=a,test_pct=b,trades=n) for w,t,a,b,n in self.db.execute("SELECT window,threshold,train_pct,test_pct,trades FROM tests ORDER BY test_pct DESC LIMIT 30")]
             chart=[dict(ts=t,a=a,b=b) for t,a,b in self.db.execute("SELECT ts,a,b FROM ticks ORDER BY id DESC LIMIT 250")][::-1]
-            return dict(time=now(),accounts=ac,quote=q,fx=self.fx,fx_date=self.fx_date,blocker=self.error,fee_evidence={'verified':self.fee_ok,'taker_bps':self.fee},decisions=self.db.execute("SELECT COUNT(*) FROM decisions").fetchone()[0],decisions_last_min=self.db.execute("SELECT COUNT(*) FROM decisions WHERE ts>?",(time.time()-60,)).fetchone()[0],ticks=self.db.execute("SELECT COUNT(*) FROM ticks").fetchone()[0],fills=fills,tests=tests,chart=chart,news=self.news,news_error=self.news_error,history_error=self.history_error,quote_age=round(time.time()-self.last_quote,1) if self.last_quote else None,gpu="NIEPODŁĄCZONE — brak potwierdzenia CUDA",warning="Izolowana księga paper v3. Backtest 1-min Kraken: orientacyjny, stały kurs FX; walidacja nie jest forward zyskiem. News tylko do odczytu; brak automatycznej strategii sentymentu.")
+            h_total,h_scored=self.db.execute("SELECT COUNT(*),COUNT(future_price) FROM hypotheses").fetchone()
+            h_rank=[dict(variant=v,window=w,threshold=round(t*100,3),n=n,accuracy=round(100*hits/n,2))
+                for v,w,t,n,hits in self.db.execute("""SELECT variant,window,threshold,COUNT(*),SUM(correct)
+                    FROM hypotheses WHERE correct IS NOT NULL
+                    GROUP BY variant,window,threshold HAVING COUNT(*)>=10
+                    ORDER BY 5*1.0/4 DESC LIMIT 48""")]
+            h_rank.sort(key=lambda x:(-x['accuracy'],-x['n']))
+            return dict(time=now(),accounts=ac,quote=q,fx=self.fx,fx_date=self.fx_date,blocker=self.error,fee_evidence={'verified':self.fee_ok,'taker_bps':self.fee},decisions=self.db.execute("SELECT COUNT(*) FROM decisions").fetchone()[0],decisions_last_min=self.db.execute("SELECT COUNT(*) FROM decisions WHERE ts>?",(time.time()-60,)).fetchone()[0],ticks=self.db.execute("SELECT COUNT(*) FROM ticks").fetchone()[0],fills=fills,tests=tests,chart=chart,news=self.news,news_error=self.news_error,history_error=self.history_error,quote_age=round(time.time()-self.last_quote,1) if self.last_quote else None,gpu="NIEPODŁĄCZONE — brak potwierdzenia CUDA",hypotheses=h_total,hypotheses_scored=h_scored,hypotheses_rank=h_rank[:10],warning="Izolowana księga paper v3. Backtest 1-min Kraken: orientacyjny, stały kurs FX; walidacja nie jest forward zyskiem. News tylko do odczytu; brak automatycznej strategii sentymentu.")
     def loop(self):
         while True:
             try:
