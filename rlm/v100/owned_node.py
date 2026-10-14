@@ -144,6 +144,7 @@ class Node:
             "cpu_slots": self.cpu_slots,
             "cpu_active": active,
             "generating": self.generating,
+            "gpu_compute_claimed": self.gpu_compute_claimed,
             "duty_percent": 100,
             "revision": self.source.name,
             "kernel_sha256": hashlib.sha256(
