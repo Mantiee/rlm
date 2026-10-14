@@ -44,7 +44,7 @@ def compact(row: dict) -> dict:
     raise ValueError("Goal features exceed the pinned CPU kernel context; full example retained")
 
 
-def propose(root: Path, branch: str = "A") -> dict:
+def propose(root: Path, branch: str = "A", device: str = "cpu") -> dict:
     from rlm.v100.distributed_compute import mailbox_path, queue_job
     from rlm.v100.goal_learning import records
     from rlm.v100.goals import load_goal
@@ -107,6 +107,7 @@ def propose(root: Path, branch: str = "A") -> dict:
         [compact(r) for r in selected_train],
         [compact(r) for r in selected_validation],
         provenance=provenance,
+        device=device,
     )
     result.update(goal_id=goal["id"], provenance=provenance)
     atomic_json(receipt_path, result)
@@ -159,7 +160,19 @@ def tick(root: Path) -> None:
             else:
                 result = {
                     "state": "dispatched",
-                    "branches": [propose(root, branch) for branch in ("A", "B")],
+                    "branches": [
+                        propose(
+                            root,
+                            branch,
+                            device=(
+                                "cuda"
+                                if branch == "B"
+                                and any(worker.get("device") == "cuda" for worker in workers)
+                                else "cpu"
+                            ),
+                        )
+                        for branch in ("A", "B")
+                    ],
                 }
                 if all(r.get("state") == "blocked" for r in result["branches"]):
                     result["state"] = "blocked"

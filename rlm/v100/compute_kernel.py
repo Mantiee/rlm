@@ -27,8 +27,8 @@ def validate(job: dict) -> None:
     ):
         if type(job.get(name)) is not int or not low <= job[name] <= high:
             raise ValueError("Compute parameter outside its budget: " + name)
-    if job["width"] % 4 or job.get("device") != "cpu":
-        raise ValueError("Owned compute workers use CPU, with width divisible by four")
+    if job["width"] % 4 or job.get("device") not in ("cpu", "cuda"):
+        raise ValueError("Owned compute workers require approved CPU/CUDA and aligned width")
     rate = job.get("learning_rate")
     if type(rate) not in (int, float) or not math.isfinite(rate) or not 1e-5 <= rate <= 1e-2:
         raise ValueError("Invalid compute learning rate")
@@ -132,8 +132,8 @@ def run(job: dict, output: Path, weights: Path | None = None, device: str = "cpu
     if device not in ("cpu", "cuda") or device == "cuda" and not torch.cuda.is_available():
         raise ValueError("Requested interactive experiment device is unavailable")
     if device == "cuda":
-        # Only an explicitly interactive notebook requests CUDA. Owned workers
-        # never pass this argument and their environment hides all GPUs.
+        # A pinned CUDA job on the dedicated node or interactive notebook may
+        # use at most a quarter of GPU memory. Never accept arbitrary code.
         torch.cuda.set_per_process_memory_fraction(0.25)
     torch.set_num_threads(job["threads"])
     torch.manual_seed(42)
@@ -195,6 +195,7 @@ if __name__ == "__main__":
     parser.add_argument("job", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--weights", type=Path)
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     args = parser.parse_args()
     raw = args.job.read_bytes()
     if len(raw) > 2 * 2**20:
@@ -203,4 +204,8 @@ if __name__ == "__main__":
     expected = job["kernel_sha256"]
     if expected != hashlib.sha256(Path(__file__).read_bytes()).hexdigest():
         raise ValueError("Compute kernel differs from the pinned job")
-    print(json.dumps(run(job, args.output, args.weights)), flush=True)
+    if job["device"] != args.device and not (
+        args.weights is not None and args.device == "cpu" and job["device"] == "cuda"
+    ):
+        raise ValueError("Worker device differs from signed frozen compute job")
+    print(json.dumps(run(job, args.output, args.weights, device=args.device)), flush=True)

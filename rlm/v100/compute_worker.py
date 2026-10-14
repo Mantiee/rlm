@@ -48,6 +48,13 @@ def claim(mailbox: Path, worker: str) -> tuple[Path, dict] | None:
             continue
         if (mailbox / "closed" / (path.stem + ".json")).exists():
             continue
+        # Generic/Windows workers remain CPU-only: GPU jobs belong only to
+        # the explicit dedicated-node CUDA admission and bounded watchdog.
+        try:
+            if read_json(path).get("device") != "cpu":
+                continue
+        except (OSError, ValueError, KeyError):
+            continue
         directory = mailbox / "claims" / path.stem
         directory.parent.mkdir(parents=True, exist_ok=True)
         try:

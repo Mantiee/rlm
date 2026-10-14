@@ -40,7 +40,9 @@ def test_owned_job_validation_and_new_data_each_trial(tmp_path, monkeypatch):
         r["group"] for r in second["train"] + second["validation"]
     )
     first["device"] = "cuda"
-    with pytest.raises(ValueError, match="CPU"):
+    compute_kernel.validate(first)
+    first["device"] = "malicious-device"
+    with pytest.raises(ValueError, match="CPU/CUDA"):
         compute_kernel.validate(first)
 
 
@@ -243,3 +245,13 @@ def test_compute_transition_journal_is_complete_and_does_not_repeat_polling(tmp_
     assert [e["payload"]["state"] for e in events] == ["queued", "running", "failed"]
     assert all(e["payload"]["job_id"] == "a" * 24 for e in events)
     assert events[-1]["payload"]["detail"] == "Worker failed"
+
+
+def test_generic_cpu_worker_does_not_claim_cuda_job(tmp_path, monkeypatch):
+    mailbox, identity = configured(tmp_path, monkeypatch)
+    path = mailbox / "jobs" / (identity + ".json")
+    job = json.loads(path.read_text())
+    job["device"] = "cuda"
+    atomic_json(path, job)
+    assert compute_worker.claim(mailbox, "windows-gaming-cpu") is None
+    assert not (mailbox / "claims" / identity).exists()

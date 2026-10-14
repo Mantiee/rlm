@@ -244,27 +244,53 @@ def cpu_bridge(root: Path, resources: dict) -> None:
     if not (root / "research/compute-config.json").exists():
         return
     mailbox = mailbox_path(root)
-    worker = "debian-3060ti-cpu"
-    phase = (
-        "idle"
-        if resources.get("cpu_ready")
+    cpu_worker = "debian-3060ti-cpu"
+    gpu_worker = "debian-3060ti-gpu"
+    cpu_idle = bool(
+        resources.get("cpu_ready")
         and resources.get("cpu_active", 0) < resources.get("cpu_slots", 1)
-        else "busy"
     )
-    atomic_json(
-        mailbox / "workers" / (worker + ".json"),
-        {
-            "updated": time.time(),
-            "phase": phase,
-            "device": "cpu",
-            "threads": resources.get("cpu_threads"),
-            "slots": resources.get("cpu_slots"),
-            "name": worker,
-            "gpu_enabled": False,
-            "reason": "Dedicated fixed-kernel CPU pool; per-job threads=2, multiple independent jobs in parallel",
-        },
+    # The dedicated CUDA compute lane is separate from finance-model
+    # qualification. It accepts only pinned, independently checked tiny jobs.
+    gpu_idle = bool(
+        cpu_idle
+        and resources.get("ready")
+        and resources.get("free_vram_gib", 0) >= 2.25
+        and resources.get("temperature_c", 100) < 75
+        and not resources.get("generating")
+        and not resources.get("gpu_compute_claimed")
     )
+    for worker, device, idle in (
+        (cpu_worker, "cpu", cpu_idle),
+        (gpu_worker, "cuda", gpu_idle),
+    ):
+        atomic_json(
+            mailbox / "workers" / (worker + ".json"),
+            {
+                "updated": time.time(),
+                "phase": "idle" if idle else "busy",
+                "device": device,
+                "threads": 2,
+                "slots": 1 if device == "cuda" else resources.get("cpu_slots"),
+                "name": worker,
+                "gpu_enabled": device == "cuda",
+                "reason": (
+                    "Pinned CUDA small-model experiments with a 25% memory limit"
+                    if device == "cuda"
+                    else "Dedicated fixed-kernel CPU pool; per-job threads=2"
+                ),
+            },
+        )
     for path in sorted((mailbox / "jobs").glob("*.json"))[:16]:
+        try:
+            queued_job = json.loads(path.read_text())
+        except (OSError, ValueError, TypeError):
+            continue
+        device = queued_job.get("device")
+        if device not in ("cpu", "cuda"):
+            continue
+        worker = gpu_worker if device == "cuda" else cpu_worker
+        phase = "idle" if (gpu_idle if device == "cuda" else cpu_idle) else "busy"
         if not re.fullmatch(r"[a-f0-9]{24}", path.stem):
             continue
         original = root / "research/compute-jobs" / path.stem / "job.json"

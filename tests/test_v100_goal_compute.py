@@ -184,3 +184,13 @@ def test_goal_outcomes_execute_owned_child_and_receive_independent_host_decision
     goal_compute.verify_job(root, job)
     assert job["provenance"]["goal_id"] == goal["id"]
     assert goal_compute.propose(root)["state"] == "blocked"
+
+
+def test_verified_goal_research_can_route_B_to_dedicated_cuda(outcomes):
+    root, mailbox, _, _ = outcomes
+    first = goal_compute.propose(root, "B", device="cuda")
+    job = json.loads((mailbox / "jobs" / (first["id"] + ".json")).read_text())
+    assert first["state"] == "queued"
+    assert job["device"] == "cuda"
+    assert job["domain"] == "goal_observation"
+    assert {r["group"] for r in job["train"]}.isdisjoint(r["group"] for r in job["validation"])

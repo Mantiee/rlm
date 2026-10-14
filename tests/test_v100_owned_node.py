@@ -334,3 +334,67 @@ def test_income_advisor_reuses_qualified_node_without_launching_master(tmp_path,
     assert client.activity_actor == "income-owned-advisor"
     assert client.timeout == 120
     assert client.research_token_ceiling == 2048
+
+
+def test_cuda_jobs_require_dedicated_resource_budget_not_model_qualification(tmp_path, monkeypatch):
+    import psutil
+
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(total=16 * 2**30))
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("compute_kernel.py", "compute_worker.py"):
+        shutil.copyfile(Path(owned_node.__file__).with_name(name), source / name)
+    node = owned_node.Node(tmp_path / "gpu-work", source)
+    monkeypatch.setattr(node.cpu_pool, "submit", lambda *args: None)
+    node.state = {
+        "ready": True,
+        "cpu_ready": True,
+        "free_vram_gib": 2.75,
+        "temperature_c": 40,
+        "kernel_sha256": hashlib.sha256((source / "compute_kernel.py").read_bytes()).hexdigest(),
+        "worker_sha256": hashlib.sha256((source / "compute_worker.py").read_bytes()).hexdigest(),
+    }
+    value = job("c" * 24)
+    value.update(
+        device="cuda",
+        kernel_sha256=node.state["kernel_sha256"],
+        worker_sha256=node.state["worker_sha256"],
+    )
+    raw = json.dumps(value).encode()
+    request = {
+        "identity": "c" * 24 + "-" + "d" * 32,
+        "job": base64.b64encode(raw).decode(),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    try:
+        node.state["free_vram_gib"] = 1.0
+        with pytest.raises(BlockingIOError, match="CUDA reserve"):
+            node.submit_cpu(request)
+        node.state["free_vram_gib"] = 2.75
+        assert node.submit_cpu(request)["state"] == "queued"
+        assert node.gpu_compute_claimed
+        assert node.submit_cpu(request)["state"] == "queued"
+    finally:
+        node.cpu_pool.shutdown(wait=True)
+
+
+def test_cuda_lane_dispatched_independently_of_finance_model_qualification(tmp_path):
+    mailbox = tmp_path / "mailbox"
+    atomic_json(tmp_path / "research/compute-config.json", {"mailbox": str(mailbox)})
+    remote_nodes.cpu_bridge(
+        tmp_path,
+        {
+            "ready": True,
+            "cpu_ready": True,
+            "cpu_slots": 8,
+            "cpu_active": 0,
+            "free_vram_gib": 2.8,
+            "temperature_c": 35,
+            "generating": False,
+            "gpu_compute_claimed": False,
+        },
+    )
+    gpu = json.loads((mailbox / "workers/debian-3060ti-gpu.json").read_text())
+    assert gpu["device"] == "cuda" and gpu["phase"] == "idle"
+    assert gpu["gpu_enabled"]
+    assert json.loads((mailbox / "workers/debian-3060ti-cpu.json").read_text())["device"] == "cpu"
