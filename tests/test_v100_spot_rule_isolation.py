@@ -1,11 +1,15 @@
 """A changed exchange rule must block spot fills, not independent learning."""
 
 import json
-import threading
 
-from rlm.v100 import market_adapters, paper_learning, provider_registry, reward_policy
+from rlm.v100 import (
+    market_adapters,
+    paper_learning,
+    provider_registry,
+    reward_policy,
+    spot_bootstrap,
+)
 from rlm.v100.common import atomic_json
-from rlm.v100 import spot_bootstrap
 
 
 def test_changed_spot_rules_suspend_crypto_polls_without_killing_observer(
@@ -56,6 +60,7 @@ def test_changed_spot_rules_suspend_crypto_polls_without_killing_observer(
     monkeypatch.setattr(paper_learning, "scheduled_reports", lambda *args: [])
     polls = []
     monkeypatch.setattr(paper_learning, "poll_crypto", lambda *args: polls.append(1))
+
     def changed(*args, **kwargs):
         raise ValueError(
             "Spot execution rules changed; retain positions and inspect before updating"
