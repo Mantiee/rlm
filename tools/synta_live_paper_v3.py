@@ -4,6 +4,7 @@ import argparse, collections, datetime, hashlib, html, json, math, os, sqlite3, 
 import urllib.request, urllib.parse, xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from synta_accelerator_v1 import Accelerator
 
 def now(): return datetime.datetime.now(datetime.timezone.utc).isoformat()
 def fetch(url, timeout=8):
@@ -201,6 +202,7 @@ class Lab:
 def main():
     p=argparse.ArgumentParser();p.add_argument('--root',type=Path,default=Path.home()/'ai-v100');p.add_argument('--host',default='127.0.0.1');p.add_argument('--port',type=int,default=8770);args=p.parse_args()
     lab=Lab(args.root)
+    accelerator=Accelerator(args.root)
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             path=self.path.split('?',1)[0]
@@ -209,9 +211,11 @@ def main():
                 data=dashboard.read_bytes() if dashboard.is_file() else PAGE.encode()
                 typ='text/html; charset=utf-8'
             elif path=='/api/status':data=json.dumps(lab.status(),ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+            elif path=='/api/accelerator':data=json.dumps(accelerator.snapshot(),ensure_ascii=False).encode();typ='application/json; charset=utf-8'
             else:self.send_error(404);return
             self.send_response(200);self.send_header('Content-Type',typ);self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
         def log_message(self,*args):pass
     threading.Thread(target=lab.loop,daemon=True).start()
+    threading.Thread(target=accelerator.loop,daemon=True).start()
     ThreadingHTTPServer((args.host,args.port),Handler).serve_forever()
 if __name__=='__main__':main()
