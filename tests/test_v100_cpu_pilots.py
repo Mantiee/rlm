@@ -69,7 +69,7 @@ def test_cuda_pilot_uses_idle_gpu_worker_without_inference_qualification(
         "inspect",
         lambda root: {
             "workers": [{"phase": "idle", "stale": False, "device": "cuda"}],
-            "jobs": []
+            "jobs": [],
         },
     )
     devices = []
