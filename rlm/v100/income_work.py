@@ -56,7 +56,6 @@ def backend_on_cooldown(root: Path, base_url: str) -> bool:
         return False
 
 
-
 def owned_advisor(root: Path, branch: str, reason: str):
     """Use an independently qualified advisory node while protected serving is unavailable."""
     from rlm.v100.competition import helper_client
