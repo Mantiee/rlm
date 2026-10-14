@@ -42,12 +42,12 @@ def test_income_cooldown_expires_and_never_blocks_healthy_work(tmp_path):
     )
     assert not backend_on_cooldown(tmp_path, "http://192.168.0.61:11435")
 
+
 def test_cooldown_survives_selection_receipt_and_scopes_exact_host(tmp_path, monkeypatch):
     failed = {
         "state": "model-selected work blocked",
         "error": (
-            "503 Server Error: Service Unavailable for url: "
-            "http://192.168.0.61:11435/api/chat"
+            "503 Server Error: Service Unavailable for url: http://192.168.0.61:11435/api/chat"
         ),
         "updated": time.time(),
     }
