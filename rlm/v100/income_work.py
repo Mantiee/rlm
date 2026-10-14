@@ -71,11 +71,14 @@ def record_backend_cooldown(root: Path, failure: dict) -> None:
         and isinstance(failure.get("updated"), (int, float))
         and 0 <= time.time() - failure["updated"] < 900
     ):
-        atomic_json(root / "research/income-work/backend-cooldown.json", {
-            "state": failure["state"],
-            "error": str(failure["error"])[:400],
-            "updated": failure["updated"],
-        })
+        atomic_json(
+            root / "research/income-work/backend-cooldown.json",
+            {
+                "state": failure["state"],
+                "error": str(failure["error"])[:400],
+                "updated": failure["updated"],
+            },
+        )
 
 
 def owned_advisor(root: Path, branch: str, reason: str):
