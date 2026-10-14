@@ -336,7 +336,6 @@ def test_income_advisor_reuses_qualified_node_without_launching_master(tmp_path,
     assert client.research_token_ceiling == 2048
 
 
-
 def test_cuda_jobs_require_dedicated_resource_budget_not_model_qualification(tmp_path, monkeypatch):
     import psutil
 
