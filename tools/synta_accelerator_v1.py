@@ -6,7 +6,7 @@ from pathlib import Path
 
 def utc():return datetime.datetime.now(datetime.timezone.utc).isoformat()
 def fetch_ohlc():
-    req=urllib.request.Request('https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1',headers={'User-Agent':'Synta-Accelerated-Paper-Research/1'})
+    req=urllib.request.Request('https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60',headers={'User-Agent':'Synta-Accelerated-Paper-Research/1'})
     with urllib.request.urlopen(req,timeout=12) as r:raw=json.load(r)
     if raw.get('error'):raise ValueError(str(raw['error']))
     key=next(k for k in raw['result'] if k!='last')
@@ -34,8 +34,8 @@ class Accelerator:
     def __init__(self,root):
         self.root=Path(root);self.lock=threading.RLock()
         self.state={'status':'starting','updated':None,'error':None,'trials':0,'duration_s':0,'top':[],
-                    'candles':0,'source':'Kraken public OHLC 1m; last incomplete excluded',
-                    'limitations':'Backtest history only, 1m OHLC close; no executable bid/ask; simulated 110bps per side; next-close execution; no lookahead for signals; not GPU training; not forward profit.',
+                    'candles':0,'source':'Kraken public OHLC 60m; last incomplete excluded',
+                    'limitations':'Backtest history only, 60m OHLC close; no executable bid/ask; simulated 110bps per side; next-close execution; no lookahead for signals; not GPU training; not forward profit.',
                     'gpu':'NOT VERIFIED / NOT USED'}
         self.cache=self.root/'research/experiments/accelerator-v1.json'
         try:
@@ -52,11 +52,11 @@ class Accelerator:
         cut=int(len(prices)*.65);train=prices[:cut];test=prices[cut-65:]
         rng=random.Random(20261014);configs=set()
         while len(configs)<10000:
-            w=rng.choice([3,5,8,10,12,15,20,25,30,45,60])
-            entry=rng.choice([.0003,.0006,.001,.0015,.002,.003,.004,.006,.009,.012,.02,.03])
+            w=rng.choice([2,3,5,8,10,12,15,20,25,30,45])
+            entry=rng.choice([.001,.002,.003,.004,.006,.008,.012,.016,.02,.025,.03,.04])
             exit_=rng.choice([-.008,-.004,-.002,-.001,0,.001])
             stop=rng.choice([.01,.02,.035,.05,.08])
-            hold=rng.choice([5,10,20,30,60,120,240])
+            hold=rng.choice([3,6,12,24,48,72,120])
             configs.add((w,entry,exit_,stop,hold))
         results=[]
         with self.lock:self.state.update(status='computing',trials=0,error=None)
@@ -66,7 +66,7 @@ class Accelerator:
             if n%100==0:
                 with self.lock:self.state.update(trials=n,duration_s=round(time.monotonic()-started,2))
         # Select by TRAIN only. Test results are reported but NEVER used for ranking.
-        results.sort(key=lambda x:(x[1]['net_pct'], -x[1]['max_dd_pct']),reverse=True)
+        results.sort(key=lambda x:(x[1]['trades']>=5,x[1]['net_pct'],-x[1]['max_dd_pct']),reverse=True)
         # Promotion uses only the top TRAIN candidate. The held-out segment is a one-time veto, not a leaderboard.
         leader=results[0]
         leader_cfg,leader_train,leader_test=leader
@@ -76,15 +76,15 @@ class Accelerator:
         for cfg,a,b in results[:15]:
             w,entry,exit_,stop,hold=cfg
             top.append({'window':w,'entry_pct':round(entry*100,3),'exit_pct':round(exit_*100,3),
-                        'stop_pct':round(stop*100,3),'max_hold_min':hold,'train':a,'test':b})
-        out={'status':'ready','updated':utc(),'error':None,'trials':len(results),
+                        'stop_pct':round(stop*100,3),'max_hold_hours':hold,'train':a,'test':b})
+        out={'status':'ready','updated':utc(),'error':None,'trials':len(results),'timeframe_minutes':60,
              'duration_s':round(time.monotonic()-started,2),'candles':len(prices),
              'first_candle':datetime.datetime.fromtimestamp(candles[0][0],datetime.timezone.utc).isoformat(),
              'last_candle':datetime.datetime.fromtimestamp(candles[-1][0],datetime.timezone.utc).isoformat(),
              'train_candles':len(train),'test_candles':len(test)-65,'top':top,
              'positive_test_of_top15':sum(1 for x in top if x['test']['net_pct']>0),
              'active_test_of_top15':sum(1 for x in top if x['test']['trades']>0),
-             'source':'Kraken public OHLC 1m; last incomplete excluded',
+             'source':'Kraken public OHLC 60m; last incomplete excluded',
              'limitations':'Historical simulation only. Signals use previous closed candle, fill next close; 110bps per side, no order book or executable FX. Train ranked, held-out test shown, no forward guarantee. GPU not used.',
              'gpu':'NOT VERIFIED / NOT USED','candidate':candidate}
         with self.lock:self.state=out
