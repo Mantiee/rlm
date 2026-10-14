@@ -37,6 +37,9 @@ class Lab:
     def __init__(self,root):
         self.root=root;self.lock=threading.RLock();self.error="Oczekiwanie na pierwsze notowanie";self.fx=None;self.fx_date=None;self.fx_checked=0;self.news=[];self.news_error=None;self.news_checked=0;self.history_error=None;self.hist=[];self.hist_checked=0;self.quote=None;self.last_quote=0;self.fee=None;self.fee_ok=False;self.last_fee=0
         p=root/'research/experiments/live-paper-v3.sqlite3';p.parent.mkdir(parents=True,exist_ok=True)
+        self.accelerator=None;self.promoted_path=root/'research/experiments/paper-a-promotion.json';self.promoted=None;self.last_strategy_candle=None;self.strategy_opened=0
+        try:self.promoted=json.loads(self.promoted_path.read_text())
+        except Exception:pass
         self.db=sqlite3.connect(p,check_same_thread=False);self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""CREATE TABLE IF NOT EXISTS accounts(branch TEXT PRIMARY KEY,cash REAL,qty REAL,entry REAL,peak REAL);
         CREATE TABLE IF NOT EXISTS ticks(id INTEGER PRIMARY KEY,ts TEXT,bid REAL,ask REAL,a REAL,b REAL);
@@ -148,12 +151,29 @@ class Lab:
                 action='SELL';reason='Limit straty';self.fill(b,action,bid,reason)
             elif b=='b' and qty==0 and self.fee_ok and self.db.execute("SELECT COUNT(*) FROM fills WHERE branch='b'").fetchone()[0]==0:
                 action='BUY';reason='Benchmark 5%';self.fill(b,action,ask,reason)
-            elif b=='a' and len(history)>=20:
-                mom=history[-1]/history[-20]-1
-                if qty==0 and mom>.026 and self.fee_ok:
-                    action='BUY';reason='Momentum 2.6%';self.fill(b,action,ask,reason)
-                elif qty>0 and mom<-.012:
-                    action='SELL';reason='Momentum reversal';self.fill(b,action,bid,reason)
+            elif b=='a':
+                # Freeze first independently vetted historical candidate; never silently
+                # switch strategies based on live outcomes or a reused holdout.
+                if self.promoted is None and self.accelerator is not None:
+                    snap=self.accelerator.snapshot();candidate=snap.get('candidate') or {}
+                    if candidate.get('eligible') and snap.get('status')=='ready':
+                        self.promoted={'params':{k:candidate[k] for k in ('window','entry','exit','stop','holding')},'selected_at':now(),'source_run':snap.get('updated'),'train':candidate['train'],'test':candidate['test']}
+                        self.promoted_path.parent.mkdir(parents=True,exist_ok=True)
+                        self.promoted_path.write_text(json.dumps(self.promoted,ensure_ascii=False))
+                if self.promoted and len(self.hist)>65:
+                    cfg=self.promoted['params'];w=cfg['window']
+                    # One strategy decision per new CLOSED minute candle, not every
+                    # 2s ticker. Execution uses the live ask/bid and verified fee.
+                    candle=self.hist[-1]
+                    if self.last_strategy_candle!=candle and len(self.hist)>w+1:
+                        self.last_strategy_candle=candle
+                        mom=self.hist[-1]/self.hist[-1-w]-1
+                        if qty==0 and mom>cfg['entry'] and self.fee_ok:
+                            action='BUY';reason='Validated historical strategy; minute close'
+                            self.fill(b,action,ask,reason);self.strategy_opened=time.time()
+                        elif qty>0 and (mom<cfg['exit'] or bid<entry*(1-cfg['stop']) or (self.strategy_opened and time.time()-self.strategy_opened>=60*cfg['holding'])):
+                            action='SELL';reason='Validated strategy exit';self.fill(b,action,bid,reason)
+                else:reason='Brak strategii po niezależnej walidacji — HOLD'
             self.db.execute("INSERT INTO decisions(ts,branch,action,reason) VALUES(?,?,?,?)",(time.time(),b,action,reason))
         self.db.execute("INSERT INTO ticks(ts,bid,ask,a,b) VALUES(?,?,?,?,?)",(ts,bid,ask,self.equity('a',bid),self.equity('b',bid)))
         self.db.execute("DELETE FROM ticks WHERE id < (SELECT MAX(id)-100000 FROM ticks)")
@@ -190,7 +210,7 @@ class Lab:
                     GROUP BY variant,window,threshold HAVING COUNT(*)>=10
                     ORDER BY 5*1.0/4 DESC LIMIT 48""")]
             h_rank.sort(key=lambda x:(-x['accuracy'],-x['n']))
-            return dict(time=now(),accounts=ac,quote=q,fx=self.fx,fx_date=self.fx_date,blocker=self.error,fee_evidence={'verified':self.fee_ok,'taker_bps':self.fee},decisions=self.db.execute("SELECT COUNT(*) FROM decisions").fetchone()[0],decisions_last_min=self.db.execute("SELECT COUNT(*) FROM decisions WHERE ts>?",(time.time()-60,)).fetchone()[0],ticks=self.db.execute("SELECT COUNT(*) FROM ticks").fetchone()[0],fills=fills,tests=tests,chart=chart,news=self.news,news_error=self.news_error,history_error=self.history_error,quote_age=round(time.time()-self.last_quote,1) if self.last_quote else None,gpu="NIEPODŁĄCZONE — brak potwierdzenia CUDA",hypotheses=h_total,hypotheses_scored=h_scored,hypotheses_rank=h_rank[:10],warning="Izolowana księga paper v3. Backtest 1-min Kraken: orientacyjny, stały kurs FX; walidacja nie jest forward zyskiem. News tylko do odczytu; brak automatycznej strategii sentymentu.")
+            return dict(time=now(),accounts=ac,quote=q,fx=self.fx,fx_date=self.fx_date,blocker=self.error,fee_evidence={'verified':self.fee_ok,'taker_bps':self.fee},decisions=self.db.execute("SELECT COUNT(*) FROM decisions").fetchone()[0],decisions_last_min=self.db.execute("SELECT COUNT(*) FROM decisions WHERE ts>?",(time.time()-60,)).fetchone()[0],ticks=self.db.execute("SELECT COUNT(*) FROM ticks").fetchone()[0],fills=fills,tests=tests,chart=chart,news=self.news,news_error=self.news_error,history_error=self.history_error,quote_age=round(time.time()-self.last_quote,1) if self.last_quote else None,gpu="NIEPODŁĄCZONE — brak potwierdzenia CUDA",promoted_strategy=self.promoted,hypotheses=h_total,hypotheses_scored=h_scored,hypotheses_rank=h_rank[:10],warning="Izolowana księga paper v3. Backtest 1-min Kraken: orientacyjny, stały kurs FX; walidacja nie jest forward zyskiem. News tylko do odczytu; brak automatycznej strategii sentymentu.")
     def loop(self):
         while True:
             try:
@@ -203,6 +223,7 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--root',type=Path,default=Path.home()/'ai-v100');p.add_argument('--host',default='127.0.0.1');p.add_argument('--port',type=int,default=8770);args=p.parse_args()
     lab=Lab(args.root)
     accelerator=Accelerator(args.root)
+    lab.accelerator=accelerator
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             path=self.path.split('?',1)[0]
