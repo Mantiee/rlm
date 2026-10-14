@@ -109,3 +109,13 @@ if(!table.children[0].children[0].children[5].textContent.includes('double costs
         ["node", "-"], input=program, text=True, capture_output=True, timeout=30
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_live_mission_board_embedded_in_served_html():
+    html = dashboard_layout.render_template(dashboard_layout.BASE_TEMPLATE, "test")
+    assert "function liveMissionBoard(data)" in html
+    assert "Live mission control" in html
+    assert "Recent recorded actions" in html
+    assert "Simulation, not real income" in html
+    assert "Snapshot age:" in html
+    assert "liveMissionBoard(data);" in html
