@@ -145,3 +145,12 @@ def test_current_blocker_does_not_reuse_previous_cycle_failure():
     assert "Previous cycle failure (historical, not the current blocker)" in SCRIPT
     blocker = SCRIPT.split("bd.textContent=", 1)[1].split(";", 1)[0]
     assert "learning.last_cycle?.detail" not in blocker
+
+
+def test_live_board_distinguishes_completions_failures_and_idle_gpu():
+    from rlm.v100.dashboard_insights import SCRIPT
+
+    assert "failed; ${evaluation.state||'unknown'}" in SCRIPT
+    assert "Accepted new model" in SCRIPT
+    assert "3060 GPU compute" in SCRIPT
+    assert "No recent completed operations" in SCRIPT

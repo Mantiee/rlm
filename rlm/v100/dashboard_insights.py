@@ -35,7 +35,8 @@ function liveMissionBoard(data){
  metric('Learning',learning.stage||'Unknown',learning.cycle_in_progress===undefined?'Cycle not reported':`Cycle ${learning.cycle_in_progress}`);
  const activity=report.current_activity||{}, evaluation=activity.evaluation||{};
  metric('Current task',activity.stage||'Not reported',activity.running===true?'Recorded as running':'No running task confirmed');
- metric('Candidate evaluation',evaluation.total?`${evaluation.completed||0}/${evaluation.total}`:'Not reported',evaluation.total?`${evaluation.passed||0} passed; last update ${Math.round(evaluation.age_seconds||0)}s ago${evaluation.stale?' (STALE)':''}`:'No evaluation receipt');
+ metric('Candidate evaluation',evaluation.total?`${evaluation.completed||0}/${evaluation.total}`:'Not reported',evaluation.total?`${evaluation.passed||0} passed, ${(evaluation.completed||0)-(evaluation.passed||0)} failed; ${evaluation.state||'unknown'}; ${Math.round(evaluation.age_seconds||0)}s since last update${evaluation.stale?' (STALE)':''}`:'No evaluation receipt');
+ metric('Accepted new model',activity.accepted_updates??0,'Independent evaluation and promotion required; optimizer steps alone are not acceptance');
  const rows=report.live_paper?.branches||{};
  const a=rows.A||{},b=rows.B||{};
  const money=x=>x===undefined||x===null?'Not reported':String(x)+' '+(report.live_paper?.currency||'PLN');
@@ -45,7 +46,8 @@ function liveMissionBoard(data){
  const node=report.node||report.node3060||report.remote_node||{};
  if(node.admitted!==undefined){metric('RTX 3060 Ti GPU',node.admitted?'Admitted':'Not admitted',node.reason||'No qualification receipt');metric('RTX 3060 Ti CPU',node.resources?.cpu_ready?'Available':'Not ready',`${node.resources?.cpu_active??'unknown'} jobs active, ${(node.resources?.cpu_slots??'unknown')} slots; GPU admission is independent`)}
  const dispatch=report.owned_cpu_dispatch||{};
- metric('Owned CPU experiment',dispatch.state||'Not recorded',dispatch.reason||'See the verified outcome/worker requirements');
+ metric('Owned compute experiment',dispatch.state||'Not recorded',dispatch.reason||dispatch.next_evidence||'Verified source-disjoint outcomes required before GPU/CPU job');
+ if(node.resources)metric('3060 GPU compute',node.resources.gpu_compute_claimed?'Running experiment':node.resources.ready?'Available; no confirmed GPU task':'Not ready',`${node.resources.gpu_utilization_percent??'unknown'}% GPU; ${(node.resources.free_vram_gib??'unknown')} GiB VRAM free`);
  const note=document.createElement('p');note.className='muted';
  note.textContent='Real income: not independently verified. HOLD is a decision, not a fill. Paper results and historical tests are not withdrawable earnings.';box.append(note);
  const blocker=document.createElement('div');blocker.className='live-board-blocker';
@@ -55,7 +57,10 @@ function liveMissionBoard(data){
  if(learning.last_cycle?.detail){const past=document.createElement('p');past.className='muted';past.textContent='Previous cycle failure (historical, not the current blocker): '+learning.last_cycle.detail;box.append(past)}
  const events=document.createElement('div');events.className='live-board-events';
  const eh=document.createElement('h3');eh.textContent='Recent recorded actions';events.append(eh);
- const recent=Array.isArray(live.events)?live.events.slice(-8).reverse():[];
+ const raw=Array.isArray(live.events)?live.events:[];
+ const actionEvents=raw.filter(e=>['tool-result','inference-finished','worker-result','development-result','paper-fill','trade-fill','compute-training'].includes(e.kind||e.type));
+ const recent=(actionEvents.length?actionEvents:raw).slice(-8).reverse();
+ if(!actionEvents.length){const p=document.createElement('p');p.className='muted';p.textContent='No recent completed operations; raw heartbeat and observations are not evidence of executed work.';events.append(p)}
  if(!recent.length){const p=document.createElement('p');p.textContent='No current events reported';events.append(p)}
  for(const event of recent){const line=document.createElement('div');line.className='live-board-event';const time=document.createElement('time');time.textContent=event.time||'Unknown time';const body=document.createElement('span');body.textContent=event.label||event.action||event.kind||event.type||event.summary||'Recorded event';line.append(time,body);events.append(line)}
  box.append(events);
