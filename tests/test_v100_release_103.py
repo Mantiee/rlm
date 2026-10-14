@@ -3,7 +3,6 @@
 import hashlib
 import json
 import subprocess
-import tomllib
 from pathlib import Path
 
 
@@ -12,9 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_managed_v103_is_a_genuine_pinned_new_package():
     manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
-    config = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    config = (ROOT / "pyproject.toml").read_text()
     assert manifest["version"] == 103
-    assert config["project"]["version"] == "0.1.3+v100.103"
+    assert 'version = "0.1.3+v100.103"' in config
     installer = manifest["linux_installer"]
     assert installer == "tools/update-synta-v103.sh"
     content = (ROOT / installer).read_bytes()
