@@ -1,6 +1,7 @@
 """One bounded owner-authorized read-only chat round trip through the actual gateway."""
 
 import argparse
+import hashlib
 import json
 import re
 import time
@@ -25,6 +26,8 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
         "updated": time.time(),
         "scope": "Local authenticated gateway and generated reply; not proof of browser/phone routing, tool execution, learning or income",
     }
+    if previous.get("revision") == revision and previous.get("previous_attempt"):
+        result["previous_attempt"] = previous["previous_attempt"]
     opener = build_opener(ProxyHandler({}))
     headers = {"Tailscale-User-Login": config["owner_login"]}
 
@@ -42,6 +45,11 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
 
     atomic_json(receipt, result)
     try:
+        from rlm.v100.model_roles import selected_profile
+
+        planner = selected_profile(root, "planner")
+        admission = hashlib.sha256(planner.read_bytes()).hexdigest() if planner else None
+        result["planner_admission"] = admission
         session = request("/api/chat")
         headers.update(
             {
@@ -51,6 +59,17 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
             }
         )
         identity = previous.get("request_id") if previous.get("revision") == revision else None
+        if identity is not None and admission and previous.get("planner_admission") != admission:
+            old = request("/api/chat/" + identity)
+            if old.get("state") == "failed":
+                # Only this immutable, action-free canary can be retried after
+                # a new verified admission. Never replay an operator command.
+                result["previous_attempt"] = {
+                    "request_id": identity,
+                    "error": old.get("error"),
+                    "planner_admission": previous.get("planner_admission"),
+                }
+                identity = None
         if identity is None:
             row = request(
                 "/api/chat",

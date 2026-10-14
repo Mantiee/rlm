@@ -903,7 +903,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
 
     resource_request = chat_resources.instruction(message)
     question_only = quick_question and not resource_request
-    if question_only and not profile.get("resources", {}).get("interactive_lab"):
+    if question_only:
         return conversational_response(
             root,
             client,

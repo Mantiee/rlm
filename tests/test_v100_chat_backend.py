@@ -263,8 +263,12 @@ def test_conversation_rejects_truncated_generation(tmp_path):
         mission_chat.conversational_response(tmp_path, client, "hej", {}, {}, {"model": "v100"})
 
 
-def test_question_fast_path_skips_cpu_start_and_research_context(tmp_path, monkeypatch):
+@pytest.mark.parametrize("interactive_lab", [False, True])
+def test_question_fast_path_skips_cpu_start_and_research_context(
+    tmp_path, monkeypatch, interactive_lab
+):
     accepted = profile(tmp_path)
+    accepted["resources"] = {"interactive_lab": interactive_lab}
     atomic_json(tmp_path / "serving-active.json", accepted)
     monkeypatch.setattr(mission_chat, "load_profile", lambda *a: accepted)
     monkeypatch.setattr(
