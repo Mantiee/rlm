@@ -40,7 +40,12 @@ def backend_on_cooldown(root: Path, base_url: str) -> bool:
     """
     if not isinstance(base_url, str) or not base_url:
         return False
-    status = root / "research/income-work/status.json"
+    # The public status.json changes to "selecting next experiment" before
+    # model selection. Keep the last transient backend failure in a separate
+    # receipt so that a new attempt cannot erase its own cooldown.
+    status = root / "research/income-work/backend-cooldown.json"
+    if not status.is_file():
+        status = root / "research/income-work/status.json"
     if not status.is_file() or status.is_symlink() or status.stat().st_size > 2 * 2**20:
         return False
     try:
@@ -56,6 +61,21 @@ def backend_on_cooldown(root: Path, base_url: str) -> bool:
         return "503" in error and ("for url: " + base_url.rstrip("/") + "/api/chat") in error
     except (OSError, ValueError, TypeError):
         return False
+
+
+def record_backend_cooldown(root: Path, failure: dict) -> None:
+    """Retain a recent endpoint failure separately from the activity display."""
+    if (
+        failure.get("state") == "model-selected work blocked"
+        and "503" in str(failure.get("error", ""))
+        and isinstance(failure.get("updated"), (int, float))
+        and 0 <= time.time() - failure["updated"] < 900
+    ):
+        atomic_json(root / "research/income-work/backend-cooldown.json", {
+            "state": failure["state"],
+            "error": str(failure["error"])[:400],
+            "updated": failure["updated"],
+        })
 
 
 def owned_advisor(root: Path, branch: str, reason: str):
@@ -415,6 +435,12 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
         "actual_income_pln": None,
         "scope": "Executed tool receipts are separate from estimates, task correctness, paper P&L and actual revenue. No spending or real orders.",
     }
+    # Preserve a previous HTTP 503 even when this run updates status.json.
+    if path.is_file() and not path.is_symlink() and path.stat().st_size <= 2 * 2**20:
+        try:
+            record_backend_cooldown(root, json.loads(path.read_text()))
+        except (OSError, ValueError, TypeError):
+            pass
     atomic_json(path, {**value, "state": "selecting next experiment"})
     previous_evidence = {}
     if previous.get("result_path"):
@@ -542,6 +568,7 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
             state="model-selected work blocked", error=str(error)[:400], retry_after_seconds=120
         )
     value["updated"] = time.time()
+    record_backend_cooldown(root, value)
     atomic_json(path, value)
     ActivityLog(root, job["branch"], "income-research").write("steps", "goal-work-result", value)
     return value
