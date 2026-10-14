@@ -106,6 +106,7 @@ def propose(
     width: int = 64,
     layers: int = 1,
     learning_rate: float = 0.001,
+    device: str = "cpu",
 ) -> dict:
     mailbox = mailbox_path(root)
     if branch not in ("A", "B") or not isinstance(purpose, str) or not 1 <= len(purpose) <= 600:
@@ -130,6 +131,7 @@ def propose(
         width,
         layers,
         learning_rate,
+        device=device,
     )
 
 
