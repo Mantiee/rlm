@@ -65,6 +65,7 @@ def test_changed_spot_rules_suspend_crypto_polls_without_killing_observer(
         raise ValueError(
             "Spot execution rules changed; retain positions and inspect before updating"
         )
+
     monkeypatch.setattr(spot_bootstrap, "prepare", changed)
     session = paper_learning.PaperLearning(root, settings_path)
     monkeypatch.setattr(session, "note", lambda *args: None)
