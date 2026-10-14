@@ -520,7 +520,12 @@ def test_mission_status_distinguishes_research_from_real_income(tmp_path, monkey
     run.mkdir(parents=True)
     atomic_json(
         tmp_path / "research/mission/active.json",
-        {"pid": 1234, "process_start": "start", "run": str(run), "log": str(run / "controller.log")},
+        {
+            "pid": 1234,
+            "process_start": "start",
+            "run": str(run),
+            "log": str(run / "controller.log"),
+        },
     )
     atomic_json(run / "status.json", {"phase": "research-and-learning-loop"})
     (run / "learning").mkdir()
