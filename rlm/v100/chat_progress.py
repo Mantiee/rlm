@@ -32,6 +32,7 @@ def continue_requested(message: str) -> bool:
 
 def respond(root: Path, message: str | None = None) -> dict:
     from rlm.v100.chat_facts import language
+
     from rlm.v100.mission_evidence import collect
 
     evidence = collect(root)
