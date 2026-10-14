@@ -2,9 +2,7 @@ from pathlib import Path
 
 
 def test_income_research_requires_autonomous_test_and_independent_evidence():
-    source = (
-        Path(__file__).resolve().parents[1] / "rlm/v100/income_work.py"
-    ).read_text()
+    source = (Path(__file__).resolve().parents[1] / "rlm/v100/income_work.py").read_text()
     assert "No predetermined asset" in source
     assert "No predetermined asset, " in source
     assert "autonomy_contract" in source
