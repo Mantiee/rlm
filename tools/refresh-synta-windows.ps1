@@ -28,13 +28,10 @@ if ($launcherCurrent -and $guard -and $guard.proxy_code_sha256 -eq $expected -an
     @{stage='verified';revision=$Revision;updated=$now;resources=$guard} | ConvertTo-Json -Depth 7 | Set-Content -Encoding UTF8 $receipt
     return
 }
-if ($guard -and $age -ge 0 -and $age -lt 10 -and $guard.generating) {
-    @{stage='deferred-active-inference';revision=$Revision;updated=$now} | ConvertTo-Json | Set-Content -Encoding UTF8 $receipt
-    return
-}
-# New proxies can atomically drain. An old stale proxy needs explicit owned-service recovery.
+# Bounded atomic maintenance admission reaches an idle gap even under repeated work.
+. (Join-Path $Bundle 'tools\windows-maintenance.ps1')
 if ($guard -and $guard.proxy_code_sha256) {
-    try { Invoke-RestMethod "$origin/api/synta-maintenance" -Method Post -TimeoutSec 5 | Out-Null }
+    try { Wait-SyntaMaintenance -Endpoint "$origin/api/synta-maintenance" -WaitSeconds 60 | Out-Null }
     catch {
         @{stage='deferred-drain';error=$_.Exception.Message;revision=$Revision;updated=$now} | ConvertTo-Json | Set-Content -Encoding UTF8 $receipt
         return
