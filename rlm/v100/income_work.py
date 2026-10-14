@@ -474,7 +474,7 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                     "proposals. Use chronological evidence, costs and a baseline. "
                     "Record exact tool and outcome receipts; mark blocked tests "
                     "honestly. Never invent profits, accounts, trades or payouts."
-                )
+                ),
             },
             [
                 {
@@ -492,7 +492,8 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                     "commissioning_strategy_failures": comparisons,
                     "independent_promotion_checks": evidence_requirements,
                     "autonomy_contract": (
-                        "Choose hypotheses dynamically from observed evidence, "
+                        "No predetermined asset, strategy, ranking or signal. "
+                        "Choose hypotheses dynamically from observed evidence, 
                         "including nonmarket zero-deposit opportunities. Static "
                         "research examples are not rankings or trading signals. "
                         "Each candidate needs a testable failure condition, "
