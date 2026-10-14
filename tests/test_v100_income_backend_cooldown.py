@@ -36,6 +36,8 @@ def test_income_cooldown_expires_and_never_blocks_healthy_work(tmp_path):
         )
         assert not backend_on_cooldown(tmp_path, "http://192.168.0.61:11435")
     file.write_text(
-        json.dumps({"state": "model-selected work recorded", "error": error, "updated": time.time()})
+        json.dumps(
+            {"state": "model-selected work recorded", "error": error, "updated": time.time()}
+        )
     )
     assert not backend_on_cooldown(tmp_path, "http://192.168.0.61:11435")
