@@ -30,9 +30,7 @@ def test_income_cooldown_expires_and_never_blocks_healthy_work(tmp_path):
     error = "503 for url: http://192.168.0.61:11435/api/chat"
     for old in (time.time() - 950, time.time() + 100):
         file.write_text(
-            json.dumps(
-                {"state": "model-selected work blocked", "error": error, "updated": old}
-            )
+            json.dumps({"state": "model-selected work blocked", "error": error, "updated": old})
         )
         assert not backend_on_cooldown(tmp_path, "http://192.168.0.61:11435")
     file.write_text(
