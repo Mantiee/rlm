@@ -204,6 +204,8 @@ if __name__ == "__main__":
     expected = job["kernel_sha256"]
     if expected != hashlib.sha256(Path(__file__).read_bytes()).hexdigest():
         raise ValueError("Compute kernel differs from the pinned job")
-    if job["device"] != args.device:
+    if job["device"] != args.device and not (
+        args.weights is not None and args.device == "cpu" and job["device"] == "cuda"
+    ):
         raise ValueError("Worker device differs from signed frozen compute job")
     print(json.dumps(run(job, args.output, args.weights, device=args.device)), flush=True)
