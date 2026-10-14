@@ -28,6 +28,8 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
     }
     if previous.get("revision") == revision and previous.get("previous_attempt"):
         result["previous_attempt"] = previous["previous_attempt"]
+    if previous.get("revision") == revision and previous.get("transport_failures"):
+        result["transport_failures"] = previous["transport_failures"][-2:]
     opener = build_opener(ProxyHandler({}))
     headers = {"Tailscale-User-Login": config["owner_login"]}
 
@@ -59,6 +61,7 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
             }
         )
         identity = previous.get("request_id") if previous.get("revision") == revision else None
+        attempts = previous.get("transport_attempts", 1) if identity else 1
         if identity is not None and admission and previous.get("planner_admission") != admission:
             old = request("/api/chat/" + identity)
             if old.get("state") == "failed":
@@ -70,17 +73,22 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
                     "planner_admission": previous.get("planner_admission"),
                 }
                 identity = None
-        if identity is None:
-            row = request(
+                attempts = 1
+                result.pop("transport_failures", None)
+
+        def submit_probe() -> str:
+            return request(
                 "/api/chat",
                 {
                     "message": f"What is 19 times 23? Reply with only 437. Do not use tools or change anything. Read-only verification ID: {revision}"
                 },
-            )
-            identity = row["id"]
+            )["id"]
+
+        if identity is None:
+            identity = submit_probe()
         if not re.fullmatch(r"[a-f0-9]{32}", identity):
             raise ValueError("Gateway returned an invalid chat request ID")
-        result.update(stage="waiting", request_id=identity)
+        result.update(stage="waiting", request_id=identity, transport_attempts=attempts)
         atomic_json(receipt, result)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -103,6 +111,25 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
                 result.update(stage="verified", answer=answer, responder=responder)
                 break
             if row.get("state") in ("failed", "cancelled"):
+                if (
+                    row.get("state") == "failed"
+                    and str(row.get("error", "")).startswith(
+                        "503 Server Error: Service Unavailable"
+                    )
+                    and attempts < 3
+                    and time.monotonic() + 3 < deadline
+                ):
+                    result.setdefault("transport_failures", []).append(
+                        {"request_id": identity, "error": row["error"]}
+                    )
+                    time.sleep(2)
+                    identity = submit_probe()
+                    if not re.fullmatch(r"[a-f0-9]{32}", identity):
+                        raise ValueError("Gateway returned an invalid chat request ID")
+                    attempts += 1
+                    result.update(request_id=identity, transport_attempts=attempts)
+                    atomic_json(receipt, result)
+                    continue
                 raise RuntimeError("Chat probe ended: " + str(row.get("error") or row.get("state")))
             time.sleep(1)
         else:

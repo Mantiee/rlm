@@ -81,6 +81,7 @@ class Pressure:
         self.not_before = 0.0
         self.generating = False
         self.workload = {}
+        self.last_chat_rejection = None
         self.maintenance = False
         self.last_sample = None
         self.code_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
@@ -141,6 +142,8 @@ class Pressure:
 
     def fresh_state(self) -> dict:
         state = dict(self.state)
+        if self.last_chat_rejection is not None:
+            state["last_chat_rejection"] = self.last_chat_rejection
         age = (
             time.monotonic() - self.last_sample
             if self.last_sample is not None
@@ -351,6 +354,14 @@ class Proxy(BaseHTTPRequestHandler):
                 pressure.lock.release()
 
     def send_json(self, status: int, value: dict) -> None:
+        task = self.headers.get("X-Synta-Task", "")
+        if status == 503 and task in ("chat", "chat-delegate", "chat-master-cpu"):
+            self.server.pressure.last_chat_rejection = {
+                "reason": str(value.get("error", "Unavailable"))[:300],
+                "request_id": self.headers.get("X-Synta-Request", "")[:64],
+                "updated": time.time(),
+                "scope": "Owned chat admission refused; no prompt content exported",
+            }
         body = json.dumps(value).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
