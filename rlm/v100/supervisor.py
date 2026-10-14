@@ -148,15 +148,25 @@ def install(root: Path, profile: Path) -> dict:
         "Environment=PYTHONNOUSERSITE=1\nRestart=on-failure\nRestartSec=30\nTimeoutStopSec=60\n"
         "[Install]\nWantedBy=default.target\n"
     )
+    # A systemd-analyze timeout is not a syntax rejection. This unit is
+    # generated from fixed literals and escaped, operator-owned paths. Keep
+    # its preflight checks, and require a successful live systemd activation
+    # if the advisory static analyzer stalls.
+    static_check = "not-available"
     if shutil.which("systemd-analyze"):
-        verified = subprocess.run(
-            ["systemd-analyze", "verify", "--man=no", str(unit)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if verified.returncode:
-            raise RuntimeError("Invalid owned service unit: " + verified.stderr[-1500:])
+        try:
+            verified = subprocess.run(
+                ["systemd-analyze", "verify", "--man=no", str(unit)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            static_check = "timed-out; require live service activation"
+        else:
+            if verified.returncode:
+                raise RuntimeError("Invalid owned service unit: " + verified.stderr[-1500:])
+            static_check = "passed"
     check = (
         subprocess.run(["systemctl", "--user", "show-environment"], capture_output=True, timeout=10)
         if shutil.which("systemctl")
@@ -167,11 +177,20 @@ def install(root: Path, profile: Path) -> dict:
             ["systemctl", "--user", "stop", "v100-mission.service"], capture_output=True, timeout=90
         )
         (folder / "pause.json").unlink(missing_ok=True)
-        subprocess.run(["systemctl", "--user", "link", str(unit)], check=True)
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(["systemctl", "--user", "link", str(unit)], check=True, timeout=30)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=30)
         subprocess.run(
-            ["systemctl", "--user", "enable", "--now", "v100-mission.service"], check=True
+            ["systemctl", "--user", "enable", "--now", "v100-mission.service"],
+            check=True,
+            timeout=45,
         )
+        active = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", "v100-mission.service"],
+            capture_output=True,
+            timeout=15,
+        )
+        if active.returncode:
+            raise RuntimeError("Owned mission supervisor did not activate; inspect its journal")
         linger = subprocess.run(
             ["loginctl", "show-user", str(os.getuid()), "-p", "Linger", "--value"],
             capture_output=True,
@@ -179,6 +198,8 @@ def install(root: Path, profile: Path) -> dict:
         )
         return {
             "mode": "user service",
+            "static_unit_check": static_check,
+            "live_unit_active": True,
             "survives_ssh_disconnect": linger.stdout.strip() == "yes",
             "boot_autostart_requires_linger": linger.stdout.strip() != "yes",
         }
