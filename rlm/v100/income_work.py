@@ -38,6 +38,8 @@ def backend_on_cooldown(root: Path, base_url: str) -> bool:
     independently admitted serving backend may still carry out the next
     scheduled experiment; successful tool side effects are never replayed.
     """
+    if not base_url:
+        return False
     status = root / "research/income-work/status.json"
     if not status.is_file() or status.is_symlink() or status.stat().st_size > 2 * 2**20:
         return False
@@ -112,7 +114,7 @@ def owned_advisor(root: Path, branch: str, reason: str):
         try:
             profile = load_profile(path, root)
             if not remote_profile(profile) or backend_on_cooldown(
-                root, profile["runtime"]["base_url"]
+                root, profile.get("runtime", {}).get("base_url", "")
             ):
                 continue
             client = helper_client(profile, root, branch)
@@ -144,7 +146,7 @@ def accepted_master(root: Path, branch: str):
     if planner is not None and preferences(root).get("remote_helper_enabled", True):
         try:
             planner_profile = load_profile(planner, root)
-            if backend_on_cooldown(root, planner_profile["runtime"]["base_url"]):
+            if backend_on_cooldown(root, planner_profile.get("runtime", {}).get("base_url", "")):
                 raise ValueError("Planner endpoint on temporary HTTP 503 cooldown")
             client = helper_client(planner_profile, root, branch)
             client.timeout = min(client.timeout, 10)
