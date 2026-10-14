@@ -27,6 +27,7 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
                 cycles = state.get("cycles", [])
                 result["completed_learning_cycles"] = len(cycles)
                 result["last_learning_cycle"] = cycles[-1] if cycles else None
+                result["cpu_pilots"] = state.get("cpu_pilots", [])
                 result["accepted_weight_updates_this_run"] = sum(
                     c.get("status", "").startswith("selected for next serving") for c in cycles
                 )
@@ -49,6 +50,7 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
         ("owned_cpu_dispatch", "research/goal-compute/status.json"),
         ("node3060", "research/owned-node/status.json"),
         ("paper_fee_source", "research/paper/fee-source-status.json"),
+        ("paper_spot_rules", "research/paper/spot-rules-status.json"),
         ("research_quality", "research/research-quality/latest.json"),
         ("source_acquisition", "research/source-acquisition/status.json"),
     ):
