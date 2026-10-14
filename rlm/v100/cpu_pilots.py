@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from rlm.v100.common import atomic_json
-from rlm.v100.distributed_compute import propose
+from rlm.v100.distributed_compute import inspect, propose
 
 PILOTS = (("A", "gru"), ("B", "transformer"))
 RETRY_SECONDS = 300
@@ -19,6 +19,16 @@ def schedule_cpu_pilots(root: Path, output: Path) -> list[dict]:
     """
     output.mkdir(parents=True, exist_ok=True)
     results = []
+    try:
+        available = inspect(root)
+        gpu_workers = [
+            worker for worker in available["workers"]
+            if worker.get("phase") == "idle"
+            and not worker.get("stale", True)
+            and worker.get("device") == "cuda"
+        ]
+    except (OSError, ValueError, KeyError):
+        gpu_workers = []
     for branch, architecture in PILOTS:
         receipt = output / f"cpu-pilot-{branch}.json"
         previous = json.loads(receipt.read_text()) if receipt.is_file() else {}
@@ -39,6 +49,7 @@ def schedule_cpu_pilots(root: Path, output: Path) -> list[dict]:
             }
         else:
             try:
+                device = "cuda" if branch == "B" and gpu_workers else "cpu"
                 queued = propose(
                     root,
                     branch,
@@ -46,12 +57,13 @@ def schedule_cpu_pilots(root: Path, output: Path) -> list[dict]:
                     40,
                     "Independently validate source-disjoint arithmetic CPU model training",
                     "arithmetic",
+                    device=device,
                 )
                 result = {
                     **queued,
                     "branch": branch,
                     "architecture": architecture,
-                    "device": "cpu",
+                    "device": device,
                     "kind": "formal-competence-pilot",
                     "source_disjoint": "host-generated formal proof groups; not market outcomes",
                 }
