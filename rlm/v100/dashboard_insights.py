@@ -43,7 +43,9 @@ function liveMissionBoard(data){
  metric('Paper B P&L',money(b.net_pnl_before_personal_tax),'Simulation, not real income');
  metric('Paper fills',report.live_paper?.executed_fills??'Not verified','The live ledger alone does not certify execution count');
  const node=report.node||report.node3060||report.remote_node||{};
- if(node.admitted!==undefined)metric('RTX 3060 Ti',node.admitted?'Admitted':'Not admitted',node.reason||'No qualification receipt');
+ if(node.admitted!==undefined){metric('RTX 3060 Ti GPU',node.admitted?'Admitted':'Not admitted',node.reason||'No qualification receipt');metric('RTX 3060 Ti CPU',node.resources?.cpu_ready?'Available':'Not ready',`${node.resources?.cpu_active??'unknown'} jobs active, ${(node.resources?.cpu_slots??'unknown')} slots; GPU admission is independent`)}
+ const dispatch=report.owned_cpu_dispatch||{};
+ metric('Owned CPU experiment',dispatch.state||'Not recorded',dispatch.reason||'See the verified outcome/worker requirements');
  const note=document.createElement('p');note.className='muted';
  note.textContent='Real income: not independently verified. HOLD is a decision, not a fill. Paper results and historical tests are not withdrawable earnings.';box.append(note);
  const blocker=document.createElement('div');blocker.className='live-board-blocker';
