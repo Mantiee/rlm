@@ -7,7 +7,6 @@ from pathlib import Path
 from rlm.v100.common import atomic_json
 from rlm.v100.distributed_compute import propose
 
-
 PILOTS = (("A", "gru"), ("B", "transformer"))
 RETRY_SECONDS = 300
 
