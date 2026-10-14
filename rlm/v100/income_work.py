@@ -40,6 +40,8 @@ def backend_on_cooldown(root: Path, base_url: str) -> bool:
     """
     if not base_url:
         return False
+    if not isinstance(base_url, str) or not base_url:
+        return False
     status = root / "research/income-work/status.json"
     if not status.is_file() or status.is_symlink() or status.stat().st_size > 2 * 2**20:
         return False
