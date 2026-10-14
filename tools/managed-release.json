@@ -1,7 +1,7 @@
 {
   "schema": "synta-managed-release-v1",
-  "version": 103,
-  "linux_installer": "tools/update-synta-v103.sh",
+  "version": 104,
+  "linux_installer": "tools/update-synta-v104.sh",
   "windows_prepare": "tools/prepare-managed-windows.ps1",
   "files": {
     "tools/prepare-managed-windows.ps1": "714caf9e678b42ad0a723c125de594d31ae21819247ee96bba25e3055dc5dbfe",
@@ -71,7 +71,9 @@
     "rlm/v100/competition.py": "9ce6c8c38959848c596c9ce2e30e57f5739132f78c431375bcf8d4413ae800bc",
     "tools/update-synta-v103.sh": "d64e012cd49eb9332040f5543380240eea98d7ef61b3c6bfb159d9a0d96504df",
     "tools/synta_live_paper_v3.py": "69ed0e6595113013b2a7c2ab1aa8fe83a91f92844a841ab9da0dd88a8f5c24ed",
-    "tools/synta_accelerator_v1.py": "b47ce993360c5da4b920ef6ebaa68570cc649acaf4caae9a00b1d49b74deec8e"
+    "tools/synta_accelerator_v1.py": "b47ce993360c5da4b920ef6ebaa68570cc649acaf4caae9a00b1d49b74deec8e",
+    "tools/update-synta-v104.sh": "62c6ddf8cf5ff203df91cdcfa0fb36657e895fb929df4a0baeb0a152f979a0b7",
+    "rlm/v100/package_recovery.py": "afb6b95fc9f9afa7d3b86a2450c12c5abb503341aa11c807e42ab2c20f4dd91c"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
