@@ -50,8 +50,9 @@ function liveMissionBoard(data){
  note.textContent='Real income: not independently verified. HOLD is a decision, not a fill. Paper results and historical tests are not withdrawable earnings.';box.append(note);
  const blocker=document.createElement('div');blocker.className='live-board-blocker';
  const bt=document.createElement('strong');bt.textContent='Current blocker';
- const bd=document.createElement('p');bd.textContent=report.income_work?.error||learning.reason||report.paper_blockers?.join('; ')||learning.last_cycle?.detail||report.paper_fee_source?.error||'No blocker recorded in this snapshot (not a health guarantee)';
+ const bd=document.createElement('p');bd.textContent=report.income_work?.error||learning.reason||report.paper_blockers?.join('; ')||report.paper_fee_source?.error||'No current blocker recorded; this is not proof that research is profitable';;
  blocker.append(bt,bd);box.append(blocker);
+ if(learning.last_cycle?.detail){const past=document.createElement('p');past.className='muted';past.textContent='Previous cycle failure (historical, not the current blocker): '+learning.last_cycle.detail;box.append(past)}
  const events=document.createElement('div');events.className='live-board-events';
  const eh=document.createElement('h3');eh.textContent='Recent recorded actions';events.append(eh);
  const recent=Array.isArray(live.events)?live.events.slice(-8).reverse():[];

@@ -137,3 +137,11 @@ def test_live_board_reads_verified_paper_ledger_and_current_evaluation():
     assert "Candidate evaluation" in SCRIPT
     assert "Paper fills" in SCRIPT
     assert "RTX 3060 Ti" in SCRIPT
+
+
+def test_current_blocker_does_not_reuse_previous_cycle_failure():
+    from rlm.v100.dashboard_insights import SCRIPT
+
+    assert "Previous cycle failure (historical, not the current blocker)" in SCRIPT
+    blocker = SCRIPT.split("bd.textContent=", 1)[1].split(";", 1)[0]
+    assert "learning.last_cycle?.detail" not in blocker
