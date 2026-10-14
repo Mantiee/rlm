@@ -23,7 +23,8 @@ def schedule_cpu_pilots(root: Path, output: Path) -> list[dict]:
         available = inspect(root)
         jobs_by_id = {job["id"]: job for job in available["jobs"]}
         gpu_workers = [
-            worker for worker in available["workers"]
+            worker
+            for worker in available["workers"]
             if worker.get("phase") == "idle"
             and not worker.get("stale", True)
             and worker.get("device") == "cuda"
