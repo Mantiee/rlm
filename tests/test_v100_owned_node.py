@@ -354,8 +354,12 @@ def test_cuda_jobs_require_dedicated_resource_budget_not_model_qualification(
         "cpu_ready": True,
         "free_vram_gib": 2.75,
         "temperature_c": 40,
-        "kernel_sha256": hashlib.sha256((source / "compute_kernel.py").read_bytes()).hexdigest(),
-        "worker_sha256": hashlib.sha256((source / "compute_worker.py").read_bytes()).hexdigest(),
+        "kernel_sha256": hashlib.sha256(
+            (source / "compute_kernel.py").read_bytes()
+        ).hexdigest(),
+        "worker_sha256": hashlib.sha256(
+            (source / "compute_worker.py").read_bytes()
+        ).hexdigest(),
     }
     value = job("c" * 24)
     value.update(
