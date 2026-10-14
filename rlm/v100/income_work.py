@@ -449,6 +449,11 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                 }
                 for row in comparison.get("comparisons", [])[-4:]
             ]
+    # Public experiment outlines are examples of test design, never commands,
+    # recommended assets, selection weights, or assumed profitable strategies.
+    from rlm.v100.research_curriculum import promotion_gate
+
+    evidence_requirements = promotion_gate({})["missing_evidence"]
     try:
         client = accepted_master(root, job["branch"])
         client.request_deadline = time.monotonic() + 180
@@ -463,7 +468,13 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
             job["branch"],
             {
                 "role": "researcher",
-                "brief": "Inspect income_opportunities and previous receipts. Choose and EXECUTE one useful legal experiment toward the income goal, not another eligibility summary. Revise losing tests. Produce an artifact, forecast or completed test with exact receipts. Spendable capital is zero; use existing PAPER balances after costs. Do not invent income, accounts or payouts.",
+                "brief": (
+                    "Independently choose and EXECUTE one measurable, legal income "
+                    "experiment. Prefer completing an unfinished test over more "
+                    "proposals. Use chronological evidence, costs and a baseline. "
+                    "Record exact tool and outcome receipts; mark blocked tests "
+                    "honestly. Never invent profits, accounts, trades or payouts."
+                ),
             },
             [
                 {
@@ -479,6 +490,19 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                     "previous_experiment_evidence": previous_evidence,
                     "archive_contract": "Archived proposals are hypotheses, not completed tests or income. Prefer legal automatable deliverables. Human research/usability participation requires the actual human: record the specific operator step once, then choose other useful work instead of repeating age/residency/account summaries or impersonating a participant.",
                     "commissioning_strategy_failures": comparisons,
+                    "independent_promotion_checks": evidence_requirements,
+                    "autonomy_contract": (
+                        "No predetermined asset, strategy, ranking or signal. "
+                        "Choose hypotheses dynamically from observed evidence, "
+                        "including nonmarket zero-deposit opportunities. Static "
+                        "research examples are not rankings or trading signals. "
+                        "Each candidate needs a testable failure condition, "
+                        "source-availability timestamps, forward-only evaluation, "
+                        "fees and strongest simple baseline. A losing or "
+                        "inconclusive trial cannot be labelled successful. "
+                        "Without verified new evidence stop proposing variations "
+                        "and report the precise missing dependency."
+                    ),
                     "experiment_contract": "Do not repeat eligibility summaries, proposal titles or rejected commissioning rules without new evidence. Choose a measurable deliverable or test and execute it. Read previous receipts; name the changed hypothesis and validation method. A cheaper-fee scenario needs venue evidence, not an invented reduction. Never invert signals just to manufacture historical gains.",
                     "execution_scope": "Public research, local deliverables and hypothetical funded tests are authorized. Respect source terms and resource limits. Exact external submissions use existing operator review; credentials, eligibility or acceptance of new service terms need the operator. No paid compute, real money or impersonation.",
                 }
