@@ -50,7 +50,7 @@
     "rlm/v100/managed_prepare.py": "68603387f6b2b8acf34cc1abc9126b31d241b710e5cc71c220e3d865eb560be5",
     "rlm/v100/model_roles.py": "aea05da751fa2eefcb2cc7c5728987dcb0f63126ad43fe75042c1db5495cad70",
     "tools/update-synta-v97.sh": "c6b8837bec771b6476fcb1545b31780f998283505e432e975cccdc14216c8389",
-    "rlm/v100/mission_chat.py": "3bcb75ede24514d3a261075ff1cd51b6c3710dd1c65780da403b6a31a0e49ac7",
+    "rlm/v100/mission_chat.py": "559a7420318bb35cbd4d671ce2a3d729457cdf13cbdba73e9bfa7346e87177ce",
     "rlm/v100/chat_progress.py": "cd537980d826d1e39ad01e2c47cf17877a8483b86af6eb20347bf8d424ec4f68",
     "rlm/v100/research_tools.py": "fcedb9179a9e51414f70afc6231ab57ae90d12a7cdbaac8abf846a91732d64bb",
     "rlm/v100/decision_memory.py": "03af73225f358b6c7b0bd60318ea372dc2cd51c7537f1bab5de4dbc51cabb72b",
@@ -60,7 +60,9 @@
     "tools/update-synta-v100.sh": "79fe723f02ba6c50a5ec9d223a105bac26d9f3d100bbb8d847138d1eaa9316b8",
     "rlm/v100/remote_nodes.py": "57cbd9e98787f6df996e01d7dd2c6a53bfecb7d9eb96fdc84b98a3151f457065",
     "rlm/v100/chat_probe.py": "af0397aa35156b7aad7084be58633c4484aab66d47c055e3481bb2c96eb6ce6b",
-    "tools/update-synta-v102.sh": "5c0168ad730bf83b1664565036844a8edd78d82fcd4f6b5db3c47aeca60fe217"
+    "tools/update-synta-v102.sh": "5c0168ad730bf83b1664565036844a8edd78d82fcd4f6b5db3c47aeca60fe217",
+    "rlm/v100/chat_readonly.py": "625f623fae213ddf75ac65e997ed734d30543010f7a4062bcb56107f30ff2677",
+    "rlm/v100/remote_access.py": "df75203eaaa9361a8344000f8371abb9934d7734f85961667d30cd6f4541b2b9"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

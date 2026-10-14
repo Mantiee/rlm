@@ -70,10 +70,10 @@ def submit(root: Path, message: str) -> str:
             row = db.execute("SELECT state FROM requests WHERE id=?", (identity,)).fetchone()
             if row is None:
                 raise ValueError("Unknown chat request to cancel")
-            if row["state"] not in ("queued", "cancelled"):
+            if row["state"] not in ("queued", "readonly-pending", "readonly-running", "cancelled"):
                 raise ValueError("Only pending chat requests can be cancelled")
             db.execute(
-                "UPDATE requests SET state='cancelled',error='Cancelled by operator',updated=? WHERE id=? AND state='queued'",
+                "UPDATE requests SET state='cancelled',error='Cancelled by operator',updated=? WHERE id=? AND state IN ('queued','readonly-pending','readonly-running')",
                 (time.time(), identity),
             )
         ActivityLog(root, "controller", "chat").write(
@@ -89,12 +89,17 @@ def submit(root: Path, message: str) -> str:
     with connect(root) as db:
         db.execute("BEGIN IMMEDIATE")
         pending = db.execute(
-            "SELECT id FROM requests WHERE state='queued' AND message=? ORDER BY rowid LIMIT 1",
+            "SELECT id FROM requests WHERE state IN ('queued','readonly-pending','readonly-running') AND message=? ORDER BY rowid LIMIT 1",
             (message,),
         ).fetchone()
         if pending:
             return pending["id"]
-        if db.execute("SELECT count(*) FROM requests WHERE state='queued'").fetchone()[0] >= 32:
+        if (
+            db.execute(
+                "SELECT count(*) FROM requests WHERE state IN ('queued','readonly-pending','readonly-running')"
+            ).fetchone()[0]
+            >= 32
+        ):
             raise ValueError("Chat queue has 32 pending requests; let them complete first")
         db.execute(
             "INSERT INTO requests(id,created,message,state) VALUES(?,?,?,'queued')",
@@ -109,7 +114,13 @@ def recent_requests(root: Path, limit: int = 20) -> list[dict]:
     with connect(root) as db:
         rows = db.execute("SELECT * FROM requests ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
     return [
-        {**dict(row), "response": json.loads(row["response"]) if row["response"] else None}
+        {
+            **dict(row),
+            "state": "queued"
+            if row["state"] in ("readonly-pending", "readonly-running")
+            else row["state"],
+            "response": json.loads(row["response"]) if row["response"] else None,
+        }
         for row in reversed(rows)
     ]
 
@@ -268,6 +279,15 @@ def inspect(root: Path, identity: str) -> dict:
     if row is None:
         raise ValueError("Unknown chat request")
     result = dict(row)
+    if result["state"] in ("readonly-pending", "readonly-running"):
+        result["route"] = "gateway-readonly"
+        if result["state"] == "readonly-running":
+            result["processing"] = {
+                "id": identity,
+                "started": result["updated"],
+                "time_budget_seconds": 90,
+            }
+        result["state"] = "queued"
     result["queue_position"] = position
     if result["response"]:
         result["response"] = json.loads(result["response"])
@@ -488,9 +508,17 @@ def repair_answer(client, message: str, facts: dict) -> str:
 
 
 def conversational_response(
-    root: Path, client, message: str, mission: dict, plans: dict, responder: dict
+    root: Path,
+    client,
+    message: str,
+    mission: dict,
+    plans: dict,
+    responder: dict,
+    generation_timeout: int = 20,
 ) -> dict:
     """One actual model request with bounded factual context and no tool routing."""
+    if type(generation_timeout) is not int or not 1 <= generation_timeout <= 60:
+        raise ValueError("Read-only generation budget must be 1-60 seconds")
     goal = (plans.get("long") or {}).get("text", "No recorded goal")
     facts = {
         "mission_running": mission.get("running"),
@@ -498,9 +526,10 @@ def conversational_response(
         "learning": mission.get("learning"),
         "goal": goal[:3000],
     }
-    client.timeout = min(client.timeout, 20)
+    client.timeout = min(client.timeout, generation_timeout)
     client.request_deadline = min(
-        getattr(client, "request_deadline", time.monotonic() + 40), time.monotonic() + 40
+        getattr(client, "request_deadline", time.monotonic() + generation_timeout + 20),
+        time.monotonic() + generation_timeout + 20,
     )
     reply = client.request(
         "/v1/chat/completions",

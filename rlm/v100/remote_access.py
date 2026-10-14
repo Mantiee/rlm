@@ -189,7 +189,20 @@ class GatewayServer(ThreadingHTTPServer):
         self.config = validate_config(config)
         self.csrf = secrets.token_urlsafe(32)
         self.slots = threading.BoundedSemaphore(8)
+        from rlm.v100.chat_readonly import work
+
+        self.readonly_stop = threading.Event()
+        self.readonly_thread = threading.Thread(
+            target=work, args=(self.root, self.readonly_stop), daemon=True
+        )
         super().__init__(("127.0.0.1", port), GatewayHandler)
+        self.readonly_thread.start()
+
+    def server_close(self) -> None:
+        self.readonly_stop.set()
+        if self.readonly_thread.is_alive():
+            self.readonly_thread.join(timeout=1)
+        super().server_close()
 
     def process_request(self, request, client_address):
         request.settimeout(8)
@@ -320,7 +333,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if direct is not None:
                 self.json_reply(save_direct_reply(self.server.root, message, direct))
                 return
-            identity = submit(self.server.root, value["message"])
+            from rlm.v100.chat_readonly import submit as submit_readonly
+
+            identity = submit_readonly(self.server.root, message)
+            if identity is None:
+                identity = submit(self.server.root, message)
             self.json_reply(inspect(self.server.root, identity), 202)
         except (ValueError, UnicodeError) as error:
             self.json_reply({"error": str(error)[:200]}, 400)
