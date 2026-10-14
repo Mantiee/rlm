@@ -11,7 +11,7 @@
     "rlm/v100/managed_bootstrap.py": "9cf55e6c345589948eda83e8d24d549e5205dc0740f43316347625a153416dd8",
     "rlm/v100/inference_benchmark.py": "b65cd1dcdc1ba46cfad00fa768726d7a8b5f80cbccc7fccab13717894cf09c25",
     "rlm/v100/wikimedia_exports.py": "f3788e5ab9e2e6d9551b005d1a356052c26d565dc0c9a290d5f9762e521f2ab5",
-    "rlm/v100/knowledge_rag.py": "ad6db63abe0c4cd12fe23f4f62372324699f43fc5539fb23e1fa7048f9170782",
+    "rlm/v100/knowledge_rag.py": "37aac4e3d17edcaed3e8b278a55e584e8a49f8e788a8700458cb42c7771dcb59",
     "rlm/v100/source_sync.py": "e315e1bd6e62ff0ce6a0c235ed857d89ab4ea12bb979322e53ec1e23f2c5ee38",
     "tools/bootstrap-synta-3060.sh": "baf85bb9a66728b93e39873125990f0384a90bdea01c5329ca05af146b0ad77c",
     "tools/attach-synta-3060.sh": "b16079c4a9f66fee567740e41012877d0e90e9708bfa9b475da2fc5db5e51fbf",

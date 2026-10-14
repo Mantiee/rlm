@@ -263,6 +263,18 @@ def read_search(root: Path, words: list[str], limit: int, deadline: float) -> li
     ) as database:
         database.set_progress_handler(lambda: int(time.monotonic() >= deadline), 500)
         terms = ['"' + word + '"' for word in words[:6]]
+        if len(terms) > 1:
+            # Long goal briefs mix unrelated topics. A matching article title
+            # can be found before scoring common words across the whole corpus.
+            phrases = [
+                '"' + " ".join(words[index : index + 2]) + '"' for index in range(len(terms) - 1)
+            ]
+            rows = database.execute(
+                "SELECT id,title,text,source,revision FROM passages WHERE passages MATCH ? ORDER BY rank LIMIT ?",
+                ("title : (" + " OR ".join(phrases) + ")", limit),
+            ).fetchall()
+            if rows:
+                return rows
         rows = database.execute(
             "SELECT id,title,text,source,revision FROM passages WHERE passages MATCH ? ORDER BY rank LIMIT ?",
             (" AND ".join(terms), limit),

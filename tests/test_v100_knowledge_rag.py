@@ -230,3 +230,30 @@ def test_structured_task_queries_ignore_json_keys_and_rank_topic_titles(tmp_path
     receipt = json.loads((tmp_path / "research/knowledge/goal-use.json").read_text())
     assert "user_goal" not in receipt["query"] and "branch" not in receipt["query"]
     assert receipt["state"] == "retrieved"
+
+
+def test_long_goal_prefers_matching_article_title_over_unrelated_body_words(tmp_path):
+    from contextlib import closing
+
+    from rlm.v100.knowledge_rag import connect
+
+    with closing(connect(tmp_path)) as database:
+        database.executemany(
+            "INSERT INTO passages VALUES (?,?,?,?,?)",
+            [
+                (
+                    "other",
+                    "Unrelated biography",
+                    "net income deposits paid apis sports",
+                    "fixture:other",
+                    "1",
+                ),
+                ("income", "Net income", "Revenue minus expenses.", "fixture:income", "1"),
+            ],
+        )
+        database.commit()
+    result = search(tmp_path, "net income deposits paid apis sports", 2)
+    assert result["state"] == "retrieved"
+    assert [row["id"] for row in result["passages"]] == ["income"]
+    # A body-only query still retrieves content if no article title matches.
+    assert search(tmp_path, "revenue expenses")["passages"][0]["id"] == "income"
