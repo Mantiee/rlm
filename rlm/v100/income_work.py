@@ -493,7 +493,7 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                     "independent_promotion_checks": evidence_requirements,
                     "autonomy_contract": (
                         "No predetermined asset, strategy, ranking or signal. "
-                        "Choose hypotheses dynamically from observed evidence, 
+                        "Choose hypotheses dynamically from observed evidence, "
                         "including nonmarket zero-deposit opportunities. Static "
                         "research examples are not rankings or trading signals. "
                         "Each candidate needs a testable failure condition, "
