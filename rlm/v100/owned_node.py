@@ -57,6 +57,7 @@ class Node:
         self.gpu_lock = threading.Lock()
         self.cpu_lock = threading.Lock()
         self.generating = False
+        self.gpu_compute_claimed = False
         self.maintenance = False
         self.drain_until = 0.0
         self.processes = {}
@@ -230,6 +231,7 @@ class Node:
             or job.get("worker_sha256") != self.state.get("worker_sha256")
         ):
             raise ValueError("Pinned CPU input or local kernel identity differs")
+        cuda_job = job["device"] == "cuda"
         folder = self.root / "cpu" / key
         with self.cpu_lock:
             if folder.exists():
@@ -243,6 +245,17 @@ class Node:
                 or not self.state.get("cpu_ready")
             ):
                 raise BlockingIOError("Owned CPU capacity busy or telemetry unavailable")
+            if cuda_job and (
+                not self.state.get("ready")
+                or self.state.get("free_vram_gib", 0) < 2.25
+                or self.state.get("temperature_c", 100) >= 75
+                or self.generating
+                or self.gpu_lock.locked()
+                or self.gpu_compute_claimed
+            ):
+                raise BlockingIOError("Dedicated CUDA reserve busy or unsafe")
+            if cuda_job:
+                self.gpu_compute_claimed = True
             folder.mkdir(parents=True)
             (folder / "job.json").write_bytes(raw)
             status = {"state": "queued", "updated": time.time(), "job_sha256": value["sha256"]}
@@ -255,10 +268,17 @@ class Node:
         import psutil
 
         status = json.loads((folder / "status.json").read_text())
+        job = json.loads((folder / "job.json").read_text())
+        cuda_job = job.get("device") == "cuda"
+        gpu_acquired = False
         try:
+            if cuda_job:
+                gpu_acquired = self.gpu_lock.acquire(blocking=False)
+                if not gpu_acquired:
+                    raise BlockingIOError("Dedicated GPU is occupied by model inference")
             environment = {
                 **os.environ,
-                "CUDA_VISIBLE_DEVICES": "",
+                "CUDA_VISIBLE_DEVICES": "0" if cuda_job else "",
                 "OMP_NUM_THREADS": "2",
                 "MKL_NUM_THREADS": "2",
                 "OPENBLAS_NUM_THREADS": "2",
@@ -272,6 +292,8 @@ class Node:
                         str(self.source / "compute_kernel.py"),
                         str(folder / "job.json"),
                         str(folder / "output"),
+                        "--device",
+                        "cuda" if cuda_job else "cpu",
                     ],
                     cwd=folder,
                     env=environment,
@@ -286,7 +308,8 @@ class Node:
                         if (folder / "cancel").exists():
                             raise RuntimeError("Cancelled by owning controller")
                         if (
-                            time.monotonic() - started > 150
+                            (cuda_job and not self.state.get("ready"))
+                            or time.monotonic() - started > 150
                             or psutil.Process(process.pid).memory_info().rss > CPU_RAM
                             or psutil.virtual_memory().available < 2**30
                         ):
@@ -311,7 +334,7 @@ class Node:
             status.update(
                 state="complete",
                 files=files,
-                worker="debian-3060ti-cpu",
+                worker="debian-3060ti-gpu" if cuda_job else "debian-3060ti-cpu",
                 worker_implementation_sha256=hashlib.sha256(
                     Path(__file__).read_bytes()
                 ).hexdigest(),
@@ -319,9 +342,13 @@ class Node:
         except (OSError, ValueError, RuntimeError, psutil.Error) as error:
             status.update(state="failed", detail=str(error)[:400])
         finally:
+            if gpu_acquired:
+                self.gpu_lock.release()
             atomic(folder / "status.json", {**status, "updated": time.time()})
             with self.cpu_lock:
                 self.processes.pop(key, None)
+                if cuda_job:
+                    self.gpu_compute_claimed = False
 
     def cpu_result(self, key: str) -> dict:
         folder = self.root / "cpu" / identity(key)
