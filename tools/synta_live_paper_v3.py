@@ -57,7 +57,7 @@ class Lab:
     def account(self,b):return self.db.execute("SELECT cash,qty,entry,peak FROM accounts WHERE branch=?",(b,)).fetchone()
     def equity(self,b,bid):
         cash,qty,_,_=self.account(b)
-        return cash+qty*bid*.989
+        return cash+qty*bid*(1-(self.fee+30)/10000 if self.fee_ok else .989)
     def evidence(self):
         try:
             p=json.loads((self.root/'research/paper/fee-source-status.json').read_text())
@@ -87,10 +87,10 @@ class Lab:
             self.news=items;self.news_error=None
         except Exception as e:self.news_error=str(e)[:150]
     def history_refresh(self):
-        if time.time()-self.hist_checked<60:return
+        if time.time()-self.hist_checked<300:return
         self.hist_checked=time.time()
         try:
-            d=jget('https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1')
+            d=jget('https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60')
             if d.get('error'):raise ValueError(str(d['error']))
             k=next(k for k in d['result'] if k!='last')
             # Exclude unfinished candle; OHLC close is USD. FX reference is a constant approximation.
@@ -98,7 +98,7 @@ class Lab:
             self.history_error=None
         except Exception as e:self.history_error=str(e)[:150]
     def fill(self,b,side,price,reason):
-        cash,qty,entry,peak=self.account(b);fee=.011
+        cash,qty,entry,peak=self.account(b);fee=(self.fee+30)/10000 if self.fee_ok else .011
         if side=='BUY' and qty==0 and self.fee_ok:
             budget=min(500.,cash*.05)
             if budget<25:return
@@ -162,16 +162,16 @@ class Lab:
                         self.promoted_path.write_text(json.dumps(self.promoted,ensure_ascii=False))
                 if self.promoted and len(self.hist)>65:
                     cfg=self.promoted['params'];w=cfg['window']
-                    # One strategy decision per new CLOSED minute candle, not every
+                    # One strategy decision per new CLOSED hourly candle, not every
                     # 2s ticker. Execution uses the live ask/bid and verified fee.
                     candle=self.hist[-1]
                     if self.last_strategy_candle!=candle and len(self.hist)>w+1:
                         self.last_strategy_candle=candle
                         mom=self.hist[-1]/self.hist[-1-w]-1
                         if qty==0 and mom>cfg['entry'] and self.fee_ok:
-                            action='BUY';reason='Validated historical strategy; minute close'
+                            action='BUY';reason='Validated historical strategy; hourly close'
                             self.fill(b,action,ask,reason);self.strategy_opened=time.time()
-                        elif qty>0 and (mom<cfg['exit'] or bid<entry*(1-cfg['stop']) or (self.strategy_opened and time.time()-self.strategy_opened>=60*cfg['holding'])):
+                        elif qty>0 and (mom<cfg['exit'] or bid<entry*(1-cfg['stop']) or (self.strategy_opened and time.time()-self.strategy_opened>=3600*cfg['holding'])):
                             action='SELL';reason='Validated strategy exit';self.fill(b,action,bid,reason)
                 else:reason='Brak strategii po niezależnej walidacji — HOLD'
             self.db.execute("INSERT INTO decisions(ts,branch,action,reason) VALUES(?,?,?,?)",(time.time(),b,action,reason))
