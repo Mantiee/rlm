@@ -4,7 +4,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from rlm.v100 import chat_probe, mission_chat
+from rlm.v100 import chat_commands, chat_probe, mission_chat
 from rlm.v100.common import atomic_json
 from tests.test_v100_remote_access import CONFIG, gateway
 
@@ -41,7 +41,7 @@ def test_probe_uses_authenticated_gateway_and_requires_generated_action_free_rep
             )
         return identity
 
-    monkeypatch.setattr(mission_chat, "submit", respond)
+    monkeypatch.setattr(chat_commands, "submit", respond)
     monkeypatch.setattr(mission_chat, "direct_facts", lambda *a: None)
     with gateway(tmp_path) as (server, _):
         result = chat_probe.run(tmp_path, "a" * 40, 1, server.server_port)
@@ -89,7 +89,7 @@ def test_failed_fixed_probe_retries_once_after_new_verified_planner_admission(
             )
         return identity
 
-    monkeypatch.setattr(mission_chat, "submit", respond)
+    monkeypatch.setattr(chat_commands, "submit", respond)
     monkeypatch.setattr(mission_chat, "direct_facts", lambda *a: None)
     with gateway(tmp_path) as (server, _):
         args = (tmp_path, "b" * 40, 1, server.server_port)
@@ -140,7 +140,7 @@ def test_fixed_canary_retries_503_with_finite_attempts_and_retains_failures(
             )
         return identity
 
-    monkeypatch.setattr(mission_chat, "submit", respond)
+    monkeypatch.setattr(chat_commands, "submit", respond)
     monkeypatch.setattr(mission_chat, "direct_facts", lambda *a: None)
     with gateway(tmp_path) as (server, _):
         args = (tmp_path, "c" * 40, 10, server.server_port)
@@ -184,7 +184,7 @@ def test_probe_waits_for_listener_after_restart_without_reposting_a_question(tmp
         return identity
 
     monkeypatch.setattr(chat_probe, "build_opener", opener)
-    monkeypatch.setattr(mission_chat, "submit", respond)
+    monkeypatch.setattr(chat_commands, "submit", respond)
     monkeypatch.setattr(mission_chat, "direct_facts", lambda *a: None)
     with gateway(tmp_path) as (server, _):
         result = chat_probe.run(tmp_path, "e" * 40, 5, server.server_port)

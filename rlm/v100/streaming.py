@@ -60,8 +60,10 @@ def ollama_reply(lines, emit) -> dict:
         if not raw:
             continue
         packet = json.loads(raw)
-        if not isinstance(packet, dict) or packet.get("error"):
-            raise ValueError("Invalid remote inference stream")
+        if not isinstance(packet, dict):
+            raise ValueError("Invalid remote inference stream: expected a JSON object")
+        if packet.get("error"):
+            raise ValueError("Remote inference failed: " + str(packet["error"])[:500])
         message = packet.get("message", {})
         for key in ("content", "thinking"):
             text = message.get(key) or ""

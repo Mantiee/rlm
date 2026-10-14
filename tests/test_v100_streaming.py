@@ -179,3 +179,8 @@ def test_local_http_transport_requests_stream_and_assembles_real_frames(tmp_path
     assert seen[0]["json"]["stream_options"]["include_usage"] is True
     assert result["choices"][0]["message"]["content"] == "4"
     assert any(e["kind"] == "inference-delta" for e in live_status.recent_events(tmp_path))
+
+
+def test_remote_stream_preserves_upstream_error_instead_of_generic_failure():
+    with pytest.raises(ValueError, match="model runner has unexpectedly stopped"):
+        ollama_reply([b'{"error":"model runner has unexpectedly stopped"}'], lambda *a: None)

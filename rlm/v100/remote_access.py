@@ -189,6 +189,7 @@ class GatewayServer(ThreadingHTTPServer):
         self.config = validate_config(config)
         self.csrf = secrets.token_urlsafe(32)
         self.slots = threading.BoundedSemaphore(8)
+        from rlm.v100.chat_commands import work as command_work
         from rlm.v100.chat_readonly import work
 
         self.readonly_stop = threading.Event()
@@ -197,11 +198,17 @@ class GatewayServer(ThreadingHTTPServer):
         )
         super().__init__(("127.0.0.1", port), GatewayHandler)
         self.readonly_thread.start()
+        self.command_thread = threading.Thread(
+            target=command_work, args=(self.root, self.readonly_stop), daemon=True
+        )
+        self.command_thread.start()
 
     def server_close(self) -> None:
         self.readonly_stop.set()
         if self.readonly_thread.is_alive():
             self.readonly_thread.join(timeout=1)
+        if self.command_thread.is_alive():
+            self.command_thread.join(timeout=1)
         super().server_close()
 
     def process_request(self, request, client_address):
@@ -317,7 +324,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         ):
             self.json_reply({"error": "Same-origin authenticated chat request required"}, 403)
             return
-        from rlm.v100.mission_chat import direct_facts, inspect, save_direct_reply, submit
+        from rlm.v100.mission_chat import direct_facts, inspect, save_direct_reply
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -333,6 +340,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if direct is not None:
                 self.json_reply(save_direct_reply(self.server.root, message, direct))
                 return
+            from rlm.v100.chat_commands import submit
             from rlm.v100.chat_readonly import submit as submit_readonly
 
             identity = submit_readonly(self.server.root, message)

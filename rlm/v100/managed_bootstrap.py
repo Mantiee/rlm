@@ -129,7 +129,7 @@ def dashboard_update(root: Path, folder: Path, revision: str) -> dict:
 
 
 def remote_chat_update(root: Path, dashboard: dict, revision: str) -> dict:
-    """Refresh the authenticated read-only gateway without restarting the learner."""
+    """Refresh the authenticated question/command gateway without restarting the learner."""
     if dashboard.get("stage") != "ready" or dashboard.get("revision") != revision:
         return {"stage": "blocked", "reason": "Verified separate runtime unavailable"}
     target = Path(dashboard["code_path"])
@@ -171,7 +171,7 @@ def remote_chat_update(root: Path, dashboard: dict, revision: str) -> dict:
         result = {
             "stage": "configured",
             "revision": revision,
-            "scope": "Authenticated gateway code refreshed; actual browser response requires a receipt. Accepted trainer and queued action worker unchanged",
+            "scope": "Authenticated question and command workers refreshed separately; prior trainer-owned commands retained. Execution requires individual receipts",
         }
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         if old is None:
@@ -230,7 +230,7 @@ def queue_chat_probe(root: Path, dashboard: dict, revision: str) -> dict:
         unit = Path.home() / ".config/systemd/user/synta-chat-probe.service"
         unit.parent.mkdir(parents=True, exist_ok=True)
         unit.write_text(
-            f"[Unit]\nDescription=Synta fixed read-only chat verification\n[Service]\nType=oneshot\nExecStart={root}/venvs/v100-continual/bin/python -u {target} --root {root} --revision {revision}\nNice=10\nTimeoutStartSec=4min\n"
+            f"[Unit]\nDescription=Synta fixed question and read-only tool verification\n[Service]\nType=oneshot\nExecStart={root}/venvs/v100-continual/bin/python -u {target} --root {root} --revision {revision}\nNice=10\nTimeoutStartSec=7min\n"
         )
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=15)
         subprocess.run(

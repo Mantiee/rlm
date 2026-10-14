@@ -70,10 +70,16 @@ def submit(root: Path, message: str) -> str:
             row = db.execute("SELECT state FROM requests WHERE id=?", (identity,)).fetchone()
             if row is None:
                 raise ValueError("Unknown chat request to cancel")
-            if row["state"] not in ("queued", "readonly-pending", "readonly-running", "cancelled"):
+            if row["state"] not in (
+                "queued",
+                "readonly-pending",
+                "readonly-running",
+                "gateway-pending",
+                "cancelled",
+            ):
                 raise ValueError("Only pending chat requests can be cancelled")
             db.execute(
-                "UPDATE requests SET state='cancelled',error='Cancelled by operator',updated=? WHERE id=? AND state IN ('queued','readonly-pending','readonly-running')",
+                "UPDATE requests SET state='cancelled',error='Cancelled by operator',updated=? WHERE id=? AND state IN ('queued','readonly-pending','readonly-running','gateway-pending')",
                 (time.time(), identity),
             )
         ActivityLog(root, "controller", "chat").write(
@@ -89,14 +95,14 @@ def submit(root: Path, message: str) -> str:
     with connect(root) as db:
         db.execute("BEGIN IMMEDIATE")
         pending = db.execute(
-            "SELECT id FROM requests WHERE state IN ('queued','readonly-pending','readonly-running') AND message=? ORDER BY rowid LIMIT 1",
+            "SELECT id FROM requests WHERE state IN ('queued','readonly-pending','readonly-running','gateway-pending','gateway-running') AND message=? ORDER BY rowid LIMIT 1",
             (message,),
         ).fetchone()
         if pending:
             return pending["id"]
         if (
             db.execute(
-                "SELECT count(*) FROM requests WHERE state IN ('queued','readonly-pending','readonly-running')"
+                "SELECT count(*) FROM requests WHERE state IN ('queued','readonly-pending','readonly-running','gateway-pending','gateway-running')"
             ).fetchone()[0]
             >= 32
         ):
@@ -117,7 +123,8 @@ def recent_requests(root: Path, limit: int = 20) -> list[dict]:
         {
             **dict(row),
             "state": "queued"
-            if row["state"] in ("readonly-pending", "readonly-running")
+            if row["state"]
+            in ("readonly-pending", "readonly-running", "gateway-pending", "gateway-running")
             else row["state"],
             "response": json.loads(row["response"]) if row["response"] else None,
         }
@@ -279,13 +286,20 @@ def inspect(root: Path, identity: str) -> dict:
     if row is None:
         raise ValueError("Unknown chat request")
     result = dict(row)
-    if result["state"] in ("readonly-pending", "readonly-running"):
-        result["route"] = "gateway-readonly"
-        if result["state"] == "readonly-running":
+    if result["state"] in (
+        "readonly-pending",
+        "readonly-running",
+        "gateway-pending",
+        "gateway-running",
+    ):
+        result["route"] = (
+            "gateway-commands" if result["state"].startswith("gateway-") else "gateway-readonly"
+        )
+        if result["state"] in ("readonly-running", "gateway-running"):
             result["processing"] = {
                 "id": identity,
                 "started": result["updated"],
-                "time_budget_seconds": 90,
+                "time_budget_seconds": 180 if result["state"] == "gateway-running" else 90,
             }
         result["state"] = "queued"
     result["queue_position"] = position
@@ -453,7 +467,7 @@ def conversation_question(message: str) -> bool:
     value = normalized(message).strip()
     return bool(
         re.match(
-            r"(?:(?:a|to|no|ale)\s+)*(?:co|czego|czy|jak|dlaczego|czemu|gdzie|kiedy|what|why|where|when|ej zaczniesz)\b|(?:dalej|znowu|nadal).*\b(?:tracisz|przegrywasz)\b",
+            r"(?:(?:hejka|hej|czesc|hello|hi)[,! ]+)?(?:(?:a|to|no|ale)\s+)*(?:co|czego|czy|jak|dlaczego|czemu|gdzie|kiedy|what|why|where|when|ej zaczniesz)\b|(?:dalej|znowu|nadal).*\b(?:tracisz|przegrywasz)\b",
             value,
         )
     ) and not bool(
@@ -645,6 +659,12 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    command_verification = bool(
+        re.fullmatch(
+            r"Execute a read-only check: use get_plan once, then report the recorded goal\. Do not change plans, files, preferences, models or schedule work\. Command verification ID: [a-f0-9]{40}",
+            message,
+        )
+    )
     if message.startswith("/approve-web "):
         from rlm.v100.web_operations import approve
 
@@ -1089,6 +1109,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         if resource_request:
             client.research_tool_names = chat_resources.RESOURCE_TOOLS
             client.resource_only_chat = True
+        if command_verification:
+            client.research_tool_names = {"get_plan"}
         research = research_turn(client, messages, schema(allow_long_goal), root)
         tool_receipts = research.get("research_trace", [])
         result = json.loads(research["content"])
@@ -1101,7 +1123,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                 response_format={"type": "json_object", "schema": schema(allow_long_goal)},
             )["content"]
         )
-    if question_only and result.get("actions"):
+    if (question_only or command_verification) and result.get("actions"):
         raise ValueError("Read-only chat question cannot execute unsolicited actions")
     if set(result) != {"answer", "actions"} or not isinstance(result["answer"], str):
         raise ValueError("Invalid chat response")

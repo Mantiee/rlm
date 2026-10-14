@@ -13,11 +13,13 @@ from rlm.v100.common import atomic_json
 from rlm.v100.remote_access import validate_config
 
 
-def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict:
+def run(
+    root: Path, revision: str, timeout: int = 180, port: int = 8786, command: bool = False
+) -> dict:
     if not re.fullmatch(r"[a-f0-9]{40}", revision) or not 1 <= timeout <= 180:
         raise ValueError("Probe requires an immutable revision and a 1-180 second budget")
     config = validate_config(json.loads((root / "research/remote-access/config.json").read_text()))
-    receipt = root / "research/chat-probe.json"
+    receipt = root / ("research/chat-command-probe.json" if command else "research/chat-probe.json")
     previous = json.loads(receipt.read_text()) if receipt.is_file() else {}
     if previous.get("revision") == revision and previous.get("stage") == "verified":
         return previous
@@ -27,6 +29,10 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
         "updated": time.time(),
         "scope": "Local authenticated gateway and generated reply; not proof of browser/phone routing, tool execution, learning or income",
     }
+    if command:
+        result["scope"] = (
+            "Authenticated command worker and one read-only get_plan tool receipt; not proof of write operations, remote compute, learning or income"
+        )
     if previous.get("revision") == revision and previous.get("previous_attempt"):
         result["previous_attempt"] = previous["previous_attempt"]
     if previous.get("revision") == revision and previous.get("transport_failures"):
@@ -79,7 +85,12 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
         )
         identity = previous.get("request_id") if previous.get("revision") == revision else None
         attempts = previous.get("transport_attempts", 1) if identity else 1
-        if identity is not None and admission and previous.get("planner_admission") != admission:
+        if (
+            not command
+            and identity is not None
+            and admission
+            and previous.get("planner_admission") != admission
+        ):
             old = request("/api/chat/" + identity)
             if old.get("state") == "failed":
                 # Only this immutable, action-free canary can be retried after
@@ -97,7 +108,11 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
             return request(
                 "/api/chat",
                 {
-                    "message": f"What is 19 times 23? Reply with only 437. Do not use tools or change anything. Read-only verification ID: {revision}"
+                    "message": (
+                        f"Execute a read-only check: use get_plan once, then report the recorded goal. Do not change plans, files, preferences, models or schedule work. Command verification ID: {revision}"
+                        if command
+                        else f"What is 19 times 23? Reply with only 437. Do not use tools or change anything. Read-only verification ID: {revision}"
+                    )
                 },
             )["id"]
 
@@ -113,6 +128,23 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
             if row.get("state") == "completed":
                 answer = response.get("answer", "").strip()
                 responder = response.get("responder", {})
+                if command:
+                    receipts = response.get("tool_receipts") or []
+                    if (
+                        response.get("actions")
+                        or response.get("applied")
+                        or not any(
+                            r.get("tool") == "get_plan" and not (r.get("result") or {}).get("error")
+                            for r in receipts
+                        )
+                    ):
+                        raise ValueError(
+                            "Command probe has no successful read-only get_plan receipt"
+                        )
+                    result.update(
+                        stage="verified", answer=answer, responder=responder, tool_receipts=receipts
+                    )
+                    break
                 if (
                     answer != "437"
                     or response.get("actions")
@@ -128,7 +160,8 @@ def run(root: Path, revision: str, timeout: int = 180, port: int = 8786) -> dict
                 break
             if row.get("state") in ("failed", "cancelled"):
                 if (
-                    row.get("state") == "failed"
+                    not command
+                    and row.get("state") == "failed"
                     and str(row.get("error", "")).startswith(
                         "503 Server Error: Service Unavailable"
                     )
@@ -166,6 +199,7 @@ def main():
     parser.add_argument("--revision", required=True)
     args = parser.parse_args()
     print(json.dumps(run(args.root, args.revision)))
+    print(json.dumps(run(args.root, args.revision, command=True)))
 
 
 if __name__ == "__main__":

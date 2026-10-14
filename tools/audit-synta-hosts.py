@@ -157,6 +157,7 @@ def main():
         "remote_preparation": "model-roles/remote-preparation.json",
         "remote_chat_deployment": "remote-chat-deployment.json",
         "chat_probe": "chat-probe.json",
+        "chat_command_probe": "chat-command-probe.json",
         "chat_active": "state/chat-active.json",
         "cpu_server_receipt": "state/server-8094.json",
         "mission_recovery": "mission-watchdog/status.json",

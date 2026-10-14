@@ -43,7 +43,8 @@ def submit(root: Path, message: str) -> str | None:
             return existing["id"]
         if (
             db.execute(
-                "SELECT count(*) FROM requests WHERE state IN ('queued',?,?)", (PENDING, RUNNING)
+                "SELECT count(*) FROM requests WHERE state IN ('queued','gateway-pending','gateway-running',?,?)",
+                (PENDING, RUNNING),
             ).fetchone()[0]
             >= 32
         ):
