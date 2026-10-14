@@ -193,6 +193,4 @@ def test_verified_goal_research_can_route_B_to_dedicated_cuda(outcomes):
     assert first["state"] == "queued"
     assert job["device"] == "cuda"
     assert job["domain"] == "goal_observation"
-    assert {r["group"] for r in job["train"]}.isdisjoint(
-        r["group"] for r in job["validation"]
-    )
+    assert {r["group"] for r in job["train"]}.isdisjoint(r["group"] for r in job["validation"])
