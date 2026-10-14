@@ -37,9 +37,7 @@ def _run_with_verifier(tmp_path, monkeypatch, *, verify, live_active=True):
     return root, profile, calls
 
 
-def test_timeout_does_not_abort_unit_if_real_systemd_activation_succeeds(
-    tmp_path, monkeypatch
-):
+def test_timeout_does_not_abort_unit_if_real_systemd_activation_succeeds(tmp_path, monkeypatch):
     root, profile, calls = _run_with_verifier(tmp_path, monkeypatch, verify="timeout")
     receipt = supervisor.install(root, profile)
     assert receipt["mode"] == "user service"
@@ -49,9 +47,7 @@ def test_timeout_does_not_abort_unit_if_real_systemd_activation_succeeds(
     assert ["systemctl", "--user", "is-active", "--quiet", "v100-mission.service"] in calls
 
 
-def test_timeout_does_not_claim_success_when_owned_service_fails(
-    tmp_path, monkeypatch
-):
+def test_timeout_does_not_claim_success_when_owned_service_fails(tmp_path, monkeypatch):
     root, profile, _ = _run_with_verifier(
         tmp_path, monkeypatch, verify="timeout", live_active=False
     )
