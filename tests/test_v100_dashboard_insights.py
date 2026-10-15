@@ -90,20 +90,24 @@ const table=new Node('table');table.querySelector=()=>table.children[0];
 const overview=new Node('section');overview.id='overview-panel';
 const trading=new Node('section');trading.ids=['backtests'];
 const income=new Node('section');income.id='income-panel';
+const focused=new Node('section');focused.id='focus-console';
+const portfolio=new Node('section');portfolio.id='paper-capital-preview';
 const raw=new Node('details');raw.tagName='DETAILS';
 for(const id of ['cards','backtests'])nodes[id]=new Node('div');
-const document={getElementById:id=>nodes[id],createElement:tag=>new Node(tag),querySelectorAll:()=>[overview,trading,income,raw]};
+const document={getElementById:id=>nodes[id],createElement:tag=>new Node(tag),querySelectorAll:()=>[overview,trading,income,raw,focused,portfolio]};
 """
     program += functions
     program += r"""
 dashboardNavigation();
-if(overview.hidden||trading.hidden||income.hidden||!raw.hidden||nodes.cards.hidden)throw Error('Live view must combine mission, trading and income views');
+if(!overview.hidden||!trading.hidden||!income.hidden||!raw.hidden||!nodes.cards.hidden||focused.hidden||portfolio.hidden)throw Error('Live view must show only the focused console and portfolio');
 nodes['mission-navigation'].children.find(n=>n.dataset.tab==='trades').onclick();
 if(trading.hidden||!overview.hidden||!income.hidden||!raw.hidden||!nodes.cards.hidden)throw Error('Trading view failed');
 dashboardNavigation();
 if(dashboardTab!=='trades'||trading.hidden)throw Error('Refresh reset selected view');
 if(table.children[0].children[0].children.length!==6)throw Error('Missing table headers');
 if(!table.children[0].children[0].children[5].textContent.includes('double costs'))throw Error('Unlabelled stress return');
+nodes['mission-navigation'].children.find(n=>n.dataset.tab==='diagnostics').onclick();
+if(overview.hidden||trading.hidden||income.hidden||raw.hidden||!focused.hidden||!portfolio.hidden)throw Error('Diagnostics must retain the detailed evidence');
 """
     # Shared CI can delay Node startup after tensor tests; UI assertions remain unchanged.
     result = subprocess.run(
@@ -127,6 +131,35 @@ def test_live_mission_board_embedded_in_served_html():
     assert "age>300?' — delayed':''" in html
     assert "historical|previous run|may precede current" in html
     assert "liveMissionBoard(data);" in html
+
+
+def test_focus_console_exposes_recorded_rationale_and_quality_without_inventing_income():
+    import shutil
+    import subprocess
+
+    from rlm.v100.dashboard_insights import SCRIPT
+
+    if not shutil.which("node"):
+        pytest.skip("Node unavailable")
+    function = (
+        "function focusConsole(data){"
+        + SCRIPT.split("function focusConsole(data){", 1)[1].split(
+            "function paperEquityTimeline", 1
+        )[0]
+    )
+    program = r"""
+class Element {constructor(tag){this.tagName=tag;this.children=[];this.dataset={}}append(...n){this.children.push(...n)}replaceChildren(){this.children=[]}}
+const document={createElement:tag=>new Element(tag)};const root=new Element('section');function $(id){return root}function panel(){return root}function textField(p,k,v){const n=new Element('p');n.textContent=k+': '+v;p.append(n)}
+FUNCTION
+focusConsole({collected_at:Date.now()/1000,mission:{running:true},report:{live_paper:{activity_stream:{entries:[{branch:'A',sequence:1,time:'2026-10-16T00:00:00Z',proposal:{source:'model-proposal',action:'hold',rationale:'Costs exceed the observed signal.',status:'recorded'}}]}},mission_evidence:{goal_learning:{cpu_shadow_policy:{prequential_samples:12,prequential_brier:.3,uniform_baseline_brier:.2}}}}});
+const collect=n=>(n.textContent||'')+' '+n.children.map(collect).join(' ');const output=collect(root);
+if(!output.includes('Costs exceed the observed signal.')||!output.includes('Brak poprawy')||!output.includes('Niepotwierdzony'))throw Error(output);
+if(!root.children.some(n=>n.children.some(c=>c.tagName==='details')))throw Error('Decisions must be expandable');
+""".replace("FUNCTION", function)
+    result = subprocess.run(
+        ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_live_mission_board_is_in_combined_live_tab():

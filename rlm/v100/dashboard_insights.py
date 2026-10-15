@@ -8,9 +8,10 @@ function dashboardSectionGroup(n){let group=n.tagName==='DETAILS'?'diagnostics':
 function dashboardNavigation(){
  let nav=document.getElementById('mission-navigation');
  if(!nav){nav=document.createElement('nav');nav.id='mission-navigation';nav.setAttribute('aria-label','Dashboard sections');for(const [key,label] of dashboardTabs){const b=document.createElement('button');b.textContent=label;b.dataset.tab=key;b.onclick=()=>{dashboardTab=key;dashboardNavigation()};nav.append(b)}document.getElementById('cards').before(nav)}
- for(const n of document.querySelectorAll('body > section, body > details')){const group=dashboardSectionGroup(n);n.hidden=dashboardTab==='live'?group==='diagnostics':group!==dashboardTab;n.dataset.dashboardGroup=group}
+ const focused=['focus-console','paper-capital-preview'];
+ for(const n of document.querySelectorAll('body > section, body > details')){const group=dashboardSectionGroup(n);n.hidden=dashboardTab==='live'?!focused.includes(n.id):dashboardTab==='diagnostics'?focused.includes(n.id):group!==dashboardTab;n.dataset.dashboardGroup=group}
  for(const b of nav.children){b.setAttribute('aria-pressed',String(b.dataset.tab===dashboardTab))}
- const cards=document.getElementById('cards');cards.hidden=dashboardTab!=='live';
+ const cards=document.getElementById('cards');cards.hidden=true;
  // Repair older custom guest tables with four headers but six data columns.
  const table=document.getElementById('backtests')?.closest('table');if(table){let head=table.querySelector('thead');if(!head){head=document.createElement('thead');table.prepend(head)}const tr=document.createElement('tr');for(const title of ['Trial','Net return','Maximum drawdown (peak to trough)','Fills','Triage','Net return at double costs']){const th=document.createElement('th');th.scope='col';th.textContent=title;tr.append(th)}head.replaceChildren(tr)}
 }
@@ -98,6 +99,32 @@ function liveMissionBoard(data){
  for(const event of recent){const line=document.createElement('div');line.className='live-board-event';const time=document.createElement('time');time.textContent=event.time||'Unknown time';const body=document.createElement('span');body.textContent=event.label||event.action||event.kind||event.type||event.summary||'Recorded event';line.append(time,body);events.append(line)}
  box.append(events);
 }
+function focusConsole(data){
+ const r=data.report||{},m=data.mission||{},paper=r.live_paper||{},evidence=r.mission_evidence||{},goal=evidence.goal_learning||{},policy=goal.cpu_shadow_policy||{},activity=r.current_activity||{},evaluation=activity.evaluation||m.evaluation||{};
+ const box=panel('focus-console','Synta — na żywo',$('cards'));box.replaceChildren();
+ const head=document.createElement('h2');head.textContent='Synta — co robi i z jakim wynikiem';box.append(head);
+ const age=Number(data.collected_at)>0?Math.max(0,Math.round(Date.now()/1000-Number(data.collected_at))):null;
+ textField(box,'Stan danych',age===null?'Brak czasu migawki':`${age} s temu${age>300?' · dane opóźnione':''}`);
+ const grid=document.createElement('div');grid.className='live-board-metrics';box.append(grid);
+ const card=(label,value,detail)=>{const item=document.createElement('article'),name=document.createElement('small'),main=document.createElement('strong'),note=document.createElement('small');item.className='live-board-metric';name.textContent=label;main.textContent=value;note.textContent=detail;item.append(name,main,note);grid.append(item)};
+ card('Teraz',activity.stage||m.state?.phase||'Brak zapisanego zadania',m.running===true?'Kontroler aktywny':'Brak potwierdzenia aktywnego kontrolera');
+ card('Rzeczywisty przychód','Niepotwierdzony','Portfel poniżej pokazuje symulację paper. Brak podłączonej księgi płatności.');
+ card('Test w toku',evaluation.total?`${evaluation.completed||0} / ${evaluation.total}`:'Brak bieżącego wyniku',evaluation.total?`${evaluation.passed??'—'} zaliczonych · ${evaluation.state||'stan niepodany'}`:'Nowy wynik pojawi się po zapisaniu testu');
+ card('Uczenie',`${goal.training_admission?.admitted??'—'} przykładów`,`${evidence.optimizer_updates_observed??'—'} potwierdzonych kroków optymalizatora; liczba kroków nie mierzy skuteczności`);
+ const reasons=document.createElement('div');box.append(reasons);const title=document.createElement('h3');title.textContent='Dlaczego tak działa — ostatnie decyzje';reasons.append(title);
+ const entries=(paper.activity_stream?.entries||[]).filter(row=>row.proposal?.source==='model-proposal').slice(-6).reverse();
+ if(!entries.length)textField(reasons,'Decyzje','Brak zapisanej decyzji modelu w aktualnym oknie.');
+ for(const row of entries){const proposal=row.proposal,detail=document.createElement('details'),summary=document.createElement('summary');detail.dataset.key='focus-decision-'+String(row.sequence??row.time)+'-'+row.branch;summary.textContent=`${row.branch} · ${String(proposal.action||'decyzja niepodana').toUpperCase()} ${proposal.symbol||''} · ${row.time||'czas niepodany'}`;detail.append(summary);textField(detail,'Uzasadnienie modelu',proposal.rationale||'Model nie zapisał uzasadnienia.');textField(detail,'Wynik wykonania',proposal.model_action_blocked?`Zablokowano ${proposal.model_action_blocked}; pozostaje HOLD`:proposal.status||'Zapisana propozycja; wykonanie niepotwierdzone');reasons.append(detail)}
+ const conclusions=document.createElement('div');box.append(conclusions);const ct=document.createElement('h3');ct.textContent='Wnioski z zapisanych eksperymentów';conclusions.append(ct);
+ const tests=(r.recent_exploratory_backtests||[]).slice(0,4);
+ if(!tests.length)textField(conclusions,'Wyniki','Brak zakończonego eksperymentu z wynikiem w tej migawce.');
+ for(const test of tests){const item=document.createElement('details'),summary=document.createElement('summary'),result=test.development_test||{};item.dataset.key='focus-test-'+String(test.id||test.report||test.parameters?.rule);summary.textContent=`${test.parameters?.rule||'Strategia'} · ${typeof result.net_return==='number'?(100*result.net_return).toFixed(2)+'%':'wynik niepodany'} · test historyczny`;item.append(summary);textField(item,'Co wynika z testu',test.diagnostics?.state||test.triage?.state||'Brak zapisanego wniosku.');textField(item,'Weryfikacja',test.scope||'Wynik historyczny; potrzebny niezależny test na późniejszych danych.');conclusions.append(item)}
+ const quality=document.createElement('h3');quality.textContent='Czy uczenie poprawia skuteczność?';box.append(quality);
+ const scores=[policy.uniform_baseline_brier,policy.prequential_flat_baseline_brier,policy.prequential_frequency_baseline_brier].filter(value=>typeof value==='number'&&Number.isFinite(value));
+ if(policy.prequential_samples>0&&typeof policy.prequential_brier==='number'&&scores.length){const best=Math.min(...scores);textField(box,'Porównanie na tych samych próbkach',`Model: ${policy.prequential_brier.toFixed(4)} · najlepszy punkt odniesienia: ${best.toFixed(4)} · ${policy.prequential_samples} ocenionych predykcji. Niższy Brier jest lepszy.`);textField(box,'Wniosek',policy.prequential_brier<best?'Lepszy wynik w tym replay; przewaga na nowych danych niepotwierdzona.':'Brak poprawy względem najlepszego punktu odniesienia w tym replay.');}
+ else textField(box,'Skuteczność','Brak porównywalnego wyniku przed/po uczeniu. Sam trening nie potwierdza poprawy ani zysku.');
+ const blockers=paper.blockers||r.paper_blockers||[];if(blockers.length){const issue=document.createElement('details'),summary=document.createElement('summary');issue.dataset.key='focus-blockers';summary.textContent=`Co blokuje transakcje (${blockers.length})`;issue.append(summary);for(const value of blockers)textField(issue,'Powód',value);box.append(issue)}
+}
 function paperEquityTimeline(parent,paper,starting,capital){
  const title=document.createElement('h3');title.textContent='Jak zmienia się wartość obu portfeli paper';parent.append(title);
  const series=paper.equity_series||{},rows=['A','B'].flatMap(branch=>(series[branch]||[]).map(point=>({branch,...point}))).filter(point=>Number.isFinite(Date.parse(point.time||''))&&Number.isFinite(Number(point.equity))&&Number.isFinite(starting)&&starting>0);
@@ -141,6 +168,7 @@ function paperCapitalPreview(data){
   card.append(detail);
  }
  paperEquityTimeline(p,paper,starting,capital);
+ const expanded=document.createElement('details'),expandedTitle=document.createElement('summary');expanded.dataset.key='paper-strategy-detail';expandedTitle.textContent='Otwórz strategie, decyzje i scenariusze';expanded.append(expandedTitle);p.append(expanded);const compactEnd=p.children.length;
  paperScenarioPreview(p,paper,starting,capital);
  textField(p,'Zakres sald','Księga nie prowadzi osobnego rachunku 100 PLN. Aktualne saldo i historyczne próbki wyceny większej księgi są przeskalowane proporcjonalnie do 100 PLN. To mark-to-market; koszty wykonania i FX pozostają niezweryfikowane.');
  const latest=new Map();
@@ -192,8 +220,10 @@ function paperCapitalPreview(data){
  textField(p,'Jak czytać kwotę','A i B to oddzielne strategie, każda przeskalowana proporcjonalnie z zapisanej decyzji większej księgi do limitu 100 PLN. To nie osobna inferencja na koncie 100 PLN. Nie przewiduje przyszłości, fillu ani zysku. Saldo i P&L 100 PLN nie są udawane: wymagają osobnej, ciągłej księgi symulacji i potwierdzonych kosztów.');
  const comparison=(report.recent_exploratory_backtests||[]).filter(row=>row.triage?.state==='hypothesis for independent future testing');
  textField(p,'Wybór strategii','Nie ma potwierdzonej „najlepszej” strategii. Dostępne kandydatury z historycznego replay: '+(comparison.length?comparison.map(row=>row.parameters?.rule||'candidate').join(', '):'brak kandydata, który przeszedł triage')+'. Ranking historyczny nie dowodzi przewagi na przyszłość.');
+ for(const child of Array.from(p.children).slice(compactEnd))expanded.append(child);
 }
 function insightsView(data){
+ focusConsole(data);
  liveMissionBoard(data);
  paperCapitalPreview(data);
  const r=data.report||{},g=r.mission_evidence?.goal_learning||{},policy=g.cpu_shadow_policy||{},work=r.income_work||{},sources=r.source_acquisition||{},workFreshness=r.status_freshness?.income_work||{};
