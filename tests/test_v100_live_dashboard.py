@@ -206,6 +206,7 @@ next.open=true;rememberDisclosures();const newer={dataset:{key:'reader'},open:fa
 """
     if paper_labs:
         program += "\nif(nodes['paper-labs-view'].children[0].children[0].textContent!=='sample-v3')throw Error('Experimental wallet missing');\n"
+        program += "\nconst walletText=n=>typeof n==='string'?n:(n.textContent||'')+(n.children||[]).map(walletText).join(' ');const wallet=walletText(nodes['paper-labs-view']);for(const label of ['Portfel A ·','Portfel B ·','Czas lokalny','Wycena brutto (PLN)','Jeden punkt'])if(!wallet.includes(label))throw Error('Missing wallet chart label: '+label);\n"
     result = subprocess.run(
         ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=5
     )

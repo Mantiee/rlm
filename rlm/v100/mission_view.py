@@ -77,6 +77,7 @@ def snapshot(root: Path, mission: dict, report: dict) -> dict:
     if run and run.is_relative_to((root / "research/mission").resolve()):
         paths = list(run.glob("*.progress.json"))
         paths.extend(run.glob("learning/update-*/generation-*/[AB]/*.progress.json"))
+        paths.extend(run.glob("learning/update-*/generation-*/[AB]/fresh-audit/*.progress.json"))
         paths.extend(run.glob("learning/update-*/generation-*/*.progress.json"))
         for path in sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[:64]:
             try:
