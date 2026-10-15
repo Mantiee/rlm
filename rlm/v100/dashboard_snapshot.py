@@ -36,6 +36,22 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
                 )
             except (OSError, ValueError, TypeError) as error:
                 errors.append("Learning state unavailable: " + str(error)[:200])
+    from rlm.v100.mission_evidence import training_receipts
+
+    evidence = dict(result.get("mission_evidence", {}))
+    if evidence.get("run") != mission.get("run"):
+        evidence = {}
+    evidence["run"] = mission.get("run")
+    training = (
+        training_receipts(Path(mission["run"]))
+        if mission.get("run")
+        else {"optimizer_updates_observed": None, "training_runs": [], "errors": []}
+    )
+    errors.extend(
+        "Training evidence unavailable: " + str(row)[:300] for row in training.pop("errors")
+    )
+    evidence.update(training)
+    result["mission_evidence"] = evidence
     from rlm.v100.public_benchmarks import progress_for_run
 
     benchmark = progress_for_run(root, Path(mission["run"]) if mission.get("run") else None)

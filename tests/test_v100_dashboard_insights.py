@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 
 import pytest
-
 from rlm.v100 import backtesting, dashboard_layout, dashboard_snapshot, trade_explorer
+
 from tests.test_v100_backtesting import candles
 
 
@@ -154,3 +154,33 @@ def test_live_board_distinguishes_completions_failures_and_idle_gpu():
     assert "Accepted new model" in SCRIPT
     assert "3060 GPU compute" in SCRIPT
     assert "No recent completed operations" in SCRIPT
+
+
+def test_live_training_receipts_replace_stale_aggregate_counters(tmp_path):
+    run = tmp_path / "research/mission/run-current"
+    path = run / "learning/update-0002/generation-01/A/training/training_health.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "attempted_steps": 50,
+                "optimizer_updates": 49,
+                "amp_skipped_steps": 1,
+                "finite_gradient_steps": 49,
+            }
+        )
+    )
+    report = {"mission_evidence": {"run": str(run), "optimizer_updates_observed": 3}}
+    value = dashboard_snapshot.supplement(tmp_path, {"run": str(run)}, report, [])
+    assert value["mission_evidence"]["optimizer_updates_observed"] == 49
+    path.unlink()
+    value = dashboard_snapshot.supplement(tmp_path, {"run": str(run)}, value, [])
+    assert value["mission_evidence"]["optimizer_updates_observed"] is None
+    assert value["mission_evidence"]["training_runs"] == []
+
+
+def test_live_training_never_reuses_previous_run_evidence(tmp_path):
+    report = {"mission_evidence": {"run": "old", "optimizer_updates_observed": 99}}
+    value = dashboard_snapshot.supplement(tmp_path, {}, report, [])
+    assert value["mission_evidence"]["optimizer_updates_observed"] is None
+    assert value["mission_evidence"]["run"] is None
