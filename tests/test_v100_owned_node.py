@@ -535,3 +535,33 @@ def test_cuda_lane_dispatched_independently_of_finance_model_qualification(tmp_p
     assert gpu["device"] == "cuda" and gpu["phase"] == "idle"
     assert gpu["gpu_enabled"]
     assert json.loads((mailbox / "workers/debian-3060ti-cpu.json").read_text())["device"] == "cpu"
+
+
+@pytest.mark.parametrize("active_count", [1, 20])
+def test_terminal_mailbox_prefix_cannot_starve_active_cuda_jobs(
+    tmp_path, monkeypatch, active_count
+):
+    mailbox = tmp_path / "mailbox"
+    atomic_json(tmp_path / "research/compute-config.json", {"mailbox": str(mailbox)})
+    for index in range(16 + active_count):
+        identity = f"{index:024x}"
+        task = {**job(identity), "device": "cuda"}
+        atomic_json(mailbox / "jobs" / (identity + ".json"), task)
+        folder = tmp_path / "research/compute-jobs" / identity
+        atomic_json(folder / "job.json", task)
+        atomic_json(folder / "state.json", {"state": "failed" if index < 16 else "queued"})
+        if index >= 16:
+            atomic_json(
+                mailbox / "claims" / identity / "lease.json",
+                {"worker": "debian-3060ti-gpu", "nonce": "b" * 32, "job_id": identity},
+            )
+    calls = []
+    monkeypatch.setattr(
+        remote_nodes,
+        "request",
+        lambda method, path: calls.append((method, path)) or {"state": "running"},
+    )
+    remote_nodes.cpu_bridge(tmp_path, {"cpu_ready": True, "cpu_slots": 1})
+    assert len(calls) == min(active_count, 16)
+    assert all(method == "GET" for method, _ in calls)
+    assert f"{16:024x}" in calls[0][1]

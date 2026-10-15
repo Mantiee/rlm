@@ -336,7 +336,8 @@ def cpu_bridge(root: Path, resources: dict) -> None:
                 ),
             },
         )
-    for path in sorted((mailbox / "jobs").glob("*.json"))[:16]:
+    processed = 0
+    for path in sorted((mailbox / "jobs").glob("*.json")):
         try:
             queued_job = json.loads(path.read_text())
         except (OSError, ValueError, TypeError):
@@ -402,6 +403,12 @@ def cpu_bridge(root: Path, resources: dict) -> None:
                 "worker_sha256"
             ) != resources.get("worker_sha256"):
                 continue
+        # Retained terminal jobs must not consume the network-work budget;
+        # otherwise a completed prefix permanently starves later CUDA jobs.
+        if processed >= 16:
+            break
+        processed += 1
+        if not claim.exists():
             claim.parent.mkdir(parents=True, exist_ok=True)
             try:
                 claim.mkdir()
