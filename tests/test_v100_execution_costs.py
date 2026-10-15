@@ -56,6 +56,8 @@ def test_two_level_buy_sell_and_no_double_charged_spread():
     assert Decimal(sell["reporting_cash"]) == Decimal("195.03")
     assert Decimal(buy["book_impact_quote"]) == 2
     assert not buy["execution_eligible"] and not buy["guaranteed_fill"]
+    assert buy["full_execution_costs_verified"] is False
+    assert "account_fee_tier_and_rebates" in buy["unverified_cost_components"]
     assert Decimal(sell["reporting_cash"]) - Decimal(buy["reporting_cash"]) == Decimal("-8.99")
 
 
@@ -75,6 +77,8 @@ def test_fx_uses_asks_for_buy_bids_for_sell_and_independent_fees():
     assert Decimal(buy["reporting_cash"]) == Decimal("204.02") * Decimal("4.1") * Decimal("1.005")
     assert Decimal(sell["reporting_cash"]) == Decimal("195.03") * 4 * Decimal(".995")
     assert buy["provenance"]["fx"]["source_sha256"] == "a" * 64
+    assert buy["full_execution_costs_verified"] is False
+    assert sell["full_execution_costs_verified"] is False
     fx["asks"][0][1] = "1"
     assert run(reporting_currency="PLN", fx=fx)["state"] == "UNKNOWN"
 

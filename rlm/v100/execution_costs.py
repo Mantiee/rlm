@@ -121,7 +121,17 @@ def estimate(
         "state": "UNKNOWN",
         "execution_eligible": False,
         "guaranteed_fill": False,
-        "scope": "Shadow visible-depth estimate; latency and future liquidity unknown",
+        # A source-backed estimate is still not evidence that this account can
+        # execute at the quoted tier, nor that future execution costs are known.
+        # Keep this explicit so downstream dashboards cannot infer verification
+        # from SHADOW_ESTIMATE or from a published fee schedule alone.
+        "full_execution_costs_verified": False,
+        "unverified_cost_components": [
+            "account_fee_tier_and_rebates",
+            "latency_and_market_movement",
+            "queue_position_and_hidden_or_future_liquidity",
+        ],
+        "scope": "Shadow visible-depth estimate only; no account fee-tier, latency, queue, or future-liquidity verification",
         "side": side if isinstance(side, str) else None,
         "decision_at": decision_at if isinstance(decision_at, str) else None,
     }
