@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 
 import pytest
-from rlm.v100 import backtesting, dashboard_layout, dashboard_snapshot, trade_explorer
 
+from rlm.v100 import backtesting, dashboard_layout, dashboard_snapshot, trade_explorer
 from tests.test_v100_backtesting import candles
 
 
