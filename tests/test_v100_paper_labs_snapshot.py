@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from rlm.v100.dashboard_insights import SCRIPT
+from rlm.v100.dashboard_layout import PAGE
 from rlm.v100.paper_labs_snapshot import snapshot
 
 
@@ -75,6 +76,34 @@ def test_missing_database_is_not_created_or_displayed_as_zero(tmp_path):
 def test_stale_tick_is_explicit(tmp_path):
     ledger(tmp_path, "live-paper-v3")
     assert snapshot(tmp_path, 1800000181)[0]["quote_stale"] is True
+
+
+def test_24h_activity_counts_distinguish_quotes_decisions_fills_and_trials(tmp_path):
+    path = ledger(tmp_path, "live-paper-v3")
+    now = 1800000000
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE decisions(id INTEGER PRIMARY KEY,ts REAL,branch TEXT,action TEXT,reason TEXT);"
+            "CREATE TABLE tests(id INTEGER PRIMARY KEY,ts TEXT,window INTEGER,threshold REAL,train_pct REAL,test_pct REAL,trades INTEGER);"
+            "CREATE TABLE hypotheses(id INTEGER PRIMARY KEY,ts TEXT,correct INTEGER);"
+        )
+        ts = datetime.fromtimestamp(now - 3600, UTC).isoformat()
+        db.execute("INSERT INTO decisions VALUES(1,?,'A','HOLD','test')", (now - 3600,))
+        db.execute("INSERT INTO fills VALUES(1,?,'B','BUY',0.001,300000,1)", (ts,))
+        db.execute("INSERT INTO tests VALUES(1,?,12,0.02,0.0,0.0,0)", (ts,))
+        db.execute("INSERT INTO hypotheses VALUES(1,?,1)", (ts,))
+    activity = snapshot(tmp_path, now)[0]["activity_24h"]
+    assert activity["counts"] == {
+        "quotes": 2,
+        "decisions": 1,
+        "fills": 1,
+        "tests": 1,
+        "scored_hypotheses": 1,
+    }
+    assert activity["lifetime_counts"]["fills"] == 1
+    assert sum(row.get("decisions", 0) for row in activity["hourly"]) == 1
+    assert "Aktywność zapisów — ostatnie 24 h" in PAGE
+    assert "Wykonania paper" in PAGE
 
 
 def test_failure_in_one_ledger_does_not_hide_other(tmp_path):

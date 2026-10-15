@@ -39,7 +39,8 @@ def test_constant_price_spot_and_liquidation_costs_reconcile(tmp_path):
 def test_host_insights_are_present_on_existing_guest_layout():
     html = dashboard_layout.render_template(dashboard_layout.BASE_TEMPLATE, "test")
     assert "mission-navigation" in html
-    assert "Other income" in html
+    assert "Na żywo" in html
+    assert "Inne przychody" in html
     assert "Maximum drawdown (peak to trough)" in html
     assert "No verified revenue or completed-test time series" in html
     assert "Same-price spot equity change" in html
@@ -89,16 +90,16 @@ const table=new Node('table');table.querySelector=()=>table.children[0];
 const overview=new Node('section');overview.id='overview-panel';
 const trading=new Node('section');trading.ids=['backtests'];
 const income=new Node('section');income.id='income-panel';
-const raw=new Node('details');
+const raw=new Node('details');raw.tagName='DETAILS';
 for(const id of ['cards','backtests'])nodes[id]=new Node('div');
 const document={getElementById:id=>nodes[id],createElement:tag=>new Node(tag),querySelectorAll:()=>[overview,trading,income,raw]};
 """
     program += functions
     program += r"""
 dashboardNavigation();
-if(overview.hidden||!trading.hidden||!income.hidden||!raw.hidden)throw Error('Overview contains other views');
+if(overview.hidden||trading.hidden||income.hidden||!raw.hidden||nodes.cards.hidden)throw Error('Live view must combine mission, trading and income views');
 nodes['mission-navigation'].children.find(n=>n.dataset.tab==='trades').onclick();
-if(trading.hidden||!overview.hidden||!income.hidden||!nodes.cards.hidden)throw Error('Trading view failed');
+if(trading.hidden||!overview.hidden||!income.hidden||!raw.hidden||!nodes.cards.hidden)throw Error('Trading view failed');
 dashboardNavigation();
 if(dashboardTab!=='trades'||trading.hidden)throw Error('Refresh reset selected view');
 if(table.children[0].children[0].children.length!==6)throw Error('Missing table headers');
@@ -106,7 +107,12 @@ if(!table.children[0].children[0].children[5].textContent.includes('double costs
 """
     # Shared CI can delay Node startup after tensor tests; UI assertions remain unchanged.
     result = subprocess.run(
-        ["node", "-"], input=program, text=True, capture_output=True, timeout=30
+        ["node", "-"],
+        input=program,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stderr
 
@@ -117,15 +123,19 @@ def test_live_mission_board_embedded_in_served_html():
     assert "Live mission control" in html
     assert "Recent recorded actions" in html
     assert "Simulation, not real income" in html
-    assert "Snapshot age:" in html
+    assert "Status snapshot collected" in html
+    assert "age>300?' — delayed':''" in html
+    assert "historical|previous run|may precede current" in html
     assert "liveMissionBoard(data);" in html
 
 
-def test_live_mission_board_belongs_to_overview_tab():
+def test_live_mission_board_is_in_combined_live_tab():
     from rlm.v100.dashboard_insights import SCRIPT
 
-    overview_group = SCRIPT.split("overview:[", 1)[1].split("]", 1)[0]
-    assert "'live-mission-board'" in overview_group
+    live_group = SCRIPT.split("live:[", 1)[1].split("]", 1)[0]
+    for panel in ("live-mission-board", "trade-explorer", "paper-labs-panel", "income-panel"):
+        assert f"'{panel}'" in live_group
+    assert "dashboardTab='live'" in SCRIPT
     assert "function liveMissionBoard(data)" in SCRIPT
 
 
@@ -145,6 +155,14 @@ def test_current_blocker_does_not_reuse_previous_cycle_failure():
     assert "Previous cycle failure (historical, not the current blocker)" in SCRIPT
     blocker = SCRIPT.split("bd.textContent=", 1)[1].split(";", 1)[0]
     assert "learning.last_cycle?.detail" not in blocker
+
+
+def test_stale_income_error_is_labelled_historical():
+    from rlm.v100.dashboard_insights import SCRIPT
+
+    assert "workFreshness.state==='stale'" in SCRIPT
+    assert "last recorded error is historical" in SCRIPT
+    assert "Current blocker / last recorded error" in SCRIPT
 
 
 def test_live_board_distinguishes_completions_failures_and_idle_gpu():
@@ -212,5 +230,5 @@ def test_live_training_receipt_preserves_counter_and_writer_timestamp(tmp_path):
 def test_learning_panel_displays_optimizer_receipt_freshness_separately():
     from rlm.v100.dashboard_layout import PAGE
 
-    assert "Last optimizer receipt" in PAGE
+    assert "Last confirmed optimizer receipt" in PAGE
     assert "Optimizer receipt detail" in PAGE

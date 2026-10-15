@@ -14,23 +14,43 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_managed_channel_is_a_genuine_pinned_new_package():
     manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
     config = (ROOT / "pyproject.toml").read_text()
-    assert manifest["version"] == 107
-    assert 'version = "0.1.3+v100.107"' in config
+    assert manifest["version"] == 108
+    assert 'version = "0.1.3+v100.108"' in config
     installer = manifest["linux_installer"]
-    assert installer == "tools/update-synta-v107.sh"
+    assert installer == "tools/update-synta-v108.sh"
     content = (ROOT / installer).read_bytes()
     assert manifest["files"][installer] == hashlib.sha256(content).hexdigest()
 
 
-def test_v107_updater_is_a_new_monotonic_successor_without_rewriting_v106():
-    previous = (ROOT / "tools/update-synta-v106.sh").read_text()
-    current = (ROOT / "tools/update-synta-v107.sh").read_text()
-    assert "range(78, 107)" in previous
-    assert "0.1.3+v100.106" in previous
-    assert "range(78, 108)" in current
-    assert "requires v78-v107" in current
-    assert "0.1.3+v100.107" in current
-    assert "v107-package-recovery" in current
+def test_managed_channel_v108_redirects_legacy_income_link_and_refreshes_dashboard():
+    manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
+    config = (ROOT / "pyproject.toml").read_text()
+    assert manifest["version"] == 108
+    assert 'version = "0.1.3+v100.108"' in config
+    assert manifest["linux_installer"] == "tools/update-synta-v108.sh"
+    assert "rlm/v100/dashboard_redirect.py" in manifest["files"]
+    installer = (ROOT / manifest["linux_installer"]).read_text()
+    assert "range(78, 109)" in installer
+    assert "synta-income-learning.service" in installer
+    assert "v100-dashboard.service" in installer
+    assert "--port 8766" in installer
+    assert "--target http://192.168.0.68:8765/?v=108" in installer
+
+
+def test_v107_and_v108_updaters_are_monotonic_successors():
+    v106 = (ROOT / "tools/update-synta-v106.sh").read_text()
+    v107 = (ROOT / "tools/update-synta-v107.sh").read_text()
+    v108 = (ROOT / "tools/update-synta-v108.sh").read_text()
+    assert "range(78, 107)" in v106
+    assert "0.1.3+v100.106" in v106
+    assert "range(78, 108)" in v107
+    assert "requires v78-v107" in v107
+    assert "0.1.3+v100.107" in v107
+    assert "v107-package-recovery" in v107
+    assert "range(78, 109)" in v108
+    assert "requires v78-v108" in v108
+    assert "0.1.3+v100.108" in v108
+    assert "v108-package-recovery" in v108
 
 
 def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
@@ -56,7 +76,7 @@ def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
     assert parsed.returncode == 0, parsed.stderr
 
 
-@pytest.mark.parametrize("release", [104, 105, 106, 107])
+@pytest.mark.parametrize("release", [104, 105, 106, 107, 108])
 def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release):
     content = (ROOT / f"tools/update-synta-v{release}.sh").read_text()
     assert "active candidate training/evaluation retained".lower() in content.lower()

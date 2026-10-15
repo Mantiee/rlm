@@ -5,7 +5,7 @@ import math
 import sqlite3
 import time
 from contextlib import closing
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -14,6 +14,71 @@ def finite(value):
     if not math.isfinite(result):
         raise ValueError("Nonfinite legacy ledger value")
     return result
+
+
+def activity_window_24h(db: sqlite3.Connection, now: float) -> dict:
+    """Count recorded experiment activity without treating HOLDs as fills or profit."""
+    since = now - 24 * 60 * 60
+    since_iso = datetime.fromtimestamp(since, UTC).isoformat()
+    tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    specs = {
+        "quotes": ("ticks", "ts", "text"),
+        "decisions": ("decisions", "ts", "unix"),
+        "fills": ("fills", "ts", "text"),
+        "tests": ("tests", "ts", "text"),
+        "scored_hypotheses": ("hypotheses", "ts", "text"),
+    }
+    counts: dict[str, int | None] = {}
+    lifetime: dict[str, int | None] = {}
+    hourly: dict[str, dict[str, int | None]] = {}
+    for label, (table, column, kind) in specs.items():
+        if table not in tables:
+            counts[label] = None
+            lifetime[label] = None
+            continue
+        scored_filter = " AND correct IS NOT NULL" if label == "scored_hypotheses" else ""
+        predicate = f"{column} >= ?" if kind == "unix" else f"julianday({column}) >= julianday(?)"
+        cutoff: float | str = since if kind == "unix" else since_iso
+        counts[label] = int(
+            db.execute(
+                f"SELECT count(1) FROM {table} WHERE {predicate}{scored_filter}", (cutoff,)
+            ).fetchone()[0]
+        )
+        lifetime[label] = int(
+            db.execute(f"SELECT count(1) FROM {table} WHERE 1=1{scored_filter}").fetchone()[0]
+        )
+        hour_expr = (
+            f"strftime('%Y-%m-%dT%H', {column}, 'unixepoch')"
+            if kind == "unix"
+            else f"strftime('%Y-%m-%dT%H', {column})"
+        )
+        for row in db.execute(
+            f"SELECT {hour_expr} AS hour,count(1) AS n FROM {table} "
+            f"WHERE {predicate}{scored_filter} GROUP BY hour",
+            (cutoff,),
+        ):
+            if row["hour"]:
+                hourly.setdefault(row["hour"], {})[label] = int(row["n"])
+    start = datetime.fromtimestamp(since, UTC).replace(minute=0, second=0, microsecond=0)
+    hours = []
+    for offset in range(25):
+        hour = (start + timedelta(hours=offset)).strftime("%Y-%m-%dT%H")
+        if hour > datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H"):
+            break
+        row = {"hour": hour}
+        for label, (table, _, _) in specs.items():
+            if table in tables:
+                row[label] = hourly.get(hour, {}).get(label, 0)
+        hours.append(row)
+    return {
+        "window_hours": 24,
+        "since": since_iso,
+        "until": datetime.fromtimestamp(now, UTC).isoformat(),
+        "counts": counts,
+        "lifetime_counts": lifetime,
+        "hourly": hours,
+        "scope": "Recorded rows only. HOLDs are decisions, not fills; fills are not net income.",
+    }
 
 
 def read_lab(root: Path, name: str, now: float) -> dict:
@@ -56,6 +121,7 @@ def read_lab(root: Path, name: str, now: float) -> dict:
             result["curve_valuation"] = (
                 "gross-mark-to-bid-v2 only; earlier liquidation estimates excluded"
             )
+            result["activity_24h"] = activity_window_24h(db, now)
         else:
             rows = db.execute("SELECT branch,cash,units AS qty FROM portfolio LIMIT 3").fetchall()
             for row in db.execute(
