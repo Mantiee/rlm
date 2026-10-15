@@ -434,7 +434,8 @@ def test_owned_worker_budget_edges_stay_unchanged():
         "free_ram_bytes": 2**30,
     }
     assert owned_node.resource_failure(**sample) is None
-    assert owned_node.resource_failure(**(sample | {"cuda_job": False, "cuda_ready": False})) is None
+    sample["cuda_job"], sample["cuda_ready"] = False, False
+    assert owned_node.resource_failure(**sample) is None
 
 
 def test_failed_owned_worker_persists_measured_resource_reason(tmp_path, monkeypatch):
