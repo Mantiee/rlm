@@ -1,3 +1,4 @@
+# IPv4 addresses below are synthetic fixtures; no test contacts these hosts.
 import base64
 import hashlib
 import json
@@ -126,7 +127,7 @@ def test_full_duty_is_scoped_to_the_explicit_owned_node():
     remote_helper.validate_workload(64, 100, True)
     with pytest.raises(ValueError, match="registered"):
         remote_helper.OllamaResearchClient(
-            base_url="http://192.168.0.61:11435",
+            base_url="http://10.0.0.1:11435",
             model_digest="a" * 64,
             dedicated_host=True,
             helper_duty_percent=100,
@@ -136,7 +137,7 @@ def test_full_duty_is_scoped_to_the_explicit_owned_node():
 def test_independent_nodes_can_hold_workload_leases_together(monkeypatch):
     monkeypatch.setattr(remote_helper, "helper_boot_id", lambda: "owned-test")
     legacy = remote_helper.OllamaResearchClient(
-        base_url="http://192.168.0.61:11435", model_digest="a" * 64
+        base_url="http://10.0.0.1:11435", model_digest="a" * 64
     )
     dedicated = remote_helper.OllamaResearchClient(
         base_url=remote_nodes.ENDPOINT,
@@ -168,7 +169,7 @@ def test_stale_or_changed_node_never_routes_a_job(tmp_path):
     atomic_json(folder / "status.json", {**state, "updated": time.time() - 100})
     assert remote_nodes.selected_node(tmp_path) is None
     atomic_json(folder / "status.json", state)
-    atomic_json(path, {"runtime": {"base_url": "http://192.168.0.10:11435"}})
+    atomic_json(path, {"runtime": {"base_url": "http://10.0.0.2:11435"}})
     with pytest.raises(ValueError, match="changed"):
         remote_nodes.selected_node(tmp_path)
 
@@ -176,8 +177,8 @@ def test_stale_or_changed_node_never_routes_a_job(tmp_path):
 def test_other_lan_peer_cannot_reach_service():
     handler = owned_node.Handler.__new__(owned_node.Handler)
     handler.connection = Mock()
-    handler.client_address = ("192.168.0.20", 1)
-    handler.server = SimpleNamespace(owner="192.168.0.68", server_address=("192.168.0.9", 11435))
+    handler.client_address = ("10.0.0.3", 1)
+    handler.server = SimpleNamespace(owner="10.0.0.4", server_address=("10.0.0.5", 11435))
     handler.send_error = Mock()
     handler.forward()
     handler.send_error.assert_called_once_with(403)
@@ -186,7 +187,7 @@ def test_other_lan_peer_cannot_reach_service():
 def test_http_exposes_only_fixed_paths_and_models():
     node = SimpleNamespace(state={"ready": True}, generating=False)
     server = ThreadingHTTPServer(("127.0.0.1", 0), owned_node.Handler)
-    server.owner, server.node, server.upstream_port = "192.168.0.68", node, 1
+    server.owner, server.node, server.upstream_port = "10.0.0.4", node, 1
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{server.server_port}"
@@ -456,8 +457,15 @@ def test_income_advisor_reuses_qualified_node_without_launching_master(tmp_path,
     monkeypatch.setattr(remote_nodes, "selected_node", lambda root: path)
     monkeypatch.setattr(mission_chat, "preferences", lambda root: {})
     monkeypatch.setattr(
-        income_work, "load_profile", lambda *args: {"resources": {"device": "remote"}}
+        income_work,
+        "load_profile",
+        lambda *args: {
+            "runtime": {"base_url": "http://helper.invalid:11435"},
+            "resources": {"device": "remote"},
+        },
     )
+    monkeypatch.setattr(income_work, "income_profile_enabled", lambda root, profile: True)
+    monkeypatch.setattr(mission_chat, "backend_preflight", lambda client: None)
     monkeypatch.setattr(competition, "helper_client", lambda *args: client)
     assert income_work.owned_advisor(tmp_path, "A", "training") is client
     assert client.activity_actor == "income-owned-advisor"

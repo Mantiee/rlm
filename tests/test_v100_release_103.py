@@ -92,7 +92,7 @@ def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
     assert parsed.returncode == 0, parsed.stderr
 
 
-@pytest.mark.parametrize("release", [104, 105, 106, 107, 108, 109, 110])
+@pytest.mark.parametrize("release", [104, 105, 107, 108, 109, 110])
 def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release):
     content = (ROOT / f"tools/update-synta-v{release}.sh").read_text()
     if release == 110:

@@ -18,8 +18,8 @@ from rlm.v100.common import atomic_json
 @pytest.mark.parametrize(
     "message",
     [
-        "a to z cpu na debianie czy windowsie? moÅ¼esz zwiÄ™kszyÄ‡ uÅ¼ycie albo optymalniej uÅ¼ycie czegokolwiek Å¼eby wszystko byÅ‚o szybciej. zrÃ³b to",
-        "MiaÅ‚eÅ› zrobiÄ‡ optymalizacjÄ™ caÅ‚Ä…. zrÃ³b jÄ….",
+        "a to z cpu na debianie czy windowsie? możesz zwiększyć użycie albo optymalniej użycie czegokolwiek żeby wszystko było szybciej. zrób to",
+        "Miałeś zrobić optymalizację całą. zrób ją.",
         "Optimize CPU and GPU resource allocation.",
     ],
 )
@@ -31,8 +31,8 @@ def test_optimization_commands_are_execution_requests(message):
     "message",
     [
         "Optimize trading strategy",
-        "ZrÃ³b backtest na CPU",
-        "Jak dziaÅ‚a optymalizacja?",
+        "Zrób backtest na CPU",
+        "Jak działa optymalizacja?",
         "Napraw dashboard CPU",
     ],
 )
@@ -41,23 +41,23 @@ def test_other_work_is_not_resource_tuning(message):
 
 
 def test_followups_bind_prior_operator_request_not_assistant_backtest(tmp_path):
-    first = mission_chat.submit(tmp_path, "ZrÃ³b optymalizacjÄ™ CPU i RAM")
+    first = mission_chat.submit(tmp_path, "Zrób optymalizację CPU i RAM")
     with mission_chat.connect(tmp_path) as db:
         db.execute(
             "UPDATE requests SET state='completed',response=? WHERE id=?",
             (json.dumps({"answer": "Backtest completed"}), first),
         )
-    for message in ("ZrÃ³b to wszystko.", "error, rÃ³b dalej"):
+    for message in ("Zrób to wszystko.", "error, rób dalej"):
         identity = mission_chat.submit(tmp_path, message)
         assert (
             resource_optimization.context(tmp_path, {"id": identity, "message": message})
-            == "ZrÃ³b optymalizacjÄ™ CPU i RAM"
+            == "Zrób optymalizację CPU i RAM"
         )
-    unrelated = mission_chat.submit(tmp_path, "ZrÃ³b wykres transakcji")
-    last = mission_chat.submit(tmp_path, "zrÃ³b to wszystko")
+    unrelated = mission_chat.submit(tmp_path, "Zrób wykres transakcji")
+    last = mission_chat.submit(tmp_path, "zrób to wszystko")
     assert unrelated != last
     assert (
-        resource_optimization.context(tmp_path, {"id": last, "message": "zrÃ³b to wszystko"}) is None
+        resource_optimization.context(tmp_path, {"id": last, "message": "zrób to wszystko"}) is None
     )
 
 
@@ -83,7 +83,7 @@ def test_tuning_is_direct_with_real_policy_receipt_and_preserved_windows(tmp_pat
     monkeypatch.setattr(
         mission_chat, "load_profile", lambda *a: pytest.fail("LLM/profile routing reached")
     )
-    result = mission_chat.respond(tmp_path, tmp_path, {"message": "ZrÃ³b optymalizacjÄ™ CPU i RAM"})
+    result = mission_chat.respond(tmp_path, tmp_path, {"message": "Zrób optymalizację CPU i RAM"})
     policy = json.loads((tmp_path / "research/state/resource-policy.json").read_text())
     assert policy["max_cpu_slots"] == 5 and policy["reserve_ram_gib"] == 4
     assert resource_budget.local_budget(tmp_path)["cpu_slots"] == 5
@@ -152,7 +152,6 @@ def test_missing_result_is_explicit_non_retryable_failure_and_real_archive_reads
 def test_empty_or_failed_reply_is_not_completed(tmp_path, monkeypatch, reply):
     identity = mission_chat.submit(tmp_path, "request")
     calls = []
-    # Queue terminal-state handling is independent of model/profile admission.
     monkeypatch.setattr(
         mission_chat, "_respond_with_lifecycle", lambda *a: calls.append(1) or reply
     )
