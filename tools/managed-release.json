@@ -122,7 +122,7 @@
     "rlm/v100/dashboard_redirect.py": "16ad41fba3760eae584c9963a48d223a1bb740d828057618b23e8b35c6ee757c",
     "tools/update-synta-v108.sh": "2d61bbc89e715aa88a724c8ce314836f9616dd3cb12ae1934214b4c7bfc0e426",
     "tools/update-synta-v109.sh": "0b6536e71072265b8bd485091977aebc660490393f21fc052d8b4cc104ae7d53",
-    "tools/update-synta-v110.sh": "d4ee7e3fb4ea496c3626c77925c69bc939b98fc07c6c861f5644ee237b85268d"
+    "tools/update-synta-v110.sh": "9856a39e0ada9444809c4b321ed83429b97c3b67a3c08bf1c903ee2c2b19df9b"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

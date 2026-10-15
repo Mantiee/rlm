@@ -15,10 +15,17 @@ fi
 "$UV" --version
 exec 9>"$AI_V100_ROOT/research/mission-maintenance.lock"
 flock -n -x 9 || { echo "Another owned maintenance task is active; update deferred."; exit 75; }
-for COMMAND in git curl systemctl flock; do
+for COMMAND in git curl systemctl flock sed; do
   command -v "$COMMAND" >/dev/null || { echo "Required executable unavailable: $COMMAND; no service changed." >&2; exit 127; }
 done
 [[ -x "$PY" ]] || { echo 'Existing Synta Python unavailable; no service changed.' >&2; exit 127; }
+DASHBOARD_EXEC="$(systemctl --user show v100-dashboard.service -p ExecStart --value)"
+DASHBOARD_BIND="$(printf '%s' "$DASHBOARD_EXEC" | sed -nE 's/.*--bind[[:space:]]+([^ ;]+).*/\1/p')"
+[[ "$DASHBOARD_BIND" =~ ^[A-Za-z0-9.:%_-]+$ && "$DASHBOARD_BIND" != 0.0.0.0 && "$DASHBOARD_BIND" != :: && "$DASHBOARD_BIND" != 127.* && "$DASHBOARD_BIND" != ::1 && "$DASHBOARD_BIND" != localhost ]] || {
+  echo 'Could not safely derive the dashboard bind address; no service changed.' >&2
+  exit 1
+}
+if [[ "$DASHBOARD_BIND" == *:* ]]; then DASHBOARD_BIND="[$DASHBOARD_BIND]"; fi
 RESTORE_MARKER="$(mktemp "$AI_V100_ROOT/research/.update-v110-restore.XXXXXX")"
 export SYNTA_RESTORE_MARKER="$RESTORE_MARKER"
 PACKAGE_CHANGED=0
@@ -91,11 +98,14 @@ installed = version('rlms')
 if installed not in tuple(f'0.1.3+v100.{number}' for number in range(78, 111)):
     raise SystemExit(f'Targeted goal work update requires v78-v110; installed: {installed}')
 service = subprocess.run(['systemctl', '--user', 'is-active', '--quiet', 'v100-mission.service'])
+if service.returncode != 0:
+    raise SystemExit('Mission service is not active; no service changed')
 root = Path(os.environ['AI_V100_ROOT'])
 record = status(root)
 learning=record.get('learning', {})
-if record.get('running') is True and learning.get('stage') in ('candidate-training-and-independent-tests', 'scratch-architecture-training-and-tests', 'alternative-architecture-training-and-tests') and (learning.get('cycle_in_progress') or 0) > (learning.get('completed_cycles') or 0):
-    raise SystemExit('Active candidate training/evaluation retained; package update deferred')
+cycle, completed = learning.get('cycle_in_progress'), learning.get('completed_cycles')
+if record.get('running') is True and type(cycle) is int and type(completed) is int and cycle > completed:
+    raise SystemExit(f'Active mission cycle {cycle} retained; package update deferred')
 if not record.get('run'):
     raise SystemExit('No mission profile to preserve; no service changed')
 for line in subprocess.check_output(['ps', '-eo', 'pid=,args='], text=True).splitlines():
@@ -144,7 +154,7 @@ MERGED_DASHBOARD_TMP="${MERGED_DASHBOARD_DROPIN}.new"
 cat > "$MERGED_DASHBOARD_TMP" <<EOF
 [Service]
 ExecStart=
-ExecStart=$PY -m rlm.v100.dashboard_redirect --host 0.0.0.0 --port 8766 --target http://192.168.0.68:8765/?v=110
+ExecStart=$PY -m rlm.v100.dashboard_redirect --host 0.0.0.0 --port 8766 --target http://$DASHBOARD_BIND:8765/?v=110
 ReadWritePaths=
 EOF
 chmod 600 "$MERGED_DASHBOARD_TMP"

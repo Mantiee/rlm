@@ -35,7 +35,13 @@ def test_managed_channel_v110_redirects_legacy_income_link_after_port_override()
     assert "v100-dashboard.service" in installer
     assert "--port 8766" in installer
     assert "zz-merged-dashboard.conf" in installer
-    assert "--target http://192.168.0.68:8765/?v=110" in installer
+    assert (
+        'DASHBOARD_EXEC="$(systemctl --user show v100-dashboard.service -p ExecStart --value)"'
+        in installer
+    )
+    assert 'DASHBOARD_BIND="$(printf \'%s\' "$DASHBOARD_EXEC" | sed -nE' in installer
+    assert "--target http://$DASHBOARD_BIND:8765/?v=110" in installer
+    assert "--target http://192." not in installer
 
 
 def test_v107_through_v110_updaters_are_monotonic_successors():
@@ -89,7 +95,12 @@ def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
 @pytest.mark.parametrize("release", [104, 105, 106, 107, 108, 109, 110])
 def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release):
     content = (ROOT / f"tools/update-synta-v{release}.sh").read_text()
-    assert "active candidate training/evaluation retained".lower() in content.lower()
+    if release == 110:
+        assert "Active mission cycle" in content
+        assert "cycle > completed" in content
+        assert "Mission service is not active; no service changed" in content
+    else:
+        assert "active candidate training/evaluation retained".lower() in content.lower()
     assert "flock -n -x 9" in content
     assert '"$RECOVERY_HELPER" restore' in content
     assert content.index("'snapshot'") < content.index("print(stop(root)")
