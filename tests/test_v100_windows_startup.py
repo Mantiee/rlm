@@ -24,11 +24,11 @@ def test_cpu_startup_preserves_authenticated_mailbox_and_ongoing_jobs():
     assert "cpu-worker.stdout.log" in source and "cpu-worker.stderr.log" in source
 
 
-def test_combined_startup_includes_cpu_and_separate_visible_monitor():
+def test_combined_startup_includes_cpu_and_separate_hidden_monitor():
     source = (TOOLS / "install-rtx3090-autostart.ps1").read_text()
     assert "'install-owned-compute-autostart.ps1') -Revision $Revision" in source
     monitor = source.split("$monitorAction =", 1)[1].split("$monitorPrincipal =", 1)[0]
-    assert "-WindowStyle Hidden" not in monitor
+    assert "-WindowStyle Hidden" in monitor
     assert "Synta-Helper-Monitor" in source
     assert "ActiveTimePercent=65;BatchTokens=64;Context=32768" in source
     assert "ResourceProxyPython" in source

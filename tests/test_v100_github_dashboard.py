@@ -65,6 +65,34 @@ def checks(conclusion="success"):
     }
 
 
+def cached_snapshot(stamp=None):
+    observed = datetime.fromtimestamp(stamp, UTC) if stamp is not None else datetime.now(UTC)
+    timestamp = observed.isoformat()
+    row = checks()["check_runs"][0]
+    return {
+        "schema": "synta-github-dashboard-v1",
+        "repository": "Mantiee/rlm",
+        "source": "unauthenticated GitHub REST GET; read-only status evidence",
+        "state": "available",
+        "observed_at": timestamp,
+        "pull_requests": [
+            {
+                "number": 1,
+                "title": "PR 1",
+                "state": "open",
+                "draft": False,
+                "head_sha": SHA,
+                "head_ref": "branch-1",
+                "requested_at": timestamp,
+                "observed_at": timestamp,
+                "check_state": "success",
+                "check_run_count": 1,
+                "check_runs": [row],
+            }
+        ],
+    }
+
+
 def test_refresh_is_pinned_unauthenticated_and_caches_bounded_read_only_status(tmp_path):
     session = Session(
         [
@@ -167,22 +195,14 @@ def test_cache_expiry_and_future_timestamps_become_unknown(tmp_path):
     path = tmp_path / github.CACHE_RELATIVE
     path.parent.mkdir(parents=True)
     stamp = datetime(2026, 10, 15, tzinfo=UTC).timestamp()
-    path.write_text(
-        json.dumps(
-            {
-                "schema": "synta-github-dashboard-v1",
-                "repository": "Mantiee/rlm",
-                "state": "available",
-                "observed_at": datetime.fromtimestamp(stamp, UTC).isoformat(),
-                "pull_requests": [{"number": 1, "check_state": "success"}],
-            }
-        )
-    )
+    path.write_text(json.dumps(cached_snapshot(stamp)))
     assert github.cached(tmp_path, now=stamp + github.REFRESH_SECONDS - 1)["state"] == "available"
     expired = github.cached(tmp_path, now=stamp + github.REFRESH_SECONDS + 1)
     assert expired["state"] == "stale"
     assert expired["pull_requests"][0]["check_state"] == "unknown"
     assert expired["pull_requests"][0]["previous_check_state"] == "success"
+    assert expired["pull_requests"][0]["check_runs"] == []
+    assert expired["pull_requests"][0]["check_run_count"] is None
     future = github.cached(tmp_path, now=stamp - 1)
     assert future["state"] == "unknown"
     assert future["error"]["kind"] == "future_snapshot_timestamp"
@@ -212,20 +232,39 @@ def test_oversized_and_wrong_identity_cache_are_unavailable(tmp_path):
 def test_cache_timestamp_without_timezone_is_unavailable(tmp_path):
     path = tmp_path / github.CACHE_RELATIVE
     path.parent.mkdir(parents=True)
-    path.write_text(
-        json.dumps(
-            {
-                "schema": "synta-github-dashboard-v1",
-                "repository": "Mantiee/rlm",
-                "state": "available",
-                "observed_at": "2026-10-15T10:00:00",
-                "pull_requests": [{"number": 1, "check_state": "success"}],
-            }
-        )
-    )
+    snapshot = cached_snapshot()
+    snapshot["observed_at"] = "2026-10-15T10:00:00"
+    path.write_text(json.dumps(snapshot))
     result = github.cached(tmp_path)
     assert result["state"] == "unavailable"
     assert result["error"]["kind"] == "invalid_cache"
+
+
+def test_malformed_cached_snapshot_never_preserves_green_status(tmp_path):
+    path = tmp_path / github.CACHE_RELATIVE
+    path.parent.mkdir(parents=True)
+    corruptions = (
+        lambda value: value.update(state="green"),
+        lambda value: value["pull_requests"][0].update(number=True),
+        lambda value: value["pull_requests"][0].update(state="unknown"),
+        lambda value: value["pull_requests"][0].update(check_state="green"),
+        lambda value: value["pull_requests"][0].update(check_run_count=2),
+        lambda value: value["pull_requests"][0]["check_runs"][0].update(status=[]),
+        lambda value: value["pull_requests"][0].update(head_sha="bad-sha"),
+        lambda value: value["pull_requests"][0].update(observed_at="yesterday"),
+        lambda value: value["pull_requests"][0].update(error=[]),
+    )
+
+    for corrupt in corruptions:
+        snapshot = cached_snapshot()
+        corrupt(snapshot)
+        path.write_text(json.dumps(snapshot))
+
+        result = github.cached(tmp_path)
+
+        assert result["state"] == "unavailable"
+        assert result["error"]["kind"] == "invalid_cache"
+        assert result["pull_requests"] == []
 
 
 def test_dashboard_collector_exposes_only_cached_github_status_in_api_payload(
@@ -294,3 +333,60 @@ def test_response_size_and_check_run_page_truncation_do_not_claim_success(monkey
         github._check_state({"total_count": 101, "check_runs": [checks()["check_runs"][0]]})
         == "unknown"
     )
+
+
+def test_check_run_count_must_match_complete_nonempty_page():
+    row = checks()["check_runs"][0]
+    incomplete_or_invalid = (
+        {"check_runs": [row]},  # Missing count cannot imply completeness.
+        {"total_count": 0, "check_runs": [row]},
+        {"total_count": -1, "check_runs": [row]},
+        {"total_count": 2, "check_runs": [row]},  # Truncated page.
+        {"total_count": 1, "check_runs": [row, row]},  # Inconsistent payload.
+        {"total_count": 0, "check_runs": []},
+        {"total_count": 1, "check_runs": []},
+        {"total_count": True, "check_runs": [row]},  # bool is not an integer count.
+    )
+
+    assert all(github._check_state(payload) == "unknown" for payload in incomplete_or_invalid)
+
+    assert github._check_state({"total_count": 1, "check_runs": [row]}) == "success"
+
+
+def test_non_object_live_check_run_forces_unknown_and_hides_rows(tmp_path):
+    config = tmp_path / "research/github-dashboard/config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"repository": "Mantiee/rlm", "pull_requests": [1]}))
+    malformed_checks = {
+        "total_count": 2,
+        "check_runs": [checks()["check_runs"][0], "malformed row"],
+    }
+    session = Session([Response(payload=pull_request(1)), Response(payload=malformed_checks)])
+
+    result = github.refresh(tmp_path, session=session)
+
+    assert result["state"] == "partial"
+    row = result["pull_requests"][0]
+    assert row["check_state"] == "unknown"
+    assert row["check_run_count"] is None
+    assert row["check_runs"] == []
+    assert github.cached(tmp_path)["pull_requests"][0]["check_runs"] == []
+
+
+def test_unrecognized_pull_request_state_is_unavailable_without_check_fetch(tmp_path):
+    config = tmp_path / "research/github-dashboard/config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"repository": "Mantiee/rlm", "pull_requests": [1]}))
+    invalid_pr = pull_request(1)
+    invalid_pr["state"] = "merging"
+    session = Session([Response(payload=invalid_pr)])
+
+    result = github.refresh(tmp_path, session=session)
+
+    assert result["state"] == "unavailable"
+    assert len(session.calls) == 1
+    row = result["pull_requests"][0]
+    assert row["state"] == "unavailable"
+    assert row["check_state"] == "unknown"
+    assert row["error"]["kind"] == "invalid_pull_request_response"
+    assert github.cached(tmp_path)["state"] == "unavailable"

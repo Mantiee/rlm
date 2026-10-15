@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from rlm.v100.activity import ActivityLog
+from rlm.v100.execution_cost_gate import execution_cost_blocker
 
 D = Decimal
 ZERO = D("0")
@@ -85,19 +86,6 @@ def identifier(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", value):
         raise ValueError("Invalid paper identifier")
     return value
-
-
-def execution_cost_blocker(profile: dict, quote: dict) -> str | None:
-    """Published venue fees do not certify assumed slippage or reference FX."""
-    if (
-        profile.get("execution_costs_verified") is False
-        or "assumptions" in str(profile.get("cost_evidence", "")).casefold()
-    ):
-        return "Execution costs UNKNOWN: fee publication does not verify assumed FX/slippage"
-    fx = quote.get("fx")
-    if isinstance(fx, dict) and "reference" in str(fx.get("note", "")).casefold():
-        return "Execution FX UNKNOWN: a reference rate is not an executable conversion quote"
-    return None
 
 
 def source_fields(value: dict, now: datetime) -> None:

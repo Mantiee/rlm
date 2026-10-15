@@ -22,7 +22,7 @@
     "tools/install-synta-watchdog.sh": "61a73b76a327828f45472d15b975dd46bc32a824e960bce03e5846f4e664b0ac",
     "rlm/v100/mission_watchdog.py": "b37816bbb0989b338cb9ae978f3788c376297ef3577f6cadbc10a2b9a60dbe2f",
     "tools/refresh-synta-windows.ps1": "46e9fd794522c89fdcad274ce3084c96ff0890d0362c54435ceb5e01508bf146",
-    "tools/install-rtx3090-autostart.ps1": "4c9251e38f68bcf91b1e1d6cf976f9f3d953bcbe377ea4b2eedaf4eb66b9054b",
+    "tools/install-rtx3090-autostart.ps1": "251be21165f0f38f307cb7f0fec03252704da5f5cb4ca88d1f8fa18c3587dc80",
     "tools/start-rtx3090-helper.ps1": "366be43c7e41906122089c4f2fef868e692328d2e1048f8b7f79b0df64d2b215",
     "tools/watch-rtx3090-helper.ps1": "cb2dadd98b4f1a4a6d5ddc269b33d15799351adcda26ba59c8e7c9a4fe03b547",
     "tools/update-synta-v89.sh": "7b0ae94ce1480d527ceadf79bac820f0e725ef1110b72ebeace9f87420389b36",
@@ -79,7 +79,7 @@
     "rlm/v100/dashboard_snapshot.py": "40fa95d9ab2c451b3276d6a3a61a09d886d1d65e7467522870223ee6c694be80",
     "rlm/v100/paper_labs_snapshot.py": "34cc055e3c9ae3a10c45c4d312d8fac7387ee72376e914ce436ad92d4d5e7656",
     "tools/update-synta-v105.sh": "de4da42ad293bfb3c2a878f6aa9fba2e1f8179c7ac98c65c2c0329e27d18d74f",
-    "rlm/v100/paper.py": "6e681ea77b3c34bda4e32970481253a7539d93113eaa2b25a4b3f89ff14e8c54",
+    "rlm/v100/paper.py": "a7a2805b46ea879660a2af2007e07ae25be6567d89b210d4e16194953f8e8b46",
     "rlm/v100/spot_bootstrap.py": "f5dca8a70fb874086ccf1e71948d9187556a8b96e5c6a26e5a4fb5d764679d41",
     "rlm/v100/financial_snapshot.py": "0f20fcfea5c69a74ee00fc8b29d425e6a901671fb45535f8fe4b00d909c92a7f",
     "tools/start-v100-dashboard.sh": "013d1e78ce846d1f58b8a435678545919c99a60c2a1ad49d27ffb0f180921227",
@@ -87,7 +87,8 @@
     "rlm/v100/execution_costs.py": "12f1d8bbb85a5af9138049ef281af94ddd6b3c0a84a280b3be6425e033650a50",
     "rlm/v100/paper_cost_sources.py": "dcb2afff0d0c229c6673774fd5f817c267164219a25a30364710775619868187",
     "tools/synta_live_dashboard_v4.html": "b40dae3980b5a8ca1fca805360c46fc55ecfcd77b9155c14fee5251891559551",
-    "rlm/v100/github_dashboard.py": "4ab6b6301f78e9769f2fd93fa43acdf991ecc578b1e5fe1829f7a14eec2dd4fc"
+    "rlm/v100/github_dashboard.py": "551ae6c214dc2a2fc94752e4ce1af14dddd9d26c828e03be2053b44628e375d6",
+    "rlm/v100/execution_cost_gate.py": "b6822d271bd69f1953e4eb012d6bc7264e1c60dfdbff218d785eb40d65bae699"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

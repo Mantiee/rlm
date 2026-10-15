@@ -62,9 +62,9 @@ $identity = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -Run
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -RestartCount 20 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName 'Synta-RTX3090-Helper' -Action $action -Trigger $trigger -Principal $identity -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName 'Synta-RTX3090-Helper'
-# Separate visible read-only monitor. Closing its console does not stop workers.
+# Separate hidden read-only monitor. It cannot take focus from the user's session.
 $monitor = Join-Path $root 'watch-rtx3090-helper.ps1'
-$monitorAction = New-ScheduledTaskAction -Execute $exe -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`""
+$monitorAction = New-ScheduledTaskAction -Execute $exe -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$monitor`""
 $monitorPrincipal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName 'Synta-Helper-Monitor' -Action $monitorAction -Trigger $trigger -Principal $monitorPrincipal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName 'Synta-Helper-Monitor'

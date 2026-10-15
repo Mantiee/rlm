@@ -21,10 +21,204 @@ REFRESH_SECONDS = 10 * 60
 REQUEST_TIMEOUT = (0.75, 1.5)
 REQUEST_DEADLINE_SECONDS = 3.0
 SHA_RE = re.compile(r"[0-9a-f]{40}")
+CHECK_STATUSES = {"queued", "in_progress", "completed"}
+CHECK_CONCLUSIONS = {"success", "neutral", "skipped"}
+SNAPSHOT_STATES = {"available", "partial", "unavailable"}
+CHECK_STATES = {"success", "failure", "pending", "unknown"}
 
 
 def _iso(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, UTC).isoformat()
+
+
+def _valid_timestamp(value) -> bool:
+    if not isinstance(value, str) or not 1 <= len(value) <= 64:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.utcoffset() is not None
+
+
+def _valid_error(value) -> bool:
+    if not isinstance(value, dict) or set(value) - {"kind", "detail", "http_status"}:
+        return False
+    if not isinstance(value.get("kind"), str) or not 1 <= len(value["kind"]) <= 64:
+        return False
+    if "detail" in value and (not isinstance(value["detail"], str) or len(value["detail"]) > 200):
+        return False
+    status = value.get("http_status")
+    return status is None or (type(status) is int and 100 <= status <= 599)
+
+
+def _valid_cached_check(row) -> bool:
+    if not isinstance(row, dict) or set(row) - {
+        "name",
+        "status",
+        "conclusion",
+        "started_at",
+        "completed_at",
+        "details_url",
+    }:
+        return False
+    if (
+        not isinstance(row.get("name"), str)
+        or len(row["name"]) > 120
+        or row.get("status") not in CHECK_STATUSES
+    ):
+        return False
+    conclusion = row.get("conclusion")
+    if conclusion is not None and (not isinstance(conclusion, str) or len(conclusion) > 100):
+        return False
+    for key in ("started_at", "completed_at"):
+        timestamp = row.get(key)
+        if timestamp is not None and not _valid_timestamp(timestamp):
+            return False
+    details_url = row.get("details_url")
+    return details_url is None or (
+        isinstance(details_url, str)
+        and len(details_url) <= 500
+        and details_url.startswith("https://github.com/Mantiee/rlm/actions/")
+    )
+
+
+def _cached_check_state(rows: list[dict]) -> str:
+    if any(
+        row["status"] == "completed" and row.get("conclusion") not in CHECK_CONCLUSIONS
+        for row in rows
+    ):
+        return "failure"
+    if all(
+        row["status"] == "completed" and row.get("conclusion") in CHECK_CONCLUSIONS for row in rows
+    ):
+        return "success"
+    return "pending"
+
+
+def _validate_cached_snapshot(value: dict) -> None:
+    allowed_fields = {
+        "schema",
+        "repository",
+        "source",
+        "state",
+        "observed_at",
+        "pull_requests",
+        "error",
+    }
+    if set(value) - allowed_fields:
+        raise ValueError("Cached snapshot has unsupported fields")
+    if (
+        value.get("source") != "unauthenticated GitHub REST GET; read-only status evidence"
+        or value.get("state") not in SNAPSHOT_STATES
+        or not _valid_timestamp(value.get("observed_at"))
+    ):
+        raise ValueError("Cached snapshot status or timestamp is invalid")
+
+    prs = value["pull_requests"]
+    if not isinstance(prs, list) or len(prs) > MAX_PULL_REQUESTS:
+        raise ValueError("Cached pull request list is invalid")
+    seen_numbers = set()
+    for row in prs:
+        if not isinstance(row, dict) or set(row) - {
+            "number",
+            "title",
+            "state",
+            "draft",
+            "head_sha",
+            "head_ref",
+            "requested_at",
+            "observed_at",
+            "check_state",
+            "check_run_count",
+            "check_runs",
+            "error",
+        }:
+            raise ValueError("Cached pull request row is invalid")
+        required = {
+            "number",
+            "state",
+            "check_state",
+            "check_run_count",
+            "requested_at",
+            "observed_at",
+        }
+        if row.get("state") == "unavailable":
+            required.add("error")
+        else:
+            required.update({"title", "draft", "head_sha", "head_ref", "check_runs"})
+        if not required <= row.keys():
+            raise ValueError("Cached pull request row is incomplete")
+        number = row.get("number")
+        if type(number) is not int or not 1 <= number <= 1_000_000 or number in seen_numbers:
+            raise ValueError("Cached pull request identity is invalid")
+        seen_numbers.add(number)
+        if (
+            row.get("state") not in ("open", "closed", "unavailable")
+            or row.get("check_state") not in CHECK_STATES
+            or not _valid_timestamp(row.get("requested_at"))
+            or not _valid_timestamp(row.get("observed_at"))
+        ):
+            raise ValueError("Cached pull request state or timestamp is invalid")
+
+        check_state = row["check_state"]
+        runs = row.get("check_runs")
+        if row["state"] == "unavailable":
+            if (
+                check_state != "unknown"
+                or row.get("check_run_count") is not None
+                or runs is not None
+                or not _valid_error(row.get("error"))
+            ):
+                raise ValueError("Unavailable pull request row is inconsistent")
+            continue
+
+        if (
+            not isinstance(row.get("title"), str)
+            or len(row["title"]) > 180
+            or row.get("draft") is not None
+            and not isinstance(row.get("draft"), bool)
+            or not isinstance(row.get("head_sha"), str)
+            or not SHA_RE.fullmatch(row["head_sha"])
+            or not isinstance(row.get("head_ref"), str)
+            or len(row["head_ref"]) > 120
+            or not isinstance(runs, list)
+            or len(runs) > 100
+            or (row.get("check_run_count") is not None and type(row["check_run_count"]) is not int)
+            or any(not _valid_cached_check(check) for check in runs)
+        ):
+            raise ValueError("Cached pull request metadata or check runs are invalid")
+
+        has_error = "error" in row
+        if has_error and not _valid_error(row["error"]):
+            raise ValueError("Cached pull request error is invalid")
+        if check_state == "unknown":
+            if runs or row.get("check_run_count") is not None:
+                raise ValueError("Unknown check state must not expose check rows")
+        elif (
+            has_error
+            or not 1 <= len(runs) <= 100
+            or type(row.get("check_run_count")) is not int
+            or row["check_run_count"] != len(runs)
+            or _cached_check_state(runs) != check_state
+        ):
+            raise ValueError("Cached check state does not match its complete check rows")
+
+    state = value["state"]
+    top_error = value.get("error")
+    if top_error is not None and not _valid_error(top_error):
+        raise ValueError("Cached snapshot error is invalid")
+    available_rows = [row for row in prs if row.get("state") != "unavailable"]
+    has_unknown = any(row.get("check_state") == "unknown" or "error" in row for row in prs)
+    expected_state = (
+        "unavailable"
+        if not available_rows
+        else "partial"
+        if has_unknown or len(available_rows) != len(prs)
+        else "available"
+    )
+    if state != expected_state or (not prs and top_error is None):
+        raise ValueError("Cached snapshot state does not match its rows")
 
 
 def _config(root: Path) -> tuple[list[int], dict | None]:
@@ -107,15 +301,19 @@ def _request_json(session, url: str) -> tuple[dict | None, dict | None]:
 
 
 def _check_state(checks: dict) -> str:
+    if not isinstance(checks, dict):
+        return "unknown"
     rows = checks.get("check_runs")
+    total_count = checks.get("total_count")
     if (
         not isinstance(rows, list)
-        or not rows
-        or type(checks.get("total_count", len(rows))) is not int
-        or checks.get("total_count", len(rows)) > 100
+        or not 1 <= len(rows) <= 100
+        or type(total_count) is not int
+        or not 1 <= total_count <= 100
+        or total_count != len(rows)
+        or any(not isinstance(row, dict) for row in rows)
     ):
         return "unknown"
-    rows = rows[:100]
     failed = any(
         row.get("status") == "completed"
         and row.get("conclusion") not in ("success", "neutral", "skipped")
@@ -160,6 +358,7 @@ def _pull_request(session, number: int, now: float) -> dict:
             "number": number,
             "state": "unavailable",
             "check_state": "unknown",
+            "check_run_count": None,
             "requested_at": requested_at,
             "observed_at": _iso(time.time()),
             "error": error,
@@ -169,6 +368,7 @@ def _pull_request(session, number: int, now: float) -> dict:
     if (
         type(pr.get("number")) is not int
         or pr["number"] != number
+        or pr.get("state") not in ("open", "closed")
         or not isinstance(sha, str)
         or not SHA_RE.fullmatch(sha)
     ):
@@ -176,6 +376,7 @@ def _pull_request(session, number: int, now: float) -> dict:
             "number": number,
             "state": "unavailable",
             "check_state": "unknown",
+            "check_run_count": None,
             "requested_at": requested_at,
             "observed_at": _iso(time.time()),
             "error": {"kind": "invalid_pull_request_response"},
@@ -184,7 +385,7 @@ def _pull_request(session, number: int, now: float) -> dict:
     common = {
         "number": number,
         "title": str(pr.get("title", ""))[:180],
-        "state": pr.get("state") if pr.get("state") in ("open", "closed") else "unknown",
+        "state": pr["state"],
         "draft": pr.get("draft") if isinstance(pr.get("draft"), bool) else None,
         "head_sha": sha,
         "head_ref": str(head.get("ref", ""))[:120],
@@ -195,6 +396,7 @@ def _pull_request(session, number: int, now: float) -> dict:
         return {
             **common,
             "check_state": "unknown",
+            "check_run_count": None,
             "check_runs": [],
             "error": error,
         }
@@ -203,13 +405,25 @@ def _pull_request(session, number: int, now: float) -> dict:
         return {
             **common,
             "check_state": "unknown",
+            "check_run_count": None,
             "check_runs": [],
             "error": {"kind": "invalid_check_runs_response"},
         }
     safe_rows = [_safe_check(row) for row in rows[:100] if isinstance(row, dict)]
+    check_state = _check_state(checks)
+    total_count = checks.get("total_count")
+    check_run_count = (
+        total_count
+        if check_state != "unknown" and type(total_count) is int and total_count == len(rows)
+        else None
+    )
+    if check_state == "unknown":
+        # Hide apparently successful rows when the endpoint did not prove completeness.
+        safe_rows = []
     return {
         **common,
-        "check_state": _check_state(checks),
+        "check_state": check_state,
+        "check_run_count": check_run_count,
         "check_runs": safe_rows,
     }
 
@@ -284,6 +498,7 @@ def cached(root: Path, *, now: float | None = None) -> dict:
             or not isinstance(value.get("pull_requests"), list)
         ):
             raise ValueError("Cached GitHub snapshot identity is invalid")
+        _validate_cached_snapshot(value)
         try:
             observed = datetime.fromisoformat(value["observed_at"])
             if observed.utcoffset() is None:
@@ -302,6 +517,8 @@ def cached(root: Path, *, now: float | None = None) -> dict:
                     **row,
                     "previous_check_state": row.get("check_state", "unknown"),
                     "check_state": "unknown",
+                    "check_run_count": None,
+                    "check_runs": [],
                 }
                 if isinstance(row, dict)
                 else row
