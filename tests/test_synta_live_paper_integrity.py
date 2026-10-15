@@ -82,6 +82,35 @@ def test_new_curve_never_mixes_legacy_liquidation_estimates(lab):
     assert lab.db.execute("SELECT COUNT(*) FROM ticks").fetchone()[0] == 2
 
 
+def test_fallback_dashboard_chart_has_legend_axes_last_values_and_resize(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "tools"))
+    page = importlib.import_module("synta_live_paper_v3").PAGE
+    assert 'aria-label="Legenda wykresu"' in page
+    assert 'class="chart-values"' in page
+    assert "Oś Y: wycena brutto w PLN" in page
+    assert "oś X: kolejność notowań (od najstarszego do najnowszego)" in page
+    assert 'id="chart-a"' in page and 'id="chart-b"' in page
+    assert "window.devicePixelRatio" in page
+    assert "window.addEventListener('resize'" in page
+    assert "Number.isFinite(Number(r.a))" in page
+    assert "Math.max(1,data.length-1)" in page
+
+
+def test_served_dashboard_chart_exposes_last_values_and_units():
+    dashboard = Path(__file__).resolve().parents[1] / "tools/synta_live_dashboard_v4.html"
+    page = dashboard.read_text(encoding="utf-8")
+    assert dashboard.name in (dashboard.parent / "synta_live_paper_v3.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'aria-label="Legenda wykresu"' in page
+    assert 'id="chartAValue"' in page and 'id="chartBValue"' in page
+    assert "Oś X: kolejność notowań od najstarszego do najnowszego" in page
+    assert "toLocaleString('pl-PL')+' PLN'" in page
+    assert "Number.isFinite(Number(r.a))" in page
+    assert "Math.max(1,rows.length-1)" in page
+    assert "window.addEventListener('resize'" in page
+
+
 def test_fresh_evidence_allows_explicit_legacy_paper_scenario(lab):
     fee_receipt(lab)
     assert lab.fill("a", "BUY", 100, "explicit legacy scenario") is True

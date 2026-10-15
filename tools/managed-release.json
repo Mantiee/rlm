@@ -70,7 +70,7 @@
     "rlm/v100/chat_backend.py": "1e1669b0575eb24c6296528ecad688b344b4318b36c928fef528e52e3f9f9721",
     "rlm/v100/competition.py": "9ce6c8c38959848c596c9ce2e30e57f5739132f78c431375bcf8d4413ae800bc",
     "tools/update-synta-v103.sh": "d64e012cd49eb9332040f5543380240eea98d7ef61b3c6bfb159d9a0d96504df",
-    "tools/synta_live_paper_v3.py": "69ed0e6595113013b2a7c2ab1aa8fe83a91f92844a841ab9da0dd88a8f5c24ed",
+    "tools/synta_live_paper_v3.py": "8790a1b1d24271b460ba4014f52a8761be21c3e272dded41f81b11438baa93b2",
     "tools/synta_accelerator_v1.py": "b47ce993360c5da4b920ef6ebaa68570cc649acaf4caae9a00b1d49b74deec8e",
     "tools/update-synta-v104.sh": "ce68ad9b13145b999025c2f78c85de3af22a6e902449fa290ccbda9490e14e4b",
     "rlm/v100/package_recovery.py": "6837d502d264951d67d83c0fbdeeed8bee48092905f4523412fc37b74588b6b3",
@@ -85,7 +85,8 @@
     "tools/start-v100-dashboard.sh": "013d1e78ce846d1f58b8a435678545919c99a60c2a1ad49d27ffb0f180921227",
     "rlm/v100/chat_plan.py": "b9f5bbef271465beb78d4ccc4bed5650a66fee92361247379516f3e76fcadc63",
     "rlm/v100/execution_costs.py": "2638a21092b0a16820956de02d4468ed9854e541ae36ccb17195c8b67f34d57f",
-    "rlm/v100/paper_cost_sources.py": "dcb2afff0d0c229c6673774fd5f817c267164219a25a30364710775619868187"
+    "rlm/v100/paper_cost_sources.py": "dcb2afff0d0c229c6673774fd5f817c267164219a25a30364710775619868187",
+    "tools/synta_live_dashboard_v4.html": "b40dae3980b5a8ca1fca805360c46fc55ecfcd77b9155c14fee5251891559551"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
