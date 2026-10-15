@@ -22,6 +22,33 @@ CONTRACT = "synta-dedicated-linux-v1"
 CPU_RAM = 768 * 2**20
 
 
+def worker_failure(log: Path, code: int) -> str:
+    """Return known failure categories, never arbitrary worker output or secrets."""
+    try:
+        if log.is_symlink():
+            raise ValueError("Linked worker log")
+        with log.open("rb") as stream:
+            stream.seek(max(0, log.stat().st_size - 8192))
+            tail = stream.read(8192).decode("utf-8", errors="replace")
+        for marker, detail in (
+            ("No module named 'numpy'", "Missing NumPy required for checkpoint serialization"),
+            (
+                "Requested interactive experiment device is unavailable",
+                "CUDA training runtime unavailable",
+            ),
+            (
+                "Compute trial made no validated improvement",
+                "No validated improvement; weights not promoted",
+            ),
+            ("Nonfinite compute training loss", "Nonfinite training loss; candidate rejected"),
+        ):
+            if marker in tail:
+                return detail
+    except (OSError, ValueError):
+        pass
+    return f"Fixed compute kernel exited {code}; full worker.log retained on owned node"
+
+
 def atomic(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".new")
@@ -46,6 +73,30 @@ def resource_budget(ram_available: float, temperature: float, gpu_free: float) -
     if gpu_free < 0.25:
         reasons.append("GPU free memory below 256 MiB")
     return {"ready": not reasons, "reason": "; ".join(reasons) or "dedicated owned capacity"}
+
+
+def resource_failure(
+    *, cuda_job: bool, cuda_ready: bool, elapsed_s: float, rss_bytes: int, free_ram_bytes: int
+) -> dict | None:
+    """Explain a fixed worker budget failure without changing its admission limits."""
+    if cuda_job and not cuda_ready:
+        reason = "cuda-telemetry-not-ready"
+    elif elapsed_s > 150:
+        reason = "time-limit-exceeded"
+    elif rss_bytes > CPU_RAM:
+        reason = "worker-rss-limit-exceeded"
+    elif free_ram_bytes < 2**30:
+        reason = "host-ram-reserve-breached"
+    else:
+        return None
+    return {
+        "reason": reason,
+        "cuda_ready": bool(cuda_ready) if cuda_job else None,
+        "elapsed_s": round(elapsed_s, 3),
+        "rss_mib": round(rss_bytes / 2**20, 3),
+        "free_ram_gib": round(free_ram_bytes / 2**30, 3),
+        "limits": {"time_s": 150, "rss_mib": 768, "host_reserve_gib": 1},
+    }
 
 
 class Node:
@@ -308,12 +359,15 @@ class Node:
                     while process.poll() is None:
                         if (folder / "cancel").exists():
                             raise RuntimeError("Cancelled by owning controller")
-                        if (
-                            (cuda_job and not self.state.get("ready"))
-                            or time.monotonic() - started > 150
-                            or psutil.Process(process.pid).memory_info().rss > CPU_RAM
-                            or psutil.virtual_memory().available < 2**30
-                        ):
+                        failure = resource_failure(
+                            cuda_job=cuda_job,
+                            cuda_ready=bool(self.state.get("ready")),
+                            elapsed_s=time.monotonic() - started,
+                            rss_bytes=psutil.Process(process.pid).memory_info().rss,
+                            free_ram_bytes=psutil.virtual_memory().available,
+                        )
+                        if failure is not None:
+                            status["resource_failure"] = failure
                             raise RuntimeError("Owned CPU time/RAM reserve exceeded")
                         atomic(
                             folder / "status.json",
@@ -321,7 +375,9 @@ class Node:
                         )
                         time.sleep(1)
                     if process.returncode:
-                        raise RuntimeError("Fixed CPU kernel failed; inspect worker.log")
+                        raise RuntimeError(
+                            worker_failure(folder / "worker.log", process.returncode)
+                        )
                 finally:
                     if process.poll() is None:
                         process.kill()

@@ -133,7 +133,9 @@ def test_legacy_chat_migration_safe_with_concurrent_readers(tmp_path):
         assert all(pool.map(read, range(8)))
 
 
-def test_readiness_wait_releases_next_question_and_preserves_deferred_request(tmp_path, monkeypatch):
+def test_readiness_wait_releases_next_question_and_preserves_deferred_request(
+    tmp_path, monkeypatch
+):
     first = mission_chat.submit(tmp_path, "waiting")
     second = mission_chat.submit(tmp_path, "facts")
     seen = []

@@ -41,7 +41,11 @@ def assessment(root: Path, result: dict, historical: bool = False) -> dict:
     proposals, forecasts, processes = [], [], []
     for receipt in trace:
         value = receipt.get("result", {})
-        if value.get("status") in {"failed", "blocked"} or value.get("state") == "blocked" or value.get("error"):
+        if (
+            value.get("status") in {"failed", "blocked"}
+            or value.get("state") == "blocked"
+            or value.get("error")
+        ):
             continue
         identity = value.get("id")
         if receipt.get("tool") == "observe_goal_source" and identity:
@@ -108,7 +112,8 @@ def assessment(root: Path, result: dict, historical: bool = False) -> dict:
             "proposal_receipts": proposals,
             "forecast_commitments": forecasts,
             "process_receipts": processes,
-            "eligible_for_review": reason is None and (not repeated or bool(work or forecasts or processes)),
+            "eligible_for_review": reason is None
+            and (not repeated or bool(work or forecasts or processes)),
             "scope": "Lexical category and receipt audit only; no profit, causal or ML-label certification",
         }
         if not historical:

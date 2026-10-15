@@ -292,3 +292,20 @@ def test_phone_signin_is_not_serve_readiness(tmp_path, monkeypatch, configured):
     if not configured:
         assert "approve" in result["next_step"] and "Serve" in result["blockers"][0]
     assert "iPhone" in result["scope"]
+
+
+@pytest.mark.parametrize(
+    "message", ["zaczniesz zarabiać w końcu?", "kiedy zaczniesz zarabiać?", "Kiedy zarobisz?"]
+)
+def test_income_progress_question_needs_no_model(tmp_path, monkeypatch, message):
+    observed = {"answer": "Recorded evidence only.", "actions": [], "applied": []}
+    monkeypatch.setattr(chat_progress, "respond", lambda root, question: observed)
+    assert mission_chat.direct_facts(tmp_path, message) == observed
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["zacznij zarabiać", "uruchom handel i zaczniesz zarabiać?", "kup BTC, kiedy zarobisz?"],
+)
+def test_income_action_is_not_silently_replaced_with_status(message):
+    assert not chat_progress.requested(message)

@@ -12,7 +12,7 @@ def requested(message: str) -> bool:
     text = normalized(message)
     return bool(
         re.search(
-            r"co (?:(?:teraz|aktualnie|dokladnie|konkretnie|obecnie) )*robisz|co .*robicie|jaki (?:jest )?(?:postep|progres)|czego sie nauczyl|czy .*uczysz sie|czy uczysz sie|learn.*continuously|what have you learned|what (?:exactly )?are you doing|(?:czy|mozesz|potrafisz|umiesz)\b[^\n?]{0,120}\b(?:zarabiac|zarabiasz|zarabiania)\b|(?:czy|ile|jak dlugo)\b[^\n?]{0,80}\btrenujesz\b|\b(?:are you|can you|have you)\b[^\n?]{0,120}\b(?:earning|earn money|made money|training)\b",
+            r"(?:kiedy\b[^\n?]{0,80}\b(?:zarobisz|zarabiac)|zaczniesz\b[^\n?]{0,80}\bzarabiac)\b|co (?:(?:teraz|aktualnie|dokladnie|konkretnie|obecnie) )*robisz|co .*robicie|jaki (?:jest )?(?:postep|progres)|czego sie nauczyl|czy .*uczysz sie|czy uczysz sie|learn.*continuously|what have you learned|what (?:exactly )?are you doing|(?:czy|mozesz|potrafisz|umiesz)\b[^\n?]{0,120}\b(?:zarabiac|zarabiasz|zarabiania)\b|(?:czy|ile|jak dlugo)\b[^\n?]{0,80}\btrenujesz\b|\b(?:are you|can you|have you)\b[^\n?]{0,120}\b(?:earning|earn money|made money|training)\b",
             text,
         )
     ) and not re.search(
@@ -32,7 +32,6 @@ def continue_requested(message: str) -> bool:
 
 def respond(root: Path, message: str | None = None) -> dict:
     from rlm.v100.chat_facts import language
-
     from rlm.v100.mission_evidence import collect
 
     evidence = collect(root)

@@ -3,11 +3,12 @@
 SCRIPT = r"""
 let dashboardTab='overview';
 const dashboardTabs=[['overview','Overview'],['trades','Trading'],['income','Other income'],['learning','Learning'],['activity','Agents & resources'],['diagnostics','Evidence archive']];
+const dashboardGroups={diagnostics:['timeline-panel','action-archive'],trades:['trade-explorer','backtests','paper','paper-labs-panel'],income:['income-panel','source-panel'],learning:['goal-learning-panel','evaluation'],activity:['resource-panel','agent-panel','plan-panel'],overview:['live-mission-board','overview-panel','current-activity-panel','model-deployment-panel']};
+function dashboardSectionGroup(n){let group='diagnostics';for(const [key,ids] of Object.entries(dashboardGroups))if(ids.some(id=>n.id===id||n.querySelector('#'+id)))group=key;return group}
 function dashboardNavigation(){
  let nav=document.getElementById('mission-navigation');
  if(!nav){nav=document.createElement('nav');nav.id='mission-navigation';nav.setAttribute('aria-label','Dashboard sections');for(const [key,label] of dashboardTabs){const b=document.createElement('button');b.textContent=label;b.dataset.tab=key;b.onclick=()=>{dashboardTab=key;dashboardNavigation()};nav.append(b)}document.getElementById('cards').before(nav)}
- const groups={diagnostics:['timeline-panel','action-archive'],trades:['trade-explorer','backtests','paper'],income:['income-panel','source-panel'],learning:['goal-learning-panel','evaluation'],activity:['resource-panel','agent-panel','plan-panel'],overview:['live-mission-board','overview-panel','current-activity-panel','model-deployment-panel']};
- for(const n of document.querySelectorAll('body > section, body > details')){let group='diagnostics';for(const [key,ids] of Object.entries(groups))if(ids.some(id=>n.id===id||n.querySelector('#'+id)))group=key;n.hidden=group!==dashboardTab;n.dataset.dashboardGroup=group}
+ for(const n of document.querySelectorAll('body > section, body > details')){const group=dashboardSectionGroup(n);n.hidden=group!==dashboardTab;n.dataset.dashboardGroup=group}
  for(const b of nav.children){b.setAttribute('aria-pressed',String(b.dataset.tab===dashboardTab))}
  const cards=document.getElementById('cards');cards.hidden=dashboardTab!=='overview';
  // Repair older custom guest tables with four headers but six data columns.
@@ -31,7 +32,7 @@ function liveMissionBoard(data){
  header.append(stamp);box.append(header);
  const metrics=document.createElement('div');metrics.className='live-board-metrics';box.append(metrics);
  const metric=(name,value,description)=>{const card=document.createElement('div');card.className='live-board-metric';const k=document.createElement('small');k.textContent=name;const v=document.createElement('strong');v.textContent=String(value);const d=document.createElement('small');d.textContent=description;card.append(k,v,d);metrics.append(card)};
- metric('Mission',mission.running===true?'Running':mission.running===false?'Stopped':'Unknown',mission.state?.phase||'Phase unavailable');
+ metric('Mission: paper income simulation',report.live_paper?'Observing paper A/B':mission.running===true?'Waiting for paper ledger':'Unavailable',`Actual controller: ${mission.state?.phase||'unknown'}; no real orders`);
  metric('Learning',learning.stage||'Unknown',learning.cycle_in_progress===undefined?'Cycle not reported':`Cycle ${learning.cycle_in_progress}`);
  const activity=report.current_activity||{}, evaluation=activity.evaluation||{};
  metric('Current task',activity.stage||'Not reported',activity.running===true?'Recorded as running':'No running task confirmed');
@@ -43,6 +44,13 @@ function liveMissionBoard(data){
  metric('Paper A P&L',money(a.net_pnl_before_personal_tax),'Simulation, not real income');
  metric('Paper B P&L',money(b.net_pnl_before_personal_tax),'Simulation, not real income');
  metric('Paper fills',report.live_paper?.executed_fills??'Not verified','The live ledger alone does not certify execution count');
+ const paper=report.live_paper||{};
+ metric('Paper ledger sequence',paper.ledger_sequence??'Unavailable',paper.last_event?`Last verified event: ${paper.last_event.kind} at ${paper.last_event.time}`:'No verified event');
+ metric('Live market inputs',`${paper.quotes_available??'unknown'} quotes / ${paper.registered_instruments??'unknown'} instruments`,paper.blockers?.length?paper.blockers.slice(0,2).join('; '):'No detected feed blocker; this is not proof of execution');
+ for(const [branch,portfolio] of [['A',a],['B',b]]){
+  metric(`Paper ${branch} cash / equity`,`${money(portfolio.cash)} / ${money(portfolio.equity)}`,'Mark-to-market simulation. Costs, stale quotes and unrealized changes affect equity');
+  metric(`Paper ${branch} modeled costs`,money(portfolio.modeled_costs),'No verified earnings; all numbers are simulation');
+ }
  const node=report.node||report.node3060||report.remote_node||{};
  if(node.admitted!==undefined){metric('RTX 3060 Ti GPU',node.admitted?'Admitted':'Not admitted',node.reason||'No qualification receipt');metric('RTX 3060 Ti CPU',node.resources?.cpu_ready?'Available':'Not ready',`${node.resources?.cpu_active??'unknown'} jobs active, ${(node.resources?.cpu_slots??'unknown')} slots; GPU admission is independent`)}
  const dispatch=report.owned_cpu_dispatch||{};
@@ -52,7 +60,7 @@ function liveMissionBoard(data){
  note.textContent='Real income: not independently verified. HOLD is a decision, not a fill. Paper results and historical tests are not withdrawable earnings.';box.append(note);
  const blocker=document.createElement('div');blocker.className='live-board-blocker';
  const bt=document.createElement('strong');bt.textContent='Current blocker';
- const bd=document.createElement('p');bd.textContent=report.income_work?.error||learning.reason||report.paper_blockers?.join('; ')||report.paper_fee_source?.error||'No current blocker recorded; this is not proof that research is profitable';;
+ const bd=document.createElement('p');bd.textContent=report.paper_spot_rules?.state==='blocked'?report.paper_spot_rules.reason:report.paper_blockers?.join('; ')||report.income_work?.error||learning.reason||report.paper_fee_source?.error||'No data source blocker currently recorded; trades may still be unavailable';
  blocker.append(bt,bd);box.append(blocker);
  if(learning.last_cycle?.detail){const past=document.createElement('p');past.className='muted';past.textContent='Previous cycle failure (historical, not the current blocker): '+learning.last_cycle.detail;box.append(past)}
  const events=document.createElement('div');events.className='live-board-events';

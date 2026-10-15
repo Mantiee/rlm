@@ -1,5 +1,13 @@
 name: V100 controller CPU validation
 on:
+  pull_request:
+    paths:
+      - 'rlm/v100/**'
+      - 'tests/test_v100*'
+      - 'tools/*.ps1'
+      - 'tools/managed-release.json'
+      - 'tests/test_windows_release_integrity.py'
+      - '.github/workflows/v100-cpu-validation.yml'
   push:
     branches: [v100-rtx-reconnect, v100-model-migration]
     paths:

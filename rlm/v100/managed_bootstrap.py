@@ -405,7 +405,31 @@ def remote_preparation(root: Path, folder: Path, revision: str) -> dict:
         return {"stage": "blocked", "error": str(error)[:400]}
 
 
+def linux_release_guard(root: Path, revision: str, manifest: dict) -> tuple[str, dict]:
+    """Validate the installed package before any selected-release mutation."""
+    python = root / "venvs/v100-continual/bin/python"
+    installed = subprocess.check_output(
+        [str(python), "-c", 'from importlib.metadata import version; print(version("rlms"))'],
+        text=True,
+    ).strip()
+    match = re.fullmatch(r"0\.1\.3\+v100\.(\d+)", installed)
+    if not match:
+        raise ValueError("Managed updater refuses an unknown installed package")
+    if int(match[1]) > manifest["version"]:
+        return installed, {
+            "stage": "newer-local-package-retained",
+            "installed": installed,
+            "target": f"0.1.3+v100.{manifest['version']}",
+            "revision": revision,
+            "scope": "Newer local installation retained; selected release made no changes",
+        }
+    return installed, {}
+
+
 def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
+    installed, retained = linux_release_guard(root, revision, manifest)
+    if retained:
+        return retained
     python = root / "venvs/v100-continual/bin/python"
     dashboard = dashboard_update(root, folder, revision) if manifest["version"] >= 91 else {}
     remote_chat = remote_chat_update(root, dashboard, revision) if manifest["version"] >= 98 else {}
@@ -431,14 +455,7 @@ def linux(root: Path, folder: Path, revision: str, manifest: dict) -> dict:
         )
         for line in processes.splitlines()
     )
-    installed = subprocess.check_output(
-        [str(python), "-c", 'from importlib.metadata import version; print(version("rlms"))'],
-        text=True,
-    ).strip()
     target = f"0.1.3+v100.{manifest['version']}"
-    match = re.fullmatch(r"0\.1\.3\+v100\.(\d+)", installed)
-    if not match or int(match[1]) > manifest["version"]:
-        raise ValueError("Managed updater refuses an unknown package or a downgrade")
     remote_roles = remote_preparation(root, folder, revision) if manifest["version"] >= 96 else {}
     if installed != target:
         if manifest["version"] >= 91 and active_learning_cycle(root):
@@ -613,6 +630,12 @@ def main() -> None:
     try:
         selected = args.revision or bootstrap_selection(args.root, peer=os.name == "nt")
         revision, manifest = release(selected)
+        if os.name != "nt":
+            _, retained = linux_release_guard(args.root, revision, manifest)
+            if retained:
+                save(state, {**retained, "updated": time.time()})
+                print(json.dumps(retained), flush=True)
+                return
         folder = args.root / "tools/managed-releases" / revision
         if state.exists():
             previous = json.loads(state.read_text())

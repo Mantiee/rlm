@@ -58,7 +58,8 @@ def test_previous_run_counters_never_carried_to_new_run(tmp_path, monkeypatch):
     state = dashboard.DashboardState(tmp_path, lambda root: {"run": str(run), "running": True})
     state.refresh()
     evidence = state.data["report"]["mission_evidence"]
-    assert "optimizer_updates_observed" not in evidence
+    assert evidence["optimizer_updates_observed"] is None
+    assert evidence["training_runs"] == []
     assert evidence["goal_learning"]["goal_id"] == goal["id"]
 
 

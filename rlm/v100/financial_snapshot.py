@@ -7,7 +7,7 @@ from pathlib import Path
 
 def live_ledger(root: Path) -> dict:
     """Check one consistent state and its last event, without replaying all history."""
-    from rlm.v100.paper import PaperBook, number, sha, timestamp
+    from rlm.v100.paper import PaperBook, execution_cost_blocker, number, sha, timestamp
 
     book = PaperBook(root, read_only=True)
     try:
@@ -43,6 +43,10 @@ def live_ledger(root: Path) -> dict:
         ]
         for symbol in state["instruments"]:
             quote = state["quotes"].get(symbol)
+            profile = state["fee_profiles"][state["instruments"][symbol]["fee_profile"]]
+            cost_blocker = execution_cost_blocker(profile, quote or {})
+            if cost_blocker:
+                blockers.append(symbol + ": " + cost_blocker)
             if not quote:
                 blockers.append("missing quote: " + symbol)
             elif (now - timestamp(quote["available_at"])).total_seconds() > state["risk"][
@@ -58,6 +62,16 @@ def live_ledger(root: Path) -> dict:
             "updated_at": event["time"],
             "collected_at": now.isoformat(),
             "ledger_sequence": event["sequence"],
+            "last_event": {
+                "time": event["time"],
+                "kind": event["kind"],
+                "branch": event["branch"],
+                "sequence": event["sequence"],
+                "verified_tail": True,
+            },
+            "initial_capital": state["initial_capital"],
+            "registered_instruments": len(state["instruments"]),
+            "quotes_available": len(state["quotes"]),
             "blockers": blockers,
             "scope": "Current recorded state and last-event checksums checked; full historical audit and fill counts are separate. Equity uses recorded quotes, which may be stale.",
             "real_money_ready": False,

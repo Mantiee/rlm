@@ -17,6 +17,7 @@ from rlm.v100.competition import (
     require_idle_gpu,
     waiting_researcher,
 )
+from rlm.v100.cpu_pilots import schedule_cpu_pilots
 from rlm.v100.experiments import SharedLab, load_duel
 from rlm.v100.insights import extend_pool
 from rlm.v100.protection import assert_candidate_output, file_hash
@@ -135,6 +136,10 @@ def learn_loop(
             stage("preparing-verified-inputs")
             prepare_inputs(root, current_pool, suite)
             atomic_json(live, current)
+            # Independent owned-CPU pilots can run while remote inference or
+            # financial observers are unavailable. Only validated worker results
+            # may become accepted compute evidence, never master weights.
+            state["cpu_pilots"] = schedule_cpu_pilots(root, output / "cpu-pilots")
             save_progress(root, output, state)
             if paper is not None:
                 paper.phase("serving-rnd", cycle, current)

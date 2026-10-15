@@ -86,51 +86,9 @@ def collect(root: Path) -> dict:
                     {"path": str(path), "summary": "Unavailable within read budget"}
                 )
                 result["errors"].append({"path": str(path), "detail": str(error)[:300]})
-        paths = sorted(
-            (run / "learning").glob("update-*/**/training_health.json"),
-            key=lambda path: path.stat().st_mtime_ns,
-            reverse=True,
-        )
-        result["training_runs_omitted"] = max(0, len(paths) - 24)
-        for path in paths[:24]:
-            try:
-                health = read_record(path)
-                counters = {
-                    key: health.get(key)
-                    for key in (
-                        "attempted_steps",
-                        "optimizer_updates",
-                        "amp_skipped_steps",
-                        "finite_gradient_steps",
-                    )
-                }
-                if any(type(value) is not int or value < 0 for value in counters.values()):
-                    raise ValueError("Missing or invalid optimizer counters")
-                if (
-                    counters["attempted_steps"]
-                    != counters["optimizer_updates"] + counters["amp_skipped_steps"]
-                ):
-                    raise ValueError("Inconsistent optimizer counters")
-                evidence = {"path": str(path), **counters}
-                retention = path.parent / "retention.json"
-                if retention.exists():
-                    record = read_record(retention)
-                    evidence["retention"] = {
-                        "path": str(retention),
-                        "configuration": record.get("configuration"),
-                        "fisher_samples": record.get("fisher_samples"),
-                        "scope": "Configured reference; not proof of retention or promotion",
-                    }
-                growth = path.parent / "capacity-growth.json"
-                if growth.exists():
-                    evidence["capacity_growth"] = {"path": str(growth), **read_record(growth)}
-                result["training_runs"].append(evidence)
-            except (ValueError, OSError) as error:
-                result["errors"].append({"path": str(path), "detail": str(error)[:300]})
-        if result["training_runs"]:
-            result["optimizer_updates_observed"] = sum(
-                row["optimizer_updates"] for row in result["training_runs"]
-            )
+        training = training_receipts(run)
+        result["errors"].extend(training.pop("errors"))
+        result.update(training)
         for row in cycles[-4:]:
             if row.get("detail"):
                 result["errors"].append(
@@ -156,4 +114,55 @@ def collect(root: Path) -> dict:
             )
         except (ValueError, OSError) as error:
             result["errors"].append({"path": str(path), "detail": str(error)[:300]})
+    return result
+
+
+def training_receipts(run: Path) -> dict:
+    """Read current-run numerical evidence without aggregate financial/goal audits."""
+    result = {"optimizer_updates_observed": None, "training_runs": [], "errors": []}
+    paths = sorted(
+        (run / "learning").glob("update-*/**/training_health.json"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    result["training_runs_omitted"] = max(0, len(paths) - 24)
+    for path in paths[:24]:
+        try:
+            health = read_record(path)
+            counters = {
+                key: health.get(key)
+                for key in (
+                    "attempted_steps",
+                    "optimizer_updates",
+                    "amp_skipped_steps",
+                    "finite_gradient_steps",
+                )
+            }
+            if any(type(value) is not int or value < 0 for value in counters.values()):
+                raise ValueError("Missing or invalid optimizer counters")
+            if (
+                counters["attempted_steps"]
+                != counters["optimizer_updates"] + counters["amp_skipped_steps"]
+            ):
+                raise ValueError("Inconsistent optimizer counters")
+            evidence = {"path": str(path), **counters}
+            retention = path.parent / "retention.json"
+            if retention.exists():
+                record = read_record(retention)
+                evidence["retention"] = {
+                    "path": str(retention),
+                    "configuration": record.get("configuration"),
+                    "fisher_samples": record.get("fisher_samples"),
+                    "scope": "Configured reference; not proof of retention or promotion",
+                }
+            growth = path.parent / "capacity-growth.json"
+            if growth.exists():
+                evidence["capacity_growth"] = {"path": str(growth), **read_record(growth)}
+            result["training_runs"].append(evidence)
+        except (ValueError, OSError) as error:
+            result["errors"].append({"path": str(path), "detail": str(error)[:300]})
+    if result["training_runs"]:
+        result["optimizer_updates_observed"] = sum(
+            row["optimizer_updates"] for row in result["training_runs"]
+        )
     return result
