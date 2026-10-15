@@ -209,6 +209,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
         ],
         schema,
         root,
+        run_id=Path(mission_run).name if mission_run else None,
     )
     result = json.loads(message["content"])
     if (
@@ -233,6 +234,7 @@ def research_task(client, branch: str, job: dict, observations: list[dict], root
         queue.close()
     result["exercise_checks"] = checks
     result["research_trace"] = message.get("research_trace", [])
+    result["knowledge_task_id"] = message.get("knowledge_task_id")
     from rlm.v100.research_contract import assessment
 
     result["research_quality"] = assessment(root, result)

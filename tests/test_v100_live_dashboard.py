@@ -10,6 +10,7 @@ from rlm.v100 import (
     background_observer,
     dashboard_editor,
     dashboard_layout,
+    dashboard_snapshot,
     desktop,
     desktop_proxy,
     drones,
@@ -152,6 +153,118 @@ def test_goal_observer_failure_does_not_block_quote_refresh(tmp_path, monkeypatc
     )
 
 
+def test_dashboard_status_freshness_requires_a_trusted_timestamp():
+    now = 1_800_000_000.0
+    assert dashboard_snapshot.status_freshness("income_work", {"updated": now - 30}, now) == {
+        "source": "income_work",
+        "timestamp_field": "updated",
+        "stale_after_seconds": 300,
+        "observed_at": now - 30,
+        "age_seconds": 30.0,
+        "state": "fresh",
+        "detail": "Status receipt age only; underlying evidence has its own validity rules",
+    }
+    assert (
+        dashboard_snapshot.status_freshness("income_work", {"updated": now - 301}, now)["state"]
+        == "stale"
+    )
+    assert (
+        dashboard_snapshot.status_freshness("external_compute", {"updated": now}, now)["state"]
+        == "unknown"
+    )
+    assert (
+        dashboard_snapshot.status_freshness("income_work", {"updated": now + 5}, now)["state"]
+        == "unknown"
+    )
+    assert dashboard_snapshot.status_freshness("income_work", None, now)["state"] == "unavailable"
+
+
+def test_goal_status_freshness_distinguishes_missing_invalid_and_wrong_goal(tmp_path):
+    now = 1_800_000_000.0
+    path = tmp_path / "status.json"
+
+    value, freshness = dashboard_snapshot.read_goal_status(path, "goal_learning", "active", now)
+    assert value is None and freshness["state"] == "unavailable"
+
+    path.write_text("not json")
+    value, freshness = dashboard_snapshot.read_goal_status(path, "goal_learning", "active", now)
+    assert value is None and freshness["state"] == "unavailable"
+
+    path.write_text(json.dumps({"goal_id": "other", "updated": now - 10}))
+    value, freshness = dashboard_snapshot.read_goal_status(path, "goal_learning", "active", now)
+    assert value is None and freshness["state"] == "unknown"
+    assert freshness["observed_at"] is None and "different goal" in freshness["detail"]
+
+    path.write_text(json.dumps({"updated": now - 10}))
+    for name in ("goal_learning", "cpu_shadow_policy", "observer", "owned_cpu_dispatch"):
+        value, freshness = dashboard_snapshot.read_goal_status(path, name, "active", now)
+        assert value is None and freshness["state"] == "unknown"
+        assert freshness["observed_at"] is None
+        assert "no explicit goal ID" in freshness["detail"]
+
+    path.write_text(json.dumps({"goal_id": "active", "updated": now - 30}))
+    value, freshness = dashboard_snapshot.read_goal_status(path, "goal_learning", "active", now)
+    assert value["goal_id"] == "active" and freshness["state"] == "fresh"
+
+    path.write_text(json.dumps({"goal_id": "active", "updated": now - 301}))
+    _, freshness = dashboard_snapshot.read_goal_status(path, "goal_learning", "active", now)
+    assert freshness["state"] == "stale"
+
+    path.write_text(" " * (2 * 2**20 + 1))
+    value, freshness = dashboard_snapshot.read_goal_status(path, "goal_learning", "active", now)
+    assert value is None and freshness["state"] == "unavailable"
+    assert "exceeds 2 MiB" in freshness["detail"]
+
+
+def test_snapshot_goal_learning_freshness_map_tracks_receipt_state(tmp_path, monkeypatch):
+    import time
+
+    from rlm.v100 import (
+        financial_snapshot,
+        goals,
+        mission_evidence,
+        mission_view,
+        paper_labs_snapshot,
+        planning,
+        public_benchmarks,
+    )
+
+    monkeypatch.setattr(financial_snapshot, "supplement", lambda root, report, errors: report)
+    monkeypatch.setattr(paper_labs_snapshot, "snapshot", lambda root: [])
+    monkeypatch.setattr(mission_evidence, "training_receipts", lambda run: {"errors": []})
+    monkeypatch.setattr(public_benchmarks, "progress_for_run", lambda root, run: {})
+    monkeypatch.setattr(goals, "load_goal", lambda root: {"id": "active"})
+    monkeypatch.setattr(planning, "read", lambda root: {})
+    monkeypatch.setattr(mission_view, "snapshot", lambda root, mission, report: {})
+
+    path = tmp_path / "research/goal-learning/status.json"
+    freshness = dashboard_snapshot.supplement(tmp_path, {}, {}, [])["status_freshness"][
+        "goal_learning"
+    ]
+    assert freshness["state"] == "unavailable"
+
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"goal_id": "other", "updated": 1_800_000_000}))
+    freshness = dashboard_snapshot.supplement(tmp_path, {}, {}, [])["status_freshness"][
+        "goal_learning"
+    ]
+    assert freshness["state"] == "unknown"
+
+    observed_at = time.time()
+    path.write_text(json.dumps({"goal_id": "active", "updated": observed_at}))
+    freshness = dashboard_snapshot.supplement(tmp_path, {}, {}, [])["status_freshness"][
+        "goal_learning"
+    ]
+    assert freshness["state"] == "fresh"
+    assert freshness["observed_at"] == observed_at
+
+    path.write_text("invalid JSON")
+    freshness = dashboard_snapshot.supplement(tmp_path, {}, {}, [])["status_freshness"][
+        "goal_learning"
+    ]
+    assert freshness["state"] == "unavailable"
+
+
 @pytest.mark.parametrize("paper_labs", [False, True])
 def test_trusted_live_renderer_runs_on_older_layout_without_actor_sections(paper_labs):
     import shutil
@@ -196,7 +309,9 @@ const sample={collected_at:1,mission:{running:true,state:{phase:'research'}},rep
     for identity in dashboard_layout.REQUIRED_IDS:
         program += f"new Element('div').id={json.dumps(identity)};\n"
     program += dashboard_layout.APP_SCRIPT
-    program += "\nrender(sample);if(nodes.actors.children.length!==2||!nodes.goals.textContent.includes('Operator goal')||nodes.events.children.length!==1||nodes['agent-grid'].children.length!==1)throw Error('Live renderer failed');\n"
+    program += "\nsample.report.status_freshness={income_work:{source:'income_work',state:'fresh',observed_at:1800000000,age_seconds:3},external_compute:{source:'external_compute',state:'unknown',observed_at:null,age_seconds:null}};\n"
+    program += "render(sample);if(nodes.actors.children.length!==2||!nodes.goals.textContent.includes('Operator goal')||nodes.events.children.length!==1||nodes['agent-grid'].children.length!==1)throw Error('Live renderer failed');\n"
+    program += "const freshnessText=n=>typeof n==='string'?n:(n.textContent||'')+(n.children||[]).map(freshnessText).join(' ');if(!freshnessText(nodes['status-freshness-panel']).includes('external_compute')||!freshnessText(nodes['status-freshness-panel']).includes('unknown'))throw Error('Status freshness is not visible');\n"
     program += """
 const textNode={nodeType:3,nodeName:'#text',nodeValue:'previous'};const reader={nodeType:1,nodeName:'PRE',childNodes:[textNode],scrollTop:77};const freshReader={nodeType:1,nodeName:'PRE',childNodes:[{nodeType:3,nodeName:'#text',nodeValue:'updated'}]};updateNode(reader,freshReader);if(reader.childNodes[0]!==textNode||textNode.nodeValue!=='updated'||reader.scrollTop!==77)throw Error('Reading node replaced');
 latestInference={events:[{time:'2026-10-09T15:30:00Z'}],agents:[{label:'Live reader',stream_output:'fresh answer'}]};render(sample);if(!nodes['agent-grid'].children[0].children[0].children[0].textContent.includes('Live reader'))throw Error('Stale snapshot replaced live output');

@@ -59,6 +59,7 @@ function paperLabsPanel(data){
 function workView(data){
 paperLabsPanel(data);
 modelDeploymentView(data);
+statusFreshnessView(data);
 for(const id of ['actors','goals','events']){if(!$(id)){const node=document.createElement(id==='goals'?'pre':'div');node.id=id;if(id==='actors')node.className='grid';$('cards').after(node)}}
 agentView(data);
 $('actors').replaceChildren();
@@ -73,6 +74,10 @@ for(const a of data.live?.actors||[]){
  const proof=document.createElement('details'),summary=document.createElement('summary'),raw=document.createElement('pre');proof.dataset.key=a.label+'-resource-proof';summary.textContent='Source data';raw.textContent=JSON.stringify(a,null,2);proof.append(summary,raw);node.append(proof);$('actors').append(node)
 }
 restoreDisclosures();const plans=data.live?.goals||{};$('goals').textContent=JSON.stringify(plans,null,2);$('goals').style.display='none';const oldPanel=$('goals').parentElement;if(oldPanel?.tagName==='SECTION')oldPanel.style.display='none';
+}
+
+function statusFreshnessView(data){
+const rows=data.report?.status_freshness||{},p=panel('status-freshness-panel','Status receipt freshness',$('cards'));p.replaceChildren();const h=document.createElement('h2');h.textContent='Status receipt freshness';p.append(h);const note=document.createElement('p');note.className='muted';note.textContent='Age of the recorded status receipt only; this does not validate the underlying evidence. Unknown means no trusted timestamp; unavailable means the file could not be read.';p.append(note);const table=document.createElement('table'),head=document.createElement('tr');for(const label of ['Source','State','Observed at','Age']){const th=document.createElement('th');th.textContent=label;head.append(th)}table.append(head);for(const [name,row] of Object.entries(rows)){const tr=document.createElement('tr');for(const value of [row.source||name,row.state||'unknown',typeof row.observed_at==='number'?new Date(row.observed_at*1000).toLocaleString():'unknown',typeof row.age_seconds==='number'?`${Math.round(row.age_seconds)} s`:'unknown']){const td=document.createElement('td');td.textContent=String(value);tr.append(td)}table.append(tr)}if(!Object.keys(rows).length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=4;td.textContent='No status receipts recorded';tr.append(td);table.append(tr)}p.append(table);
 }
 
 function modelDeploymentView(data){
