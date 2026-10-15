@@ -398,3 +398,88 @@ def test_cuda_lane_dispatched_independently_of_finance_model_qualification(tmp_p
     assert gpu["device"] == "cuda" and gpu["phase"] == "idle"
     assert gpu["gpu_enabled"]
     assert json.loads((mailbox / "workers/debian-3060ti-cpu.json").read_text())["device"] == "cpu"
+
+
+@pytest.mark.parametrize(
+    "overrides,reason",
+    [
+        ({"cuda_job": True, "cuda_ready": False}, "cuda-telemetry-not-ready"),
+        ({"elapsed_s": 150.001}, "time-limit-exceeded"),
+        ({"rss_bytes": owned_node.CPU_RAM + 1}, "worker-rss-limit-exceeded"),
+        ({"free_ram_bytes": 2**30 - 1}, "host-ram-reserve-breached"),
+    ],
+)
+def test_owned_worker_resource_failure_records_exact_limit(overrides, reason):
+    samples = {
+        "cuda_job": False,
+        "cuda_ready": True,
+        "elapsed_s": 2,
+        "rss_bytes": 40 * 2**20,
+        "free_ram_bytes": 4 * 2**30,
+    }
+    failure = owned_node.resource_failure(**(samples | overrides))
+    assert failure is not None
+    assert failure["reason"] == reason
+    assert failure["limits"] == {"time_s": 150, "rss_mib": 768, "host_reserve_gib": 1}
+    assert failure["rss_mib"] >= 0
+    assert failure["free_ram_gib"] >= 0
+
+
+def test_owned_worker_budget_edges_stay_unchanged():
+    sample = {
+        "cuda_job": True,
+        "cuda_ready": True,
+        "elapsed_s": 150,
+        "rss_bytes": owned_node.CPU_RAM,
+        "free_ram_bytes": 2**30,
+    }
+    assert owned_node.resource_failure(**sample) is None
+    assert owned_node.resource_failure(**(sample | {"cuda_job": False, "cuda_ready": False})) is None
+
+
+def test_failed_owned_worker_persists_measured_resource_reason(tmp_path, monkeypatch):
+    import psutil
+
+    monkeypatch.setattr(
+        psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=16 * 2**30, available=4 * 2**30),
+    )
+    monkeypatch.setattr(
+        psutil,
+        "Process",
+        lambda pid: SimpleNamespace(
+            memory_info=lambda: SimpleNamespace(rss=owned_node.CPU_RAM + 1)
+        ),
+    )
+
+    class FakeProcess:
+        pid = 12345
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr(owned_node.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+    source = tmp_path / "source"
+    source.mkdir()
+    node = owned_node.Node(tmp_path / "work", source)
+    folder = tmp_path / "work/cpu/test"
+    folder.mkdir(parents=True)
+    owned_node.atomic(folder / "status.json", {"state": "queued"})
+    owned_node.atomic(folder / "job.json", {"device": "cpu"})
+    try:
+        node.run_cpu("test", folder)
+        status = json.loads((folder / "status.json").read_text())
+        assert status["state"] == "failed"
+        assert status["detail"] == "Owned CPU time/RAM reserve exceeded"
+        assert status["resource_failure"]["reason"] == "worker-rss-limit-exceeded"
+        assert status["resource_failure"]["rss_mib"] > 768
+    finally:
+        node.cpu_pool.shutdown(wait=True)

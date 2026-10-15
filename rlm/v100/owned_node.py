@@ -75,6 +75,30 @@ def resource_budget(ram_available: float, temperature: float, gpu_free: float) -
     return {"ready": not reasons, "reason": "; ".join(reasons) or "dedicated owned capacity"}
 
 
+def resource_failure(
+    *, cuda_job: bool, cuda_ready: bool, elapsed_s: float, rss_bytes: int, free_ram_bytes: int
+) -> dict | None:
+    """Explain a fixed worker budget failure without changing its admission limits."""
+    if cuda_job and not cuda_ready:
+        reason = "cuda-telemetry-not-ready"
+    elif elapsed_s > 150:
+        reason = "time-limit-exceeded"
+    elif rss_bytes > CPU_RAM:
+        reason = "worker-rss-limit-exceeded"
+    elif free_ram_bytes < 2**30:
+        reason = "host-ram-reserve-breached"
+    else:
+        return None
+    return {
+        "reason": reason,
+        "cuda_ready": bool(cuda_ready) if cuda_job else None,
+        "elapsed_s": round(elapsed_s, 3),
+        "rss_mib": round(rss_bytes / 2**20, 3),
+        "free_ram_gib": round(free_ram_bytes / 2**30, 3),
+        "limits": {"time_s": 150, "rss_mib": 768, "host_reserve_gib": 1},
+    }
+
+
 class Node:
     def __init__(self, root: Path, source: Path):
         import psutil
@@ -335,12 +359,15 @@ class Node:
                     while process.poll() is None:
                         if (folder / "cancel").exists():
                             raise RuntimeError("Cancelled by owning controller")
-                        if (
-                            (cuda_job and not self.state.get("ready"))
-                            or time.monotonic() - started > 150
-                            or psutil.Process(process.pid).memory_info().rss > CPU_RAM
-                            or psutil.virtual_memory().available < 2**30
-                        ):
+                        failure = resource_failure(
+                            cuda_job=cuda_job,
+                            cuda_ready=bool(self.state.get("ready")),
+                            elapsed_s=time.monotonic() - started,
+                            rss_bytes=psutil.Process(process.pid).memory_info().rss,
+                            free_ram_bytes=psutil.virtual_memory().available,
+                        )
+                        if failure is not None:
+                            status["resource_failure"] = failure
                             raise RuntimeError("Owned CPU time/RAM reserve exceeded")
                         atomic(
                             folder / "status.json",
