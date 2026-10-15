@@ -20,6 +20,16 @@ function evidenceBars(parent,title,rows,unit){
 }
 function liveMissionBoard(data){
  const report=data.report||{}, mission=data.mission||{}, learning=mission.learning||{}, live=data.live||{};
+ const statusFreshness=report.status_freshness||{};
+ const receiptFreshness=(name,receipt)=>{
+  const recorded=statusFreshness[name]?.state;
+  if(['fresh','stale','unknown','unavailable'].includes(recorded))return recorded;
+  const stamp=receipt?.updated;
+  const observed=typeof stamp==='number'?stamp:typeof stamp==='string'?Date.parse(stamp)/1000:NaN;
+  if(!Number.isFinite(observed)||observed<=0)return 'unknown';
+  const age=Date.now()/1000-observed;
+  return age<0?'unknown':age<=300?'fresh':'stale';
+ };
  const mount=$('cards');if(!mount)return;
  const box=panel('live-mission-board','Live mission control',mount);
  box.replaceChildren();
@@ -52,15 +62,30 @@ function liveMissionBoard(data){
   metric(`Paper ${branch} modeled costs`,money(portfolio.modeled_costs),'No verified earnings; all numbers are simulation');
  }
  const node=report.node||report.node3060||report.remote_node||{};
- if(node.admitted!==undefined){metric('RTX 3060 Ti GPU',node.admitted?'Admitted':'Not admitted',node.reason||'No qualification receipt');metric('RTX 3060 Ti CPU',node.resources?.cpu_ready?'Available':'Not ready',`${node.resources?.cpu_active??'unknown'} jobs active, ${(node.resources?.cpu_slots??'unknown')} slots; GPU admission is independent`)}
+ const nodeFreshness=receiptFreshness('node3060',node);
+ const nodeAge=statusFreshness.node3060?.age_seconds;
+ const nodeAgeLabel=typeof nodeAge==='number'?` · receipt ${Math.round(nodeAge)}s old`:'';
+ if(node.admitted!==undefined){metric('RTX 3060 Ti GPU',nodeFreshness==='fresh'?(node.admitted?'Admitted':'Not admitted'):nodeFreshness==='stale'?'Stale receipt':'Unknown',`${nodeFreshness==='fresh'?'Current node receipt':nodeFreshness==='stale'?'Last recorded node result':'Node receipt freshness unknown'}${nodeAgeLabel} · ${node.reason||'No qualification detail'}`);metric('RTX 3060 Ti CPU',nodeFreshness==='fresh'?(node.resources?.cpu_ready?'Available':'Not ready'):nodeFreshness==='stale'?'Stale receipt':'Unknown',`${nodeFreshness==='fresh'?'Current node receipt':nodeFreshness==='stale'?'Last recorded node result':'Node receipt freshness unknown'}${nodeAgeLabel} · ${node.resources?.cpu_active??'unknown'} jobs active, ${(node.resources?.cpu_slots??'unknown')} slots; GPU admission is independent`)}
  const dispatch=report.owned_cpu_dispatch||{};
  metric('Owned compute experiment',dispatch.state||'Not recorded',dispatch.reason||dispatch.next_evidence||'Verified source-disjoint outcomes required before GPU/CPU job');
- if(node.resources)metric('3060 GPU compute',node.resources.gpu_compute_claimed?'Running experiment':node.resources.ready?'Available; no confirmed GPU task':'Not ready',`${node.resources.gpu_utilization_percent??'unknown'}% GPU; ${(node.resources.free_vram_gib??'unknown')} GiB VRAM free`);
+ if(node.resources)metric('3060 GPU compute',nodeFreshness==='fresh'?(node.resources.gpu_compute_claimed?'Running experiment':node.resources.ready?'Available; no confirmed GPU task':'Not ready'):nodeFreshness==='stale'?'Stale receipt':'Unknown',`${nodeFreshness==='fresh'?'Current node receipt':nodeFreshness==='stale'?'Last recorded node result':'Node receipt freshness unknown'}${nodeAgeLabel} · Last recorded: ${node.resources.gpu_utilization_percent??'unknown'}% GPU; ${(node.resources.free_vram_gib??'unknown')} GiB VRAM free`);
  const note=document.createElement('p');note.className='muted';
  note.textContent='Real income: not independently verified. HOLD is a decision, not a fill. Paper results and historical tests are not withdrawable earnings.';box.append(note);
  const blocker=document.createElement('div');blocker.className='live-board-blocker';
- const bt=document.createElement('strong');bt.textContent='Current blocker';
- const bd=document.createElement('p');bd.textContent=report.paper_spot_rules?.state==='blocked'?report.paper_spot_rules.reason:report.paper_blockers?.join('; ')||report.income_work?.error||learning.reason||report.paper_fee_source?.error||'No data source blocker currently recorded; trades may still be unavailable';
+ const bt=document.createElement('strong');bt.textContent='Current blocker / last recorded issue';
+ const livePaperStamp=Date.parse(report.live_paper?.collected_at||'')/1000;
+ const livePaperAge=Date.now()/1000-livePaperStamp;
+ const livePaperFresh=Number.isFinite(livePaperStamp)&&livePaperStamp>0&&livePaperAge>=0&&livePaperAge<=300;
+ const livePaperBlockers=Array.isArray(report.paper_blockers)?report.paper_blockers:[];
+ const recordedIssues=[];
+ if(report.paper_spot_rules?.state==='blocked')recordedIssues.push({name:'Paper spot rules',value:report.paper_spot_rules.reason,freshness:receiptFreshness('paper_spot_rules',report.paper_spot_rules)});
+ if(livePaperBlockers.length)recordedIssues.push({name:'Live paper ledger',value:livePaperBlockers.join('; '),freshness:livePaperFresh?'fresh':'stale'});
+ if(report.income_work?.error)recordedIssues.push({name:'Income work',value:report.income_work.error,freshness:receiptFreshness('income_work',report.income_work)});
+ if(learning.reason)recordedIssues.push({name:'Learning loop',value:learning.reason,freshness:receiptFreshness('learning_activity',report.learning_activity)});
+ if(report.paper_fee_source?.error)recordedIssues.push({name:'Paper fee source',value:report.paper_fee_source.error,freshness:receiptFreshness('paper_fee_source',report.paper_fee_source)});
+ const currentIssue=recordedIssues.find(issue=>issue.freshness==='fresh');
+ const lastIssue=recordedIssues[0];
+ const bd=document.createElement('p');bd.textContent=currentIssue?`${currentIssue.name}: ${currentIssue.value}`:lastIssue?`No fresh blocker receipt. Last recorded issue (${lastIssue.freshness}): ${lastIssue.name}: ${lastIssue.value}`:'No fresh blocker receipt; trades or income can still be unavailable.';
  blocker.append(bt,bd);box.append(blocker);
  if(learning.last_cycle?.detail){const past=document.createElement('p');past.className='muted';past.textContent='Previous cycle failure (historical, not the current blocker): '+learning.last_cycle.detail;box.append(past)}
  const events=document.createElement('div');events.className='live-board-events';
@@ -76,7 +101,7 @@ function liveMissionBoard(data){
 function insightsView(data){
  liveMissionBoard(data);
  const r=data.report||{},g=r.mission_evidence?.goal_learning||{},policy=g.cpu_shadow_policy||{},work=r.income_work||{},sources=r.source_acquisition||{},workFreshness=r.status_freshness?.income_work||{};
- const p=panel('overview-panel','What is actually happening',$('cards'));p.replaceChildren();const h=document.createElement('h2');h.textContent='Work towards the goal';p.append(h);textField(p,'Verified revenue','Unavailable: no verified payment ledger connected');textField(p,'Current model-selected work',work.state||'No work receipt in this snapshot');textField(p,'Last work recorded',work.updated?new Date(work.updated*1000).toLocaleString():'unknown');textField(p,'Work receipt age',work.updated?`${Math.max(0,Math.round((Date.now()/1000-work.updated)/60))} minutes; refreshing the page does not create a new result`:'No dated work receipt');textField(p,'Successful tool receipts in last experiment',work.successful_tool_receipts);textField(p,'Meaning','A source read or a successful process is not a validated experiment, a model update or earned money.');textField(p,'CPU shadow learning',policy.state||'No policy receipt');textField(p,'Verified outcomes used by CPU policy',policy.trained_outcomes);textField(p,'Gemma candidates selected for next serving',r.accepted_weight_updates_this_run);const currentWorkError=workFreshness.state==='stale'?'No fresh income-work receipt; last recorded error is historical: '+(work.error||'none recorded'):work.error||r.learning_activity?.reason||r.paper_fee_source?.error||'None recorded in current receipts';textField(p,'Current blocker / last recorded error',currentWorkError);
+ const p=panel('overview-panel','What is actually happening',$('cards'));p.replaceChildren();const h=document.createElement('h2');h.textContent='Work towards the goal';p.append(h);textField(p,'Verified revenue','Unavailable: no verified payment ledger connected');textField(p,'Current model-selected work',work.state||'No work receipt in this snapshot');textField(p,'Last work recorded',work.updated?new Date(work.updated*1000).toLocaleString():'unknown');textField(p,'Work receipt age',work.updated?`${Math.max(0,Math.round((Date.now()/1000-work.updated)/60))} minutes; refreshing the page does not create a new result`:'No dated work receipt');textField(p,'Successful tool receipts in last experiment',work.successful_tool_receipts);textField(p,'Meaning','A source read or a successful process is not a validated experiment, a model update or earned money.');textField(p,'CPU shadow learning',policy.state||'No policy receipt');textField(p,'Verified outcomes used by CPU policy',policy.trained_outcomes);textField(p,'Gemma candidates selected for next serving',r.accepted_weight_updates_this_run);const issueReceipts=[{name:'Income work',value:work.error,freshness:workFreshness.state||'unknown'},{name:'Learning loop',value:r.learning_activity?.reason,freshness:r.status_freshness?.learning_activity?.state||'unknown'},{name:'Paper fee source',value:r.paper_fee_source?.error,freshness:r.status_freshness?.paper_fee_source?.state||'unknown'}].filter(issue=>issue.value);const reportedIssue=issueReceipts.find(issue=>issue.freshness==='fresh')||issueReceipts[0];const currentWorkError=reportedIssue?`${reportedIssue.freshness==='fresh'?'Current':reportedIssue.freshness==='stale'?'Last recorded (historical)':'Last recorded (freshness unknown)'} ${reportedIssue.name} issue: ${reportedIssue.value}`:'None recorded in current receipts';textField(p,'Current blocker / last recorded error',currentWorkError);
  detailsField(p,'Last experiment receipt',JSON.stringify(work,null,2),'overview-work');
  const income=$('income-view');if(income){const counts=new Map();for(const c of r.income_opportunities?.candidates||[]){const name=c.specification?.domain||'Unspecified domain';counts.set(name,(counts.get(name)||0)+1)}evidenceBars(income,'Research coverage by domain (proposals, not earnings)',[...counts],'proposals');evidenceBars(income,'Source acquisition quality',[['Distinct contents',sources.distinct_contents],['Unchanged rereads',sources.unchanged_rereads]],'retrievals');textField(income,'Outcome charts','No verified revenue or completed-test time series for these domains is recorded. Proposal counts and estimated rewards cannot supply a profit curve.');}
  const learning=$('goal-learning-view');if(learning){textField(learning,'CPU policy',policy.state||'unavailable');textField(learning,'Independent outcomes trained',policy.trained_outcomes);textField(learning,'Scored replay predictions',policy.prequential_samples);if(policy.prequential_samples>0&&typeof policy.prequential_brier==='number'){const references=[policy.uniform_baseline_brier,policy.prequential_flat_baseline_brier,policy.prequential_frequency_baseline_brier].filter(x=>typeof x==='number'&&Number.isFinite(x));textField(learning,'Compared with strongest recorded reference',references.length&&policy.prequential_brier<Math.min(...references)?'Lower Brier in this replay only; forward advantage unproven':'No improvement over the strongest reference in this replay')}evidenceBars(learning,'CPU forecast replay comparison: lower Brier is better',[['Learned shadow',policy.prequential_brier],['Uniform reference',policy.prequential_samples>0?policy.uniform_baseline_brier:null],['Always flat',policy.prequential_flat_baseline_brier],['Prior frequency',policy.prequential_frequency_baseline_brier]],'Brier');textField(learning,'Score scope','Exploratory prequential replay on the same scored samples. Not profit, not Gemma training and not proof of a forward advantage.');}
