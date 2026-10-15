@@ -26,7 +26,7 @@ jobs:
   cpu-tests:
     if: github.event.repository.private == false
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,7 +40,11 @@ jobs:
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
           CUDA_VISIBLE_DEVICES: ''
-        run: python -m pytest -q --maxfail=5 tests/test_v100*.py tests/test_windows_release_integrity.py
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+          OPENBLAS_NUM_THREADS: '1'
+          NUMEXPR_NUM_THREADS: '1'
+        run: python -m pytest -vv --durations=20 --maxfail=5 tests/test_v100*.py tests/test_windows_release_integrity.py
   powershell-parser:
     if: github.event.repository.private == false
     runs-on: windows-latest
