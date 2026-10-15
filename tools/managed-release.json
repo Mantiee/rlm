@@ -96,7 +96,6 @@
     "tools/autostart-watchdog.ps1": "4aa9bb4ef275d6b8b3ee7c86f5375b2a828e53a5b6a0486c578016b8c154eaed",
     "tools/resume-rtx3090-helper.ps1": "56e35e1e0392782107a123daf4311fcf86b0371ee681a4b25702cefabfec1bcb",
     "rlm/v100/file_lock.py": "0067967286d37a66bccaf5c3ab5c9db10b1e43cc69aa8677965e6fd55a97c2d7",
-    "tools/update-synta-v106.sh": "961da1d17d9a59fdbba9b581993ec49a3326d2938ff2e6cc0afe1512d0d5902b",
     "tools/qualify-synta-models-windows.ps1": "a25ee849ee38b118e7f541bf57d11e0464a0bfa32ed7d96140f290fba12edc4a",
     "rlm/v100/activity.py": "4be3a89e90f5a06c8f6e8552a52746a0f42151a5ce39104621036efb34ea2e3b",
     "rlm/v100/architectures.py": "ef494030b302149cf11506e74c67d51951e5004b4a93dc4c53782acca161e04b",

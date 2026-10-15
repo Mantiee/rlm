@@ -38,11 +38,10 @@ def test_managed_channel_v108_redirects_legacy_income_link_and_refreshes_dashboa
 
 
 def test_v107_and_v108_updaters_are_monotonic_successors():
-    v106 = (ROOT / "tools/update-synta-v106.sh").read_text()
     v107 = (ROOT / "tools/update-synta-v107.sh").read_text()
     v108 = (ROOT / "tools/update-synta-v108.sh").read_text()
-    assert "range(78, 107)" in v106
-    assert "0.1.3+v100.106" in v106
+    manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
+    assert "tools/update-synta-v106.sh" not in manifest["files"]
     assert "range(78, 108)" in v107
     assert "requires v78-v107" in v107
     assert "0.1.3+v100.107" in v107
