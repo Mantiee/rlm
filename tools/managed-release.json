@@ -65,7 +65,7 @@
     "rlm/v100/remote_nodes.py": "28474100edb4c4da9968ea34b8b9301b3bc5e5b8f709aa3c241053a2d12346ce",
     "rlm/v100/chat_probe.py": "e3a45fafceba5ec4124eef14f8ce0be9777c36684114e5747967e2e5602b1a49",
     "tools/update-synta-v102.sh": "5c0168ad730bf83b1664565036844a8edd78d82fcd4f6b5db3c47aeca60fe217",
-    "rlm/v100/chat_readonly.py": "4d188f5d54b3e6cade9db1f0f5e8a18f46eaada3f5374a8870d46d97fde01ecb",
+    "rlm/v100/chat_readonly.py": "5d096b1cce40c161c4bdf55e17c2d813cda4bd690f7daa48c1fb2d178dc0fbff",
     "rlm/v100/remote_access.py": "01c87f6eb03f5ca4f08f37c8f1ae87f375777d1cebefa0893d66896811950d56",
     "rlm/v100/chat_commands.py": "64f19ecc7f8aebf71789348bb96c4bf01f89287a0a5e7c2d83027162d823cab0",
     "rlm/v100/streaming.py": "a6825da6c7b252c19d81f275d3bdf5fe75831a15efa6fa81b58489572f3f2fcd",
