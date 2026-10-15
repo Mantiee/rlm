@@ -5,10 +5,11 @@ import pytest
 
 from rlm.v100 import backtesting, mission_chat, trade_explorer
 from tests.test_v100_backtesting import candles
-from tests.test_v100_paper import decide, quote, setup
+from tests.test_v100_paper import allow_cost_math_only, decide, quote, setup
 
 
-def test_forward_chart_matches_real_ledger_fills_and_costs_without_writing(tmp_path):
+def test_forward_chart_matches_real_ledger_fills_and_costs_without_writing(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(
         tmp_path, fee_changes={"entry_minimum_commission": "2", "exit_minimum_commission": "3"}
     )

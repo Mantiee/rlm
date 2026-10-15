@@ -2,7 +2,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from rlm.v100 import cli, inference_benchmark, speculative
+from rlm.v100 import cli, competition, inference_benchmark, serving, speculative
 from rlm.v100.common import atomic_json
 from rlm.v100.serving import receipt_path
 
@@ -19,7 +19,7 @@ def test_cli_serve_uses_accepted_manager_and_waits_in_foreground(tmp_path, monke
         yield profile
         events.append(("exit",))
 
-    monkeypatch.setattr("rlm.v100.competition.managed_server", server)
+    monkeypatch.setattr(competition, "managed_server", server)
     monkeypatch.setattr(
         cli,
         "wait_for_managed_server",
@@ -47,7 +47,7 @@ def test_cli_ctrl_c_unwinds_managed_server_context(tmp_path, monkeypatch):
         finally:
             events.append(("cleanup-owned-child",))
 
-    monkeypatch.setattr("rlm.v100.competition.managed_server", server)
+    monkeypatch.setattr(competition, "managed_server", server)
     monkeypatch.setattr(
         cli,
         "wait_for_managed_server",
@@ -71,7 +71,7 @@ def test_wait_for_managed_server_uses_receipt_process_identity(tmp_path, monkeyp
             raise value
         return value
 
-    monkeypatch.setattr("rlm.v100.serving.process_identity", process_identity)
+    monkeypatch.setattr(serving, "process_identity", process_identity)
     pauses = []
     cli.wait_for_managed_server(profile, tmp_path, pause=pauses.append)
     assert seen == [1234, 1234]
@@ -87,7 +87,7 @@ def test_mtp_writer_holds_8089_candidate_lease_for_full_run(tmp_path, monkeypatc
         yield True
         events.append(("exit",))
 
-    monkeypatch.setattr("rlm.v100.serving.endpoint_lease", lease)
+    monkeypatch.setattr(serving, "endpoint_lease", lease)
     monkeypatch.setattr(
         speculative,
         "_test_mtp_unleased",
@@ -110,7 +110,7 @@ def test_inference_benchmark_writer_leases_selected_port(tmp_path, monkeypatch):
         yield True
         events.append(("exit",))
 
-    monkeypatch.setattr("rlm.v100.serving.endpoint_lease", lease)
+    monkeypatch.setattr(serving, "endpoint_lease", lease)
     monkeypatch.setattr(
         inference_benchmark,
         "_run_unleased",
@@ -167,7 +167,7 @@ def test_inference_benchmark_legacy_call_uses_ai_v100_root(tmp_path, monkeypatch
         events.append(("exit",))
 
     monkeypatch.setenv("AI_V100_ROOT", str(tmp_path))
-    monkeypatch.setattr("rlm.v100.serving.endpoint_lease", lease)
+    monkeypatch.setattr(serving, "endpoint_lease", lease)
     monkeypatch.setattr(
         inference_benchmark,
         "_run_unleased",

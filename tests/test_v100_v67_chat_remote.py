@@ -211,6 +211,11 @@ def test_standalone_work_ignores_history_and_output_recovery_cannot_apply_plans(
         }
 
     client.request = request
+    # This case isolates conversation history and output recovery; serving
+    # process/receipt identity has independent tests.
+    monkeypatch.setattr(
+        mission_chat, "assert_served_expert", lambda client, profile, root: client.request("/props")
+    )
     monkeypatch.setattr(competition, "helper_client", lambda *a: client)
     seen = []
 
@@ -273,7 +278,7 @@ def test_phone_signin_is_not_serve_readiness(tmp_path, monkeypatch, configured):
         {
             "owner_login": "owner",
             "origin": "https://" + host,
-            "dashboard": "http://192.168.0.68:8765",
+            "dashboard": "http://127.0.0.1:8765",
         },
     )
 

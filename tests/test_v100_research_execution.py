@@ -63,7 +63,10 @@ def test_quality_migration_retains_text_and_backup(tmp_path):
 
 def test_operator_disabled_gpu_never_contacts_remote_helper(tmp_path, monkeypatch):
     atomic_json(tmp_path / "research/user-preferences.json", {"remote_helper_enabled": False})
-    profile = {"resources": {"device": "remote"}, "runtime": {}}
+    profile = {
+        "resources": {"device": "remote"},
+        "runtime": {"base_url": "http://10.0.0.1:11435", "model_name": "gemma4-test"},
+    }
     atomic_json(tmp_path / "remote.json", profile)
     monkeypatch.setattr(competition, "load_profile", lambda *args: profile)
     monkeypatch.setattr(
