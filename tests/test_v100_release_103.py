@@ -14,12 +14,23 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_managed_channel_is_a_genuine_pinned_new_package():
     manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
     config = (ROOT / "pyproject.toml").read_text()
-    assert manifest["version"] == 105
-    assert 'version = "0.1.3+v100.105"' in config
+    assert manifest["version"] == 107
+    assert 'version = "0.1.3+v100.107"' in config
     installer = manifest["linux_installer"]
-    assert installer == "tools/update-synta-v105.sh"
+    assert installer == "tools/update-synta-v107.sh"
     content = (ROOT / installer).read_bytes()
     assert manifest["files"][installer] == hashlib.sha256(content).hexdigest()
+
+
+def test_v107_updater_is_a_new_monotonic_successor_without_rewriting_v106():
+    previous = (ROOT / "tools/update-synta-v106.sh").read_text()
+    current = (ROOT / "tools/update-synta-v107.sh").read_text()
+    assert "range(78, 107)" in previous
+    assert "0.1.3+v100.106" in previous
+    assert "range(78, 108)" in current
+    assert "requires v78-v107" in current
+    assert "0.1.3+v100.107" in current
+    assert "v107-package-recovery" in current
 
 
 def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
@@ -35,12 +46,17 @@ def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
     assert "No mission profile to preserve" in content
     assert "flock -n -x 9" in content
     bash = shutil.which("bash")
+    git = shutil.which("git")
+    if git:
+        git_bash = Path(git).parents[1] / "bin/bash.exe"
+        if git_bash.is_file():
+            bash = str(git_bash)
     assert bash, "Bash is required to validate the Linux installer"
     parsed = subprocess.run([bash, "-n", str(script)], capture_output=True, text=True)
     assert parsed.returncode == 0, parsed.stderr
 
 
-@pytest.mark.parametrize("release", [104, 105])
+@pytest.mark.parametrize("release", [104, 105, 106, 107])
 def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release):
     content = (ROOT / f"tools/update-synta-v{release}.sh").read_text()
     assert "active candidate training/evaluation retained".lower() in content.lower()
@@ -52,6 +68,11 @@ def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release
     assert "synta-owned-nodes.service" not in content
     assert f"0.1.3+v100.{release}" in content
     bash = shutil.which("bash")
+    git = shutil.which("git")
+    if git:
+        git_bash = Path(git).parents[1] / "bin/bash.exe"
+        if git_bash.is_file():
+            bash = str(git_bash)
     assert bash
     parsed = subprocess.run(
         [bash, "-n", str(ROOT / f"tools/update-synta-v{release}.sh")],

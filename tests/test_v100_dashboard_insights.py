@@ -151,7 +151,9 @@ def test_live_board_distinguishes_completions_failures_and_idle_gpu():
     from rlm.v100.dashboard_insights import SCRIPT
 
     assert "failed; ${evaluation.state||'unknown'}" in SCRIPT
-    assert "Accepted new model" in SCRIPT
+    assert "Candidate selected for next serving" in SCRIPT
+    assert "activity.accepted_updates??'Unknown'" in SCRIPT
+    assert "it does not prove serving loaded it or revenue" in SCRIPT
     assert "3060 GPU compute" in SCRIPT
     assert "No recent completed operations" in SCRIPT
 
@@ -183,4 +185,32 @@ def test_live_training_never_reuses_previous_run_evidence(tmp_path):
     report = {"mission_evidence": {"run": "old", "optimizer_updates_observed": 99}}
     value = dashboard_snapshot.supplement(tmp_path, {}, report, [])
     assert value["mission_evidence"]["optimizer_updates_observed"] is None
-    assert value["mission_evidence"]["run"] is None
+
+
+def test_live_training_receipt_preserves_counter_and_writer_timestamp(tmp_path):
+    run = tmp_path / "research/mission/run-current"
+    path = run / "learning/update-0002/generation-01/A/training/training_health.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "attempted_steps": 50,
+                "optimizer_updates": 49,
+                "amp_skipped_steps": 1,
+                "finite_gradient_steps": 49,
+                "updated_at": 1000.0,
+            }
+        )
+    )
+    report = {"mission_evidence": {"run": str(run)}}
+    value = dashboard_snapshot.supplement(tmp_path, {"run": str(run), "running": True}, report, [])
+    assert value["mission_evidence"]["optimizer_updates_observed"] == 49
+    assert value["mission_evidence"]["optimizer_receipt_updated_at"] == 1000.0
+    assert value["learning_activity_status"]["optimizer_evidence"]["activity_state"] == "stale"
+
+
+def test_learning_panel_displays_optimizer_receipt_freshness_separately():
+    from rlm.v100.dashboard_layout import PAGE
+
+    assert "Last optimizer receipt" in PAGE
+    assert "Optimizer receipt detail" in PAGE

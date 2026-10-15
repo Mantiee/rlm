@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from rlm.clients.llamacpp import LlamaCppClient
+from rlm.v100 import file_lock
 from rlm.v100.activity import ActivityLog, _exclusive_file_lock, append_locked
 from rlm.v100.experiments import SharedLab
 
@@ -23,6 +24,16 @@ def _hold_activity_lock(path, acquired, release):
             acquired.set()
             if not release.wait(10):
                 raise TimeoutError("test did not release the activity lock")
+
+
+def _hold_shared_activity_lock(path, acquired, release):
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        file_lock.flock(handle, file_lock.LOCK_SH)
+        acquired.set()
+        if not release.wait(10):
+            raise TimeoutError("test did not release the shared activity lock")
+        file_lock.flock(handle, file_lock.LOCK_UN)
 
 
 def _append_activity_after_signal(path, started, completed):
@@ -120,6 +131,51 @@ def test_append_locked_waits_for_another_process(tmp_path):
     assert writer.exitcode == 0
     assert completed.is_set()
     assert path.read_text() == "writer completed\n"
+
+
+def test_file_lock_nonblocking_mode_reports_process_contention(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    path = tmp_path / "activity.lock"
+    acquired = context.Event()
+    release = context.Event()
+    holder = context.Process(target=_hold_activity_lock, args=(path, acquired, release))
+    try:
+        holder.start()
+        assert acquired.wait(5), "lock-holder process did not acquire the file lock"
+        with path.open("a", encoding="utf-8") as handle:
+            with pytest.raises(BlockingIOError):
+                file_lock.flock(handle, file_lock.LOCK_EX | file_lock.LOCK_NB)
+    finally:
+        release.set()
+        if holder.pid is not None:
+            holder.join(5)
+            if holder.is_alive():
+                holder.terminate()
+                holder.join(2)
+    assert holder.exitcode == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows serializes shared locks exclusively")
+def test_windows_shared_file_locks_serialize_across_processes(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    path = tmp_path / "shared.lock"
+    acquired = context.Event()
+    release = context.Event()
+    holder = context.Process(target=_hold_shared_activity_lock, args=(path, acquired, release))
+    try:
+        holder.start()
+        assert acquired.wait(5), "shared-lock holder did not acquire the file lock"
+        with path.open("a", encoding="utf-8") as handle:
+            with pytest.raises(BlockingIOError):
+                file_lock.flock(handle, file_lock.LOCK_SH | file_lock.LOCK_NB)
+    finally:
+        release.set()
+        if holder.pid is not None:
+            holder.join(5)
+            if holder.is_alive():
+                holder.terminate()
+                holder.join(2)
+    assert holder.exitcode == 0
 
 
 @pytest.mark.parametrize("branch,actor", [("../bad", "model"), ("A", "../bad")])

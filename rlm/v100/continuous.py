@@ -4,6 +4,7 @@ import copy
 import json
 import shutil
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
@@ -22,6 +23,56 @@ from rlm.v100.experiments import SharedLab, load_duel
 from rlm.v100.insights import extend_pool
 from rlm.v100.protection import assert_candidate_output, file_hash
 from rlm.v100.researchers import compact_result, research_task, review_research
+
+
+class _HeartbeatRefresher:
+    """Refresh loop liveness without implying optimizer progress."""
+
+    def __init__(self, path: Path, interval: int = 30):
+        if type(interval) is not int or interval < 1:
+            raise ValueError("Heartbeat refresh interval must be a positive integer")
+        self.path = path
+        self.interval = interval
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._state: dict | None = None
+        self._thread: threading.Thread | None = None
+
+    def record(self, state: dict) -> None:
+        """Record a newly entered stage and begin refreshing its liveness age."""
+        with self._lock:
+            self._state = {
+                **state,
+                "updated": time.time(),
+                "heartbeat_kind": "liveness",
+                "scope": "Liveness only; current loop stage, not optimizer progress or acceptance",
+            }
+            atomic_json(self.path, self._state)
+
+    def refresh(self) -> None:
+        """Refresh only the timestamp; stage details and counters remain untouched."""
+        with self._lock:
+            if self._state is None:
+                return
+            self._state = {**self._state, "updated": time.time()}
+            atomic_json(self.path, self._state)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            self.refresh()
+
+    def __enter__(self):
+        self._thread = threading.Thread(
+            target=self._run, name="synta-learning-heartbeat", daemon=True
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+        return False
 
 
 def learn_loop(
@@ -104,22 +155,34 @@ def learn_loop(
     if paper is not None:
         state["paper_settings_sha256"] = paper.settings_sha
     cycle = 0
+    paper_decision_interval = (
+        max(60, min(300, paper.settings["observer_interval"])) if paper is not None else None
+    )
+    next_paper_decision = 0.0
+
+    def maybe_run_paper_decisions():
+        nonlocal next_paper_decision
+        if paper is None or time.monotonic() < next_paper_decision:
+            return
+        # The main serving endpoint is already held by this mission. Keep model
+        # requests serialized with research and never start another GPU context.
+        paper.decision_round(current, cycle)
+        next_paper_decision = time.monotonic() + paper_decision_interval
+
+    heartbeat = _HeartbeatRefresher(output / "heartbeat.json")
 
     def stage(name: str, reason: str | None = None, next_check: float | None = None):
-        atomic_json(
-            output / "heartbeat.json",
+        heartbeat.record(
             {
                 "cycle_in_progress": cycle,
                 "stage": name,
-                "updated": time.time(),
                 "reason": reason,
                 "next_check": next_check,
                 "goal_id": (goal or {}).get("id"),
-                "scope": "Last entered loop stage, not a verified optimizer or acceptance counter",
-            },
+            }
         )
 
-    with ExitStack() as scopes:
+    with ExitStack() as scopes, heartbeat:
         if paper is not None:
             scopes.enter_context(paper)
         while cycles == 0 or cycle < cycles:
@@ -158,7 +221,12 @@ def learn_loop(
                     branch_path = output / f"accepted-{branch}.json"
                     atomic_json(branch_path, parent)
                     atomic_json(output.parent / "serving-active.json", parent)
-                    with managed_server(branch_path, root, output / f"accepted-{branch}.log"):
+                    with managed_server(
+                        branch_path,
+                        root,
+                        output / f"accepted-{branch}.log",
+                        lifecycle_role="accepted",
+                    ):
                         with waiting_researcher(
                             researcher_path, root, output / "researcher.log", fallback=parent
                         ) as helper:
@@ -184,8 +252,9 @@ def learn_loop(
             atomic_json(output.parent / "serving-active.json", current)
             # Serve the current version during R&D/waiting. Only our own inference
             # process is stopped for the training phase; never another user's server.
-            with managed_server(live, root, output / "live-server.log"):
+            with managed_server(live, root, output / "live-server.log", lifecycle_role="accepted"):
                 stage("serving-research")
+                maybe_run_paper_decisions()
                 if (
                     current.get("resources", {}).get("public_benchmarks")
                     and not current["resources"].get("public_baseline")
@@ -336,6 +405,7 @@ def learn_loop(
                             while time.monotonic() < deadline:
                                 if paper is not None:
                                     paper.check()
+                                    maybe_run_paper_decisions()
                                 time.sleep(max(0, min(1, deadline - time.monotonic())))
                         continue
             # Avoid training indefinitely on a stale dataset. Its immutable prior

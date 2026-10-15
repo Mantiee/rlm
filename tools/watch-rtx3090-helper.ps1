@@ -10,6 +10,18 @@ while ($true) {
     $cpu = Get-CimInstance Win32_Processor
     Write-Host ('CPU total: {0:N0}% | RAM available: {1:N1} GiB' -f (($cpu | Measure-Object LoadPercentage -Average).Average), ($os.FreePhysicalMemory / 1MB))
     Write-Host 'GPU values are for the entire board. Helper pacing is not a hard utilization/power limit.'
+    $breakerPath = Join-Path $dir 'watchdog-state.json'
+    if (Test-Path -LiteralPath $breakerPath) {
+        try {
+            $breaker = Get-Content -Raw -LiteralPath $breakerPath | ConvertFrom-Json
+            if ($breaker.circuit_open) {
+                Write-Host ('CIRCUIT OPEN | failures={0} | {1}' -f $breaker.consecutive_failures, $breaker.last_error) -ForegroundColor Red
+                Write-Host ("After reviewing the cause, reset with: Set-Content -NoNewline -Path '{0}' -Value RESET_AFTER_REVIEW" -f (Join-Path $dir 'watchdog-reset.txt')) -ForegroundColor Yellow
+            } elseif ($breaker.retry_after_utc) {
+                Write-Host ('Retry backoff until {0} | failures={1}/3' -f $breaker.retry_after_utc, $breaker.consecutive_failures) -ForegroundColor Yellow
+            }
+        } catch { Write-Host 'WATCHDOG STATE INVALID: helper is fail-closed; inspect watchdog-state.json.' -ForegroundColor Red }
+    }
     try {
         $loaded = Invoke-RestMethod -Uri ($Endpoint.TrimEnd('/') + '/api/ps') -TimeoutSec 2
         $loaded.models | Select-Object name,context_length,@{Name='VRAM_GiB';Expression={[math]::Round($_.size_vram/1GB,2)}} | Format-Table -AutoSize

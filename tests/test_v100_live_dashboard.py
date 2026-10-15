@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -58,6 +59,7 @@ def test_host_receipt_must_match_exact_guest_layout(tmp_path, monkeypatch):
 def test_old_layout_gains_trusted_live_renderer_without_guest_javascript():
     assert "<script>" not in dashboard_layout.BASE_TEMPLATE
     assert "workView(data)" in dashboard_layout.APP_SCRIPT
+    assert "Candidates selected for the next serving phase" in dashboard_layout.APP_SCRIPT
     for identity in ("actors", "goals", "events"):
         assert identity not in dashboard_layout.REQUIRED_IDS
         assert identity in dashboard_layout.APP_SCRIPT
@@ -70,6 +72,22 @@ def test_stale_chat_cannot_be_attributed_to_new_mission(tmp_path):
         json.dumps({"id": "old", "pid": 11, "phase": "inference"})
     )
     assert live_status.current_chat(tmp_path, {"pid": 12, "running": True})["phase"] == "stale"
+
+
+def test_dashboard_queue_receipt_exposes_bounded_cooldown_retry():
+    summary = live_status.public_summary(
+        {
+            "status": "deferred",
+            "error": "Owned GPU cooldown: 2.0 s",
+            "retry_after_seconds": 15,
+            "retry_attempt": 2,
+            "reasoning_content": "must stay private",
+        }
+    )
+    assert "status: deferred" in summary
+    assert "retry_after_seconds: 15" in summary
+    assert "retry_attempt: 2" in summary
+    assert "must stay private" not in summary
 
 
 def test_observer_feeds_refresh_independent_of_master_phase_and_back_off(tmp_path, monkeypatch):
@@ -314,13 +332,15 @@ const sample={collected_at:1,mission:{running:true,state:{phase:'research'}},rep
     program += "const freshnessText=n=>typeof n==='string'?n:(n.textContent||'')+(n.children||[]).map(freshnessText).join(' ');if(!freshnessText(nodes['status-freshness-panel']).includes('external_compute')||!freshnessText(nodes['status-freshness-panel']).includes('unknown'))throw Error('Status freshness is not visible');\n"
     program += """
 const textNode={nodeType:3,nodeName:'#text',nodeValue:'previous'};const reader={nodeType:1,nodeName:'PRE',childNodes:[textNode],scrollTop:77};const freshReader={nodeType:1,nodeName:'PRE',childNodes:[{nodeType:3,nodeName:'#text',nodeValue:'updated'}]};updateNode(reader,freshReader);if(reader.childNodes[0]!==textNode||textNode.nodeValue!=='updated'||reader.scrollTop!==77)throw Error('Reading node replaced');
+sample.report={status_freshness:{source_acquisition:{state:'fresh'},income_work:{state:'stale'}},live_execution_policy:{capital_limit_pln:100,daily_loss_stop_pln:20,daily_loss_stop_percent:20,max_total_loss_pln:25,max_total_loss_percent:25,leverage_enabled:false,margin_enabled:false,short_selling_enabled:false,borrowing_enabled:false,paid_services_enabled:false,real_orders_enabled:false,scope:'No broker order connector enabled'},broker_connection_readiness:{state:'not_connected',account_reading:'not_configured',order_submission:'not_implemented',first_connection_scope:'read-only account identity, currency, available cash, fee tier, and venue minimums',required_operator_inputs:['broker/provider'],activation_requirements:['account-side loss controls'],credential_storage:'OS secret store only',scope:'Readiness contract only'},source_acquisition:{total_fetches:14,distinct_urls:9,distinct_contents:8,updated:1800000000,latest:[{url:'https://example.org/public-source'}]},income_work:{state:'blocked',sources_collected:2,proposals_registered:1,error:'awaiting receipt',updated:1799999990},paper_labs:[{id:'live-paper-v3',quote_stale:false,tick_age_seconds:34,recent_fills:[{}],promotion_eligible:false,quote:{ts:'2026-10-14T23:00:00Z'},gross_curve:[{ts:'2026-10-14T23:00:00Z',a:10000,b:9999}]}],live_paper:{model_decision_evidence:{state:'stale',confirmed_at:'2026-10-14T20:00:00Z',age_seconds:3600,model_version:'test-model',decisions_recorded:2},activity_stream:{state:'verified-tail',window_events:12,window_scope:'Latest 100 ledger events; checksum-linked',counts:{observations:7,model_decisions:0,automatic_freshness_holds:7,decision_round_attempts:0,paper_execution_attempts:0,confirmed_fills:0,pending_orders:0},entries:[{category:'observation',sequence:11,time:'2026-10-14T19:59:00Z',label:'quote observation',detail:'BTC-KRAKEN'},{category:'automatic_hold',sequence:12,time:'2026-10-14T20:00:00Z',label:'Automatic quote-freshness HOLD',detail:'HOLD'}]}},paper_fill_evidence:{state:'unknown',fill_count:null,audit_at:null,audit_age_seconds:null,last_fill_at:null,last_fill_state:'unknown',last_fill_age_seconds:null,scope:'No fresh full fill audit.'},learning_activity_status:{state:'running',detail:'Fresh heartbeat only',age_seconds:12,optimizer_evidence:{state:'recorded',optimizer_updates:9,activity_state:'stale',receipt_updated_at:'2026-10-14T20:00:00Z',receipt_age_seconds:3600,activity_detail:'old optimizer receipt'}},mission_evidence:{optimizer_updates_observed:0,cuda_verified:false},learning_activity:{updated:1799999900},current_activity:{stage:'research',completed_cycles:3,updated:1799999900}};render(sample);
+const attemptsText=n=>typeof n==='string'?n:(n.textContent||'')+(n.children||[]).map(attemptsText).join(' ');const attempts=attemptsText(nodes['earning-activity-panel']);for(const value of ['Cap 100 PLN','daily loss stop 20 PLN','total loss stop 25 PLN','leverage disabled','margin disabled','real orders disabled','Broker connection readiness','NOT_CONNECTED','read-only account identity','account-side loss controls','OS secret store only','14 retrievals','awaiting receipt','1 fill receipts in recent window','updates 9','CUDA receipt not confirmed','Last confirmed model decision','STALE','test-model','Last confirmed paper fill / full audit','UNKNOWN','Paper activity timeline — verified ledger tail','7 observations','0 model decisions','7 automatic quote HOLDs','0 paper order attempts','0 fills','Activity #12','Automatic quote-freshness HOLD','Mission loop heartbeat (liveness only)','Confirmed optimizer activity','old optimizer receipt','Verified income outcome'])if(!attempts.includes(value))throw Error('Live earning evidence missing: '+value);const learningText=attemptsText(nodes['goal-learning-view']);for(const value of ['Loop heartbeat (liveness only)','Last confirmed optimizer receipt','old optimizer receipt'])if(!learningText.includes(value))throw Error('Learning evidence labels missing: '+value);
 latestInference={events:[{time:'2026-10-09T15:30:00Z'}],agents:[{label:'Live reader',stream_output:'fresh answer'}]};render(sample);if(!nodes['agent-grid'].children[0].children[0].children[0].textContent.includes('Live reader'))throw Error('Stale snapshot replaced live output');
 const old={dataset:{key:'reader'},open:false};let disclosures=[old];document.querySelectorAll=()=>disclosures;rememberDisclosures();
 const next={dataset:{key:'reader'},open:true};disclosures=[next];restoreDisclosures();if(next.open)throw Error('User-closed detail reopened');
 next.open=true;rememberDisclosures();const newer={dataset:{key:'reader'},open:false};disclosures=[newer];restoreDisclosures();if(!newer.open)throw Error('User-open detail lost');
 """
     if paper_labs:
-        program += "\nif(nodes['paper-labs-view'].children[0].children[0].textContent!=='sample-v3')throw Error('Experimental wallet missing');\n"
+        program += "\nif(nodes['paper-labs-view'].children[0].children[0].textContent!=='live-paper-v3')throw Error('Experimental wallet missing');\n"
         program += "\nconst walletText=n=>typeof n==='string'?n:(n.textContent||'')+(n.children||[]).map(walletText).join(' ');const wallet=walletText(nodes['paper-labs-view']);for(const label of ['Portfel A ·','Portfel B ·','Czas lokalny','Wycena brutto (PLN)','Jeden punkt'])if(!wallet.includes(label))throw Error('Missing wallet chart label: '+label);\n"
     result = subprocess.run(
         ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=5
@@ -491,3 +511,156 @@ let archiveCalls=0;fetch=async()=>{archiveCalls++;return {ok:true,json:async()=>
 """
     result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
     assert result.returncode == 0, result.stderr
+
+
+def test_decision_and_fill_freshness_require_completed_receipts():
+    from rlm.v100.financial_snapshot import model_decision_evidence, paper_fill_evidence
+
+    now = datetime(2026, 10, 15, 12, 0, tzinfo=UTC).timestamp()
+    recent = datetime.fromtimestamp(now - 45, UTC).isoformat()
+    stale = datetime.fromtimestamp(now - 600, UTC).isoformat()
+    attempts = [
+        {
+            "status": "decision-round-started",
+            "time": recent,
+            "model_version": "m1",
+            "decisions_recorded": 4,
+        },
+        {"status": "heartbeat", "time": recent, "model_version": "m1", "decisions_recorded": 4},
+        {
+            "status": "decision-round-completed",
+            "time": stale,
+            "model_version": "m1",
+            "decisions_recorded": 2,
+        },
+    ]
+    evidence = model_decision_evidence(attempts, now=now)
+    assert evidence["state"] == "stale"
+    assert evidence["confirmed_at"] == stale
+    assert evidence["decisions_recorded"] == 2
+
+    unknown = model_decision_evidence(attempts[:2], now=now)
+    assert unknown["state"] == "unknown"
+    assert unknown["confirmed_at"] is None and unknown["age_seconds"] is None
+
+    fill_audit = paper_fill_evidence(
+        {"executed_fills": 1, "updated_at": recent, "last_fill_at": stale}, now=now
+    )
+    assert fill_audit["state"] == "fresh" and fill_audit["fill_count"] == 1
+    assert fill_audit["audit_at"] == recent
+    assert fill_audit["last_fill_state"] == "stale"
+    assert fill_audit["last_fill_at"] == stale
+
+    absent = paper_fill_evidence(None, now=now)
+    assert absent["state"] == "unknown" and absent["fill_count"] is None
+    assert absent["audit_at"] is None and absent["last_fill_state"] == "unknown"
+
+
+def test_paper_activity_stream_separates_quotes_decisions_attempts_and_fills():
+    from rlm.v100.financial_snapshot import paper_activity_stream
+
+    stream = paper_activity_stream(
+        [
+            {
+                "sequence": 1,
+                "time": "2026-10-15T11:00:00Z",
+                "kind": "observation",
+                "branch": "controller",
+                "payload": {
+                    "observation": {"kind": "quote", "symbol": "BTC-KRAKEN"},
+                    "trades": [
+                        {"action": "buy", "branch": "A", "symbol": "BTC-KRAKEN", "quantity": "0.1"}
+                    ],
+                },
+            },
+            {
+                "sequence": 2,
+                "time": "2026-10-15T11:00:01Z",
+                "kind": "decision",
+                "branch": "A",
+                "payload": {
+                    "proposal": {
+                        "action": "open",
+                        "symbol": "BTC-KRAKEN",
+                        "proposal_source": "model-proposal",
+                    }
+                },
+            },
+            {
+                "sequence": 3,
+                "time": "2026-10-15T11:00:02Z",
+                "kind": "decision",
+                "branch": "B",
+                "payload": {
+                    "proposal": {
+                        "action": "hold",
+                        "symbol": "BTC-KRAKEN",
+                        "receipt_source": "host-quote-freshness-guard",
+                    }
+                },
+            },
+            {
+                "sequence": 4,
+                "time": "2026-10-15T11:00:03Z",
+                "kind": "research",
+                "branch": "controller",
+                "payload": {"status": "decision-round-started"},
+            },
+            {
+                "sequence": 5,
+                "time": "2026-10-15T11:00:04Z",
+                "kind": "research",
+                "branch": "B",
+                "payload": {
+                    "status": "proposal-rejected",
+                    "error": "costs unknown",
+                    "proposal": {"action": "close", "symbol": "BTC-KRAKEN"},
+                },
+            },
+        ],
+        pending_orders=1,
+    )
+
+    assert stream["counts"] == {
+        "observations": 1,
+        "model_decisions": 1,
+        "automatic_freshness_holds": 1,
+        "decision_round_attempts": 2,
+        "paper_execution_attempts": 2,
+        "confirmed_fills": 1,
+        "pending_orders": 1,
+    }
+    assert [entry["category"] for entry in stream["entries"]] == [
+        "observation",
+        "confirmed_fill",
+        "decision",
+        "execution_attempt",
+        "automatic_hold",
+        "decision_attempt",
+        "execution_attempt",
+        "decision_attempt",
+    ]
+    assert stream["entries"][1]["label"] == "Confirmed paper fill"
+    assert "fill not implied" in stream["entries"][3]["detail"]
+    assert "blocked" in stream["entries"][6]["label"]
+
+
+def test_live_paper_snapshot_returns_chain_checked_activity_counts(tmp_path):
+    from rlm.v100.financial_snapshot import live_ledger
+    from rlm.v100.paper import PaperBook
+
+    book = PaperBook(tmp_path)
+    book.initialize()
+    book.note("controller", {"status": "decision-round-started", "cycle": 1})
+    book.close()
+
+    snapshot = live_ledger(tmp_path)
+    activity = snapshot["activity_stream"]
+    assert activity["state"] == "verified-tail"
+    assert activity["window_events"] == 2
+    assert activity["counts"]["observations"] == 0
+    assert activity["counts"]["model_decisions"] == 0
+    assert activity["counts"]["decision_round_attempts"] == 1
+    assert activity["counts"]["paper_execution_attempts"] == 0
+    assert activity["counts"]["confirmed_fills"] == 0
+    assert activity["entries"][-1]["label"] == "Model decision round receipt"

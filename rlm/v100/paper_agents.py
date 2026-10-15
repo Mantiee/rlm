@@ -1,20 +1,18 @@
 """Model-driven financial R&D with an independent, forward-only paper ledger."""
 
 import copy
-import fcntl
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
-import requests
-
 from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn, research_output_limit
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import helper_client, managed_server
-from rlm.v100.paper import PaperBook, sha
+from rlm.v100.file_lock import LOCK_EX, LOCK_NB, flock
+from rlm.v100.paper import PaperBook, sha, timestamp
 from rlm.v100.paper_reports import scheduled_reports, write_report
 from rlm.v100.planning import read as read_plans
 from rlm.v100.researchers import compact_result, research_task, review_research
@@ -380,7 +378,9 @@ def paper_round(
             raise ValueError("Invalid financial decision or researcher selection")
         rejected = False
         try:
-            event = book.decide(branch, proposal, context["sequence"])
+            event = book.decide(
+                branch, {**proposal, "proposal_source": "model-proposal"}, context["sequence"]
+            )
         except ValueError as error:
             rejected = True
             event = book.note(
@@ -389,6 +389,111 @@ def paper_round(
             )
             ActivityLog(book.root, branch, "paper").write(
                 "errors", "paper-proposal-rejected", event
+            )
+        emit_alert(book.root, branch, proposal, rejected)
+        results.append(event)
+    return results
+
+
+def paper_decision_round(book: PaperBook, parent_profile: dict) -> list[dict]:
+    """Make a short, fresh model decision before slower research work can block the loop."""
+    from rlm.v100.mission_chat import emit_alert
+
+    results = []
+    for branch in ("A", "B"):
+        context = compact_context(book.context(branch))
+        quote_age_limit = context["risk"]["quote_age_seconds"]
+        fresh_quotes = {
+            symbol: quote
+            for symbol, quote in context["quotes"].items()
+            if 0
+            <= (book.clock() - timestamp(quote["observed_at"])).total_seconds()
+            <= quote_age_limit
+        }
+        if not fresh_quotes:
+            book.note(
+                branch,
+                {
+                    "status": "decision-blocked",
+                    "reason": "no-fresh-quotes",
+                    "quote_age_limit_seconds": quote_age_limit,
+                    "scope": "No model decision or paper fill was made for this branch.",
+                },
+            )
+            continue
+        context["quotes"] = fresh_quotes
+        context["instruments"] = {symbol: context["instruments"][symbol] for symbol in fresh_quotes}
+        fee_ids = {item["fee_profile"] for item in context["instruments"].values()}
+        context["fee_profiles"] = {
+            key: value for key, value in context["fee_profiles"].items() if key in fee_ids
+        }
+        client_profile = copy.deepcopy(parent_profile)
+        client_profile["runtime"]["max_output_tokens"] = max(
+            1024, min(2048, client_profile["runtime"].get("max_output_tokens", 1024))
+        )
+        parent = helper_client(client_profile, book.root, branch)
+        message = native_turn(
+            parent,
+            [
+                {"role": "system", "content": PAPER_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "paper": context,
+                            "research": [],
+                            "review": {"status": "not run in the fast decision pass"},
+                            "persistent_research_memory": [],
+                            "plans": read_plans(book.root),
+                            "instruction": (
+                                "Make one immediate decision for this branch from only the supplied "
+                                "currently observed quotes. Return HOLD if evidence or full execution "
+                                "costs are insufficient. Keep the rationale concise. Do not wait for "
+                                "research; a later cycle can revise this decision."
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            response_format={"type": "json_object", "schema": decision_schema()},
+            retry_output_limit=research_output_limit(parent),
+        )
+        proposal = json.loads(message["content"])
+        if (
+            set(proposal) != set(decision_schema()["properties"])
+            or proposal["accepted_research"] != []
+        ):
+            raise ValueError("Invalid financial decision")
+        try:
+            event = book.decide(
+                branch, {**proposal, "proposal_source": "model-proposal"}, context["sequence"]
+            )
+            rejected = False
+        except ValueError as error:
+            # Preserve the model's assessment while making the host's fail-closed
+            # eligibility gate explicit as a non-executable HOLD receipt.
+            rejected = True
+            book.note(
+                branch,
+                {"status": "proposal-rejected", "error": str(error)[:400], "proposal": proposal},
+            )
+            event = book.decide(
+                branch,
+                {
+                    "action": "hold",
+                    "symbol": proposal.get("symbol", ""),
+                    "side": proposal.get("side", "long"),
+                    "budget": 0,
+                    "leverage": 1,
+                    "rationale": (
+                        "Model proposal was blocked by host eligibility gate: " + str(error)[:300]
+                    ),
+                    "accepted_research": [],
+                    "proposal_source": "model-proposal",
+                    "model_action_blocked": proposal.get("action"),
+                },
+                book.sequence(),
             )
         emit_alert(book.root, branch, proposal, rejected)
         results.append(event)
@@ -445,48 +550,94 @@ def paper_loop(
     with loop_lease(root), helper_scope:
         book = PaperBook(root)
         try:
-            for cycle in range(cycles) if cycles else endless_cycles():
-                if crypto:
-                    poll_crypto(book)
-                for cik in ciks:
-                    assert sec_contact is not None
-                    poll_filings(book, cik, sec_contact)
-                try:
-                    paper_round(
-                        book,
-                        parent_profile,
-                        researcher,
-                        research_rounds,
-                        poll_crypto if crypto else None,
-                    )
-                except (ValueError, OSError, requests.RequestException) as error:
-                    # Keep observing prices while GPU training makes the parent unavailable.
-                    book.note(
-                        "controller",
-                        {
-                            "cycle": cycle,
-                            "status": "research-unavailable",
-                            "error": type(error).__name__,
-                            "detail": str(error)[:400],
-                        },
-                    )
-                    ActivityLog(root, "controller", "paper").write(
-                        "errors", "paper-round-failed", {"error": type(error).__name__}
-                    )
-                for directory in scheduled_reports(book):
-                    print("Scheduled paper report:", directory, flush=True)
-                if crypto:
-                    poll_crypto(book)  # A/B orders can now fill on a later observation.
-                print("Paper cycle complete:", cycle + 1, flush=True)
-                if cycles and cycle + 1 >= cycles:
-                    break
-                # No long blocking sleep; a stop/interrupt stays responsive.
-                deadline = time.monotonic() + interval
-                while time.monotonic() < deadline:
-                    time.sleep(min(1, deadline - time.monotonic()))
+            with ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="paper-research"
+            ) as research_pool:
+                research_future = None
+                for cycle in range(cycles) if cycles else endless_cycles():
+                    if crypto:
+                        poll_crypto(book)
+                    for cik in ciks:
+                        assert sec_contact is not None
+                        poll_filings(book, cik, sec_contact)
+                    try:
+                        paper_decision_round(book, parent_profile)
+                    except Exception as error:
+                        book.note(
+                            "controller",
+                            {
+                                "cycle": cycle,
+                                "status": "decision-unavailable",
+                                "error": type(error).__name__,
+                                "detail": str(error)[:400],
+                            },
+                        )
+                        ActivityLog(root, "controller", "paper").write(
+                            "errors", "paper-decision-round-failed", {"error": type(error).__name__}
+                        )
+
+                    if research_future is not None and research_future.done():
+                        try:
+                            research_future.result()
+                        except Exception as error:
+                            book.note(
+                                "controller",
+                                {
+                                    "cycle": cycle,
+                                    "status": "research-unavailable",
+                                    "error": type(error).__name__,
+                                    "detail": str(error)[:400],
+                                },
+                            )
+                            ActivityLog(root, "controller", "paper").write(
+                                "errors", "paper-round-failed", {"error": type(error).__name__}
+                            )
+                        research_future = None
+                        for directory in scheduled_reports(book):
+                            print("Scheduled paper report:", directory, flush=True)
+
+                    if research_future is None:
+                        research_future = research_pool.submit(
+                            _paper_research_worker,
+                            root,
+                            parent_profile,
+                            researcher,
+                            research_rounds,
+                        )
+                    else:
+                        book.note(
+                            "controller",
+                            {
+                                "cycle": cycle,
+                                "status": "research-in-progress",
+                                "detail": "Fast model decisions and quote polling continue independently.",
+                            },
+                        )
+                    if crypto:
+                        poll_crypto(book)  # Pending A/B paper orders can fill on a later quote.
+                    print("Paper cycle complete:", cycle + 1, flush=True)
+                    if cycles and cycle + 1 >= cycles:
+                        break
+                    deadline = time.monotonic() + interval
+                    while time.monotonic() < deadline:
+                        time.sleep(min(1, deadline - time.monotonic()))
             print("Final paper report:", write_report(book), flush=True)
         finally:
             book.close()
+
+
+def _paper_research_worker(
+    root: Path,
+    parent_profile: dict,
+    researcher: dict | None,
+    research_rounds: int,
+) -> list[dict]:
+    """Keep slow evidence gathering on its own SQLite connection and worker thread."""
+    book = PaperBook(root)
+    try:
+        return paper_round(book, parent_profile, researcher, research_rounds)
+    finally:
+        book.close()
 
 
 def endless_cycles():
@@ -501,5 +652,5 @@ def loop_lease(root: Path):
     directory = root / "research/paper"
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / "loop.lock").open("a") as lease:
-        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        flock(lease, LOCK_EX | LOCK_NB)
         yield

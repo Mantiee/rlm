@@ -84,8 +84,11 @@ def test_new_curve_never_mixes_legacy_liquidation_estimates(lab):
 
 def test_fallback_dashboard_chart_has_legend_axes_last_values_and_resize(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "tools"))
-    page = importlib.import_module("synta_live_paper_v3").PAGE
+    module = importlib.import_module("synta_live_paper_v3")
+    page = module.PAGE
     assert 'aria-label="Legenda wykresu"' in page
+    assert "WALLET A · research/hold" in page
+    assert "A nie ma reguły wejścia" in page
     assert 'class="chart-values"' in page
     assert "Oś Y: wycena brutto w PLN" in page
     assert "oś X: kolejność notowań (od najstarszego do najnowszego)" in page
@@ -93,20 +96,60 @@ def test_fallback_dashboard_chart_has_legend_axes_last_values_and_resize(monkeyp
     assert "window.devicePixelRatio" in page
     assert "window.addEventListener('resize'" in page
     assert "Number.isFinite(Number(r.a))" in page
+    assert "r.a!=null&&r.b!=null" in page
     assert "Math.max(1,data.length-1)" in page
+    assert "d.engine_progress||" in page
+    assert "wiek '+(d.quote_age??'brak')+' s'" in page
+    assert "trening wag: brak" in page
 
 
-def test_served_dashboard_chart_exposes_last_values_and_units():
+@pytest.mark.parametrize(
+    "age,blocker,state,label_class",
+    [
+        (None, None, "waiting", "warn"),
+        (181, None, "stale", "red"),
+        (3, "Execution costs UNKNOWN", "blocked", "warn"),
+        (3, None, "active", "green"),
+    ],
+)
+def test_engine_progress_never_confuses_api_health_with_quote_freshness(
+    monkeypatch, age, blocker, state, label_class
+):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "tools"))
+    progress = importlib.import_module("synta_live_paper_v3").engine_progress(age, blocker)
+    assert progress["state"] == state
+    assert progress["class"] == label_class
+    if state == "stale":
+        assert "ZASTÓJ" in progress["label"]
+    if state == "blocked":
+        assert "PAPER ZABLOKOWANY" in progress["label"]
+        assert blocker in progress["detail"]
+
+
+def test_legacy_dashboard_entry_redirects_to_canonical_mission_control(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "tools"))
+    module = importlib.import_module("synta_live_paper_v3")
+    assert module.mission_control_url("127.0.0.1:8770") == "http://127.0.0.1:8765/"
+    assert module.mission_control_url("[::1]:8770") == "http://[::1]:8765/"
+    assert (
+        module.mission_control_url("127.0.0.1:8770", "https://mission.example/dashboard")
+        == "https://mission.example/dashboard/"
+    )
+
+
+def test_legacy_simulation_chart_remains_integrity_labeled():
     dashboard = Path(__file__).resolve().parents[1] / "tools/synta_live_dashboard_v4.html"
     page = dashboard.read_text(encoding="utf-8")
-    assert dashboard.name in (dashboard.parent / "synta_live_paper_v3.py").read_text(
-        encoding="utf-8"
-    )
     assert 'aria-label="Legenda wykresu"' in page
+    assert "Portfel A · research/hold" in page
+    assert "A nie ma reguły wejścia" in page
     assert 'id="chartAValue"' in page and 'id="chartBValue"' in page
+    assert '<div class="card half" id="market">' in page
+    assert '<h2 id="hypotheses">' in page
     assert "Oś X: kolejność notowań od najstarszego do najnowszego" in page
     assert "toLocaleString('pl-PL')+' PLN'" in page
     assert "Number.isFinite(Number(r.a))" in page
+    assert "r.a!=null&&r.b!=null" in page
     assert "Math.max(1,rows.length-1)" in page
     assert "window.addEventListener('resize'" in page
 

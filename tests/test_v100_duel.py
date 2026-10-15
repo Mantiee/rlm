@@ -326,7 +326,7 @@ def test_best_checkpoint_is_kept_loaded_and_latest_is_resumable(tmp_path):
         def on_save(self, args, state, control, **kwargs):
             atomic_json(
                 tmp_path / f"checkpoint-{state.global_step}" / "complete.json",
-                {"step": state.global_step},
+                {"step": state.global_step, "manifest_sha256": "fixed-manifest"},
             )
             record_best(tmp_path, state, "fixed-manifest")
 
@@ -454,6 +454,21 @@ def test_record_best_rejects_outside_checkpoint(tmp_path):
             tmp_path,
             SimpleNamespace(best_model_checkpoint="/tmp/outside", best_metric=1, global_step=1),
             "manifest",
+        )
+
+
+def test_record_best_rejects_checkpoint_from_another_manifest(tmp_path):
+    checkpoint = tmp_path / "checkpoint-1"
+    checkpoint.mkdir()
+    atomic_json(
+        checkpoint / "complete.json",
+        {"step": 1, "manifest_sha256": "old-manifest"},
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        record_best(
+            tmp_path,
+            SimpleNamespace(best_model_checkpoint=str(checkpoint), best_metric=1.0, global_step=1),
+            "current-manifest",
         )
 
 

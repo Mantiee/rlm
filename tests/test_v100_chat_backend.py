@@ -1,6 +1,8 @@
 import copy
 import json
+import multiprocessing
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +18,14 @@ from rlm.v100 import (
     research_tools,
 )
 from rlm.v100.common import atomic_json
+from rlm.v100.serving import ServingLeaseUnavailable, endpoint_lease
 from tests.test_v100_continual import profile
+
+
+def _hold_candidate_endpoint(root, selected, ready, release):
+    with endpoint_lease(root, selected, exclusive=True):
+        ready.set()
+        release.wait(10)
 
 
 def admitted(root, monkeypatch):
@@ -42,6 +51,208 @@ def admitted(root, monkeypatch):
         chat_backend, "assert_served_expert", lambda *a: events.append(("verified", a[3]))
     )
     return accepted, client, events
+
+
+def profile_with_resources(tmp_path):
+    """Give test-only profiles the optional section production profiles may omit."""
+    selected = profile(tmp_path)
+    selected.setdefault("resources", {})
+    return selected
+
+
+def test_candidate_listener_lease_excludes_chat_across_processes(tmp_path, monkeypatch):
+    selected = profile_with_resources(tmp_path)
+    selected["resources"].update(accepted_cpu_chat=True, interactive_lab=True)
+    atomic_json(tmp_path / "serving-active.json", selected)
+    monkeypatch.setattr(mission, "status", lambda root: {"state": {}})
+    monkeypatch.setattr(mission_chat, "preferences", lambda root: {"remote_helper_enabled": False})
+    context = multiprocessing.get_context("spawn")
+    ready, release = context.Event(), context.Event()
+    process = context.Process(
+        target=_hold_candidate_endpoint, args=(tmp_path, selected, ready, release)
+    )
+    process.start()
+    try:
+        assert ready.wait(10), "candidate did not acquire its endpoint lease"
+        with pytest.raises(ServingLeaseUnavailable):
+            with endpoint_lease(tmp_path, selected, exclusive=False, timeout=0.15):
+                pytest.fail("chat entered an endpoint while a candidate owned it")
+        with mission_chat._chat_endpoint_leases(tmp_path, tmp_path, object()) as acquired:
+            assert not acquired
+        with mission_chat._chat_fallback_lease(tmp_path, tmp_path, object()):
+            pass
+    finally:
+        release.set()
+        process.join(12)
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+    assert process.exitcode == 0
+    with endpoint_lease(tmp_path, selected, exclusive=False, timeout=0.5):
+        pass
+
+
+def test_chat_contention_skips_candidate_and_queues_without_fallback(tmp_path, monkeypatch):
+    accepted = profile(tmp_path)
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    monkeypatch.setattr(mission, "status", lambda root: {"state": {}})
+    monkeypatch.setattr(mission_chat, "preferences", lambda root: {"remote_helper_enabled": False})
+    identity = mission_chat.submit(tmp_path, "read only check")
+    attempted = []
+
+    @contextmanager
+    def contended(*args, **kwargs):
+        yield False
+
+    def backend(root, directory, request, accepted_cpu=None, *, skip_local=False, **kwargs):
+        attempted.append((accepted_cpu, skip_local))
+        if not skip_local:
+            pytest.fail("chat must never send a request to a candidate listener")
+        raise mission_chat.BackendNotReady("accepted fallback unavailable")
+
+    monkeypatch.setattr(mission_chat, "_chat_endpoint_leases", contended)
+    monkeypatch.setattr(mission_chat, "respond", backend)
+    with pytest.raises(mission_chat.BackendNotReady):
+        mission_chat._respond_with_lifecycle(tmp_path, tmp_path, {"id": identity})
+    assert attempted == [(None, True)]
+
+    def unavailable(*args, **kwargs):
+        raise mission_chat.BackendNotReady("accepted fallback unavailable")
+
+    monkeypatch.setattr(mission_chat, "_respond_with_lifecycle", unavailable)
+
+    class Stop:
+        waits = 0
+
+        def wait(self, seconds):
+            self.waits += 1
+            return self.waits > 1
+
+    mission_chat.service_loop(tmp_path, tmp_path, Stop())
+    result = mission_chat.inspect(tmp_path, identity)
+    assert result["state"] == "queued"
+    assert result["error"] == "accepted fallback unavailable"
+
+
+def test_chat_contention_uses_cpu_fallback_with_skip_local(tmp_path, monkeypatch):
+    seen = []
+    accepted_cpu = object()
+    accepted = profile_with_resources(tmp_path)
+    accepted["resources"]["accepted_cpu_chat"] = True
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    monkeypatch.setattr(mission, "status", lambda root: {"state": {}})
+    monkeypatch.setattr(mission_chat, "preferences", lambda root: {"remote_helper_enabled": False})
+
+    @contextmanager
+    def contended(*args, **kwargs):
+        yield False
+
+    @contextmanager
+    def cpu_lease(*args, **kwargs):
+        seen.append("cpu-lease")
+        yield
+
+    def backend(root, directory, request, cpu, *, skip_local=False, **kwargs):
+        seen.append((cpu, skip_local))
+        if not skip_local:
+            pytest.fail("chat must never send a request to a candidate listener")
+        return {"answer": "delegated safely"}
+
+    monkeypatch.setattr(mission_chat, "_chat_endpoint_leases", contended)
+    monkeypatch.setattr(mission_chat, "_chat_fallback_lease", cpu_lease)
+    monkeypatch.setattr(mission_chat, "respond", backend)
+    result = mission_chat._respond_with_lifecycle(
+        tmp_path, tmp_path, {"id": "request"}, accepted_cpu
+    )
+    assert result["answer"] == "delegated safely"
+    assert seen == ["cpu-lease", (accepted_cpu, True)]
+
+
+def test_chat_uses_the_profile_snapshot_whose_endpoint_was_leased(tmp_path, monkeypatch):
+    accepted = profile(tmp_path)
+    accepted["runtime"]["base_url"] = "http://127.0.0.1:8091"
+    replacement = copy.deepcopy(accepted)
+    replacement["runtime"]["base_url"] = "http://127.0.0.1:8092"
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    monkeypatch.setattr(mission, "status", lambda root: {"state": {}})
+    monkeypatch.setattr(mission_chat, "preferences", lambda root: {"remote_helper_enabled": False})
+    seen = []
+    original_leases = mission_chat._chat_endpoint_leases
+
+    @contextmanager
+    def replace_profile_after_resolution(root, directory, accepted_cpu=None, *, profiles=None):
+        # Simulate a selection-file update after resolution but before response.
+        # This turn must still use the immutable snapshot leased at port 8091.
+        atomic_json(directory / "serving-active.json", replacement)
+        with original_leases(root, directory, accepted_cpu, profiles=profiles) as acquired:
+            yield acquired
+
+    def backend(root, directory, request, accepted_cpu=None, *, lifecycle_snapshot=None, **kwargs):
+        seen.append(lifecycle_snapshot["accepted"]["runtime"]["base_url"])
+        return {"answer": "snapshot used"}
+
+    monkeypatch.setattr(mission_chat, "_chat_endpoint_leases", replace_profile_after_resolution)
+    monkeypatch.setattr(mission_chat, "respond", backend)
+    result = mission_chat._respond_with_lifecycle(
+        tmp_path, tmp_path, {"id": "race", "message": "hello"}
+    )
+    assert result["answer"] == "snapshot used"
+    assert seen == ["http://127.0.0.1:8091"]
+
+
+def test_disabled_remote_helpers_do_not_disable_accepted_cpu_fallback(tmp_path, monkeypatch):
+    import requests
+
+    from rlm.v100 import model_roles
+
+    accepted = profile_with_resources(tmp_path)
+    accepted["resources"].update(accepted_cpu_chat=True, interactive_lab=False)
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    monkeypatch.setattr(mission, "status", lambda root: {"state": {}})
+    monkeypatch.setattr(model_roles, "selected_profile", lambda *args: None)
+    monkeypatch.setattr(mission_chat, "preferences", lambda root: {"remote_helper_enabled": False})
+    gpu = SimpleNamespace(timeout=60, model_name="gpu", sampling_args={}, activity_context={})
+    cpu = SimpleNamespace(
+        timeout=60, model_name="accepted-cpu", sampling_args={}, activity_context={}
+    )
+    manager = SimpleNamespace(get=lambda profile: cpu, sha256="accepted-hash")
+    monkeypatch.setattr(competition, "helper_client", lambda *args: gpu)
+    monkeypatch.setattr(
+        mission_chat,
+        "assert_served_expert",
+        lambda *args: (_ for _ in ()).throw(requests.ConnectionError("GPU listener transitioning")),
+    )
+    monkeypatch.setattr(
+        mission_chat,
+        "conversational_response",
+        lambda root, client, *args, **kwargs: {"answer": client.model_name},
+    )
+    result = mission_chat.respond(tmp_path, tmp_path, {"message": "jak działa ML?"}, manager)
+    assert result["answer"] == "accepted-cpu"
+
+
+def test_managed_server_defaults_to_candidate_lifecycle_role(tmp_path, monkeypatch):
+    selected = profile(tmp_path)
+    path = tmp_path / "candidate.json"
+    atomic_json(path, selected)
+
+    @contextmanager
+    def fake_server(profile_path, root, log_path, cancel=None):
+        yield selected
+
+    monkeypatch.setattr(competition, "_managed_server_unleased", fake_server)
+    with competition.managed_server(path, tmp_path, tmp_path / "candidate.log"):
+        with pytest.raises(ServingLeaseUnavailable):
+            with endpoint_lease(tmp_path, selected, exclusive=False, timeout=0.1):
+                pytest.fail("candidate server failed to exclude chat")
+    with endpoint_lease(tmp_path, selected, exclusive=False, timeout=0.5):
+        pass
+
+    with competition.managed_server(
+        path, tmp_path, tmp_path / "accepted.log", lifecycle_role="accepted"
+    ):
+        with endpoint_lease(tmp_path, selected, exclusive=True, timeout=0.1):
+            pass
 
 
 def test_cpu_clone_preserves_weights_and_original_profile(tmp_path, monkeypatch):
@@ -291,6 +502,14 @@ def test_question_fast_path_skips_cpu_start_and_research_context(
 
     client.request = request
     monkeypatch.setattr(competition, "helper_client", lambda *a: client)
+    monkeypatch.setattr(
+        mission_chat,
+        "assert_served_expert",
+        lambda selected_client, selected_profile, selected_root: (
+            selected_client.request("/props")["model_path"] == selected_profile["server"]["model"]
+        )
+        or pytest.fail("Accepted endpoint must report the selected model"),
+    )
 
     def forbidden(*a, **kw):
         pytest.fail("Question must not start a CPU model or research/tool loop")
@@ -308,10 +527,12 @@ def test_connection_failures_stop_retrying_and_release_next_request(tmp_path, mo
     first = mission_chat.submit(tmp_path, "first")
     second = mission_chat.submit(tmp_path, "second")
     with mission_chat.connect(tmp_path) as db:
-        db.execute("UPDATE requests SET attempts=1 WHERE id=?", (first,))
+        stale = time.time() - 16
+        db.execute("UPDATE requests SET attempts=1,updated=? WHERE id=?", (stale, first))
+        db.execute("UPDATE requests SET updated=? WHERE id=?", (stale, second))
     seen = []
 
-    def respond(*args):
+    def respond(*args, **kwargs):
         request = args[2]
         seen.append(request["id"])
         if request["id"] == first:
@@ -319,10 +540,20 @@ def test_connection_failures_stop_retrying_and_release_next_request(tmp_path, mo
         return {"answer": "next response", "actions": [], "applied": []}
 
     monkeypatch.setattr(mission_chat, "respond", respond)
+    monkeypatch.setattr(
+        mission_chat,
+        "_respond_with_lifecycle",
+        lambda root, directory, request, accepted_cpu=None: respond(
+            root, directory, request, accepted_cpu
+        ),
+    )
 
     class Stop:
+        checks = 0
+
         def wait(self, seconds):
-            return len(seen) >= 2
+            self.checks += 1
+            return len(seen) >= 2 or self.checks > 4
 
     mission_chat.service_loop(tmp_path, tmp_path, Stop())
     assert mission_chat.inspect(tmp_path, first)["state"] == "failed"
@@ -406,16 +637,78 @@ def test_cpu_verification_deadline_does_not_wait_for_a_stalled_disk_read(tmp_pat
 @pytest.mark.parametrize("inherited", [0, 10, 19])
 def test_cpu_child_never_raises_inherited_service_priority(monkeypatch, inherited):
     calls = []
-    monkeypatch.setattr(competition.os, "getpriority", lambda *a: inherited)
 
     def setpriority(kind, pid, target):
         if target < inherited:
             raise PermissionError("Unprivileged service cannot raise priority")
         calls.append((pid, target))
 
-    monkeypatch.setattr(competition.os, "setpriority", setpriority)
-    competition.lower_cpu_priority(123)
+    competition._lower_posix_cpu_priority(
+        123,
+        getpriority=lambda *a: inherited,
+        setpriority=setpriority,
+        process_scope=0,
+    )
     assert calls == ([(123, 10)] if inherited < 10 else [])
+
+
+def test_cpu_priority_is_safe_when_platform_has_no_posix_priority_api(monkeypatch):
+    competition._lower_posix_cpu_priority(
+        123, getpriority=None, setpriority=None, process_scope=None
+    )
+
+
+def test_windows_cpu_priority_lowers_only_owned_child():
+    class Api:
+        def __init__(self, result):
+            self.result = result
+            self.calls = []
+
+        def __call__(self, *args):
+            self.calls.append(args)
+            return self.result
+
+    open_process = Api(456)
+    set_priority = Api(1)
+    close_handle = Api(1)
+    kernel = SimpleNamespace(
+        OpenProcess=open_process,
+        SetPriorityClass=set_priority,
+        CloseHandle=close_handle,
+    )
+    ctypes_stub = SimpleNamespace(c_uint32=object, c_int=object, c_void_p=object)
+
+    competition._lower_windows_cpu_priority(123, ctypes_module=ctypes_stub, kernel32=kernel)
+
+    assert open_process.calls == [(0x0200, 0, 123)]
+    assert set_priority.calls == [(456, 0x4000)]
+    assert close_handle.calls == [(456,)]
+
+
+def test_windows_cpu_priority_safely_skips_unopenable_process():
+    class Api:
+        def __init__(self, result):
+            self.result = result
+            self.calls = []
+
+        def __call__(self, *args):
+            self.calls.append(args)
+            return self.result
+
+    open_process = Api(None)
+    set_priority = Api(1)
+    close_handle = Api(1)
+    kernel = SimpleNamespace(
+        OpenProcess=open_process,
+        SetPriorityClass=set_priority,
+        CloseHandle=close_handle,
+    )
+    ctypes_stub = SimpleNamespace(c_uint32=object, c_int=object, c_void_p=object)
+
+    competition._lower_windows_cpu_priority(123, ctypes_module=ctypes_stub, kernel32=kernel)
+
+    assert open_process.calls == [(0x0200, 0, 123)]
+    assert not set_priority.calls and not close_handle.calls
 
 
 def test_cpu_question_has_bounded_sixty_second_generation_window(tmp_path, monkeypatch):

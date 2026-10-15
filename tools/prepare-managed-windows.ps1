@@ -6,6 +6,10 @@ $tokens = $null
 [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$tokens, [ref]$parseErrors) | Out-Null
 if ($parseErrors.Count) { throw 'Preparation script failed PowerShell syntax validation.' }
 $root = Join-Path $env:USERPROFILE 'ai-v100-helper'
+$manualStopPath = Join-Path $root 'helper-manual-stop.flag'
+if (Test-Path -LiteralPath $manualStopPath) {
+    throw 'RTX helper operator manual-stop flag is present; Windows preparation refused before model pulls or benchmark work.'
+}
 $python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Existing owned compute Python required.' }
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null

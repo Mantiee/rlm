@@ -72,6 +72,28 @@ def test_precommit_failed_forecast_becomes_verified_correction_without_future_in
     assert lab.settle(root, forecast["id"], after["id"]) == result
 
 
+def test_settlement_reads_reject_tampered_persisted_score(world):
+    root, clock, values, spec, _ = world
+    forecast = lab.predict(root, "A", spec)
+    clock[0] = 1060
+    values["https://example.org/metric"] = 90
+    after = lab.observe(root, "https://example.org/metric", "value")
+    result = lab.settle(root, forecast["id"], after["id"])
+    tampered = {**result, "brier": 0}
+    with lab.database(root) as db:
+        db.execute(
+            "UPDATE forecasts SET outcome=? WHERE id=?",
+            (json.dumps(tampered), forecast["id"]),
+        )
+
+    with pytest.raises(ValueError, match="Stored forecast settlement changed"):
+        lab.settle(root, forecast["id"], after["id"])
+    with pytest.raises(ValueError, match="Stored forecast settlement changed"):
+        lab.status(root)
+    with pytest.raises(ValueError, match="Stored forecast settlement changed"):
+        lab.records(root)
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -108,6 +130,16 @@ def test_stale_target_and_early_late_or_different_outcomes_rejected(world):
     with pytest.raises(ValueError, match="horizon"):
         lab.settle(root, forecast["id"], late["id"])
     assert lab.status(root)["forecasts"][0]["state"] == "expired"
+
+
+def test_forecast_rejects_evidence_newer_than_target_anchor(world):
+    root, clock, _, spec, _ = world
+    clock[0] = 1001
+    newer_evidence = lab.observe(root, "https://signals.example/later-event")
+    spec["evidence"] = [newer_evidence["id"]]
+
+    with pytest.raises(ValueError, match="at or before the target observation"):
+        lab.predict(root, "A", spec)
 
 
 def test_observer_resolves_forward_forecast_and_training_rejects_forged_labels(world):

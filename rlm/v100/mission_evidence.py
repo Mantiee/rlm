@@ -1,6 +1,8 @@
 """Read-only, bounded training evidence for the operator and research agents."""
 
+import hashlib
 import json
+import math
 import sqlite3
 from pathlib import Path
 
@@ -119,7 +121,12 @@ def collect(root: Path) -> dict:
 
 def training_receipts(run: Path) -> dict:
     """Read current-run numerical evidence without aggregate financial/goal audits."""
-    result = {"optimizer_updates_observed": None, "training_runs": [], "errors": []}
+    result = {
+        "optimizer_updates_observed": None,
+        "optimizer_receipt_updated_at": None,
+        "training_runs": [],
+        "errors": [],
+    }
     paths = sorted(
         (run / "learning").glob("update-*/**/training_health.json"),
         key=lambda path: path.stat().st_mtime_ns,
@@ -146,6 +153,41 @@ def training_receipts(run: Path) -> dict:
             ):
                 raise ValueError("Inconsistent optimizer counters")
             evidence = {"path": str(path), **counters}
+            updated_at = health.get("updated_at")
+            if type(updated_at) in (int, float) and math.isfinite(updated_at) and updated_at > 0:
+                evidence["updated_at"] = float(updated_at)
+                previous = result["optimizer_receipt_updated_at"]
+                if previous is None or updated_at > previous:
+                    result["optimizer_receipt_updated_at"] = float(updated_at)
+            else:
+                evidence["updated_at"] = None
+            manifest_path = path.parent / "manifest.json"
+            checkpoint_receipts = []
+            if manifest_path.is_file():
+                manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+                for complete_path in sorted(path.parent.glob("checkpoint-*/complete.json")):
+                    complete = read_record(complete_path)
+                    checkpoint = complete_path.parent
+                    try:
+                        checkpoint_step = int(checkpoint.name.removeprefix("checkpoint-"))
+                    except ValueError:
+                        continue
+                    required = (
+                        "trainer_state.json",
+                        "optimizer.pt",
+                        "scheduler.pt",
+                        "rng_state.pth",
+                    )
+                    if (
+                        type(complete.get("step")) is int
+                        and complete["step"] == checkpoint_step
+                        and complete.get("manifest_sha256") == manifest_sha256
+                        and all((checkpoint / name).is_file() for name in required)
+                    ):
+                        checkpoint_receipts.append(
+                            {"step": checkpoint_step, "path": str(checkpoint)}
+                        )
+            evidence["checkpoints"] = checkpoint_receipts
             retention = path.parent / "retention.json"
             if retention.exists():
                 record = read_record(retention)

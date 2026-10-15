@@ -69,7 +69,10 @@ def respond(root: Path, message: str | None = None) -> dict:
         + metric(learning.get("completed_cycles")),
         wording("Potwierdzone kroki optymalizatora: ", "Verified optimizer updates: ")
         + metric(evidence["optimizer_updates_observed"]),
-        wording("Zaakceptowane aktualizacje wag: ", "Accepted weight updates: ")
+        wording(
+            "Kandydaci wybrani do następnej fazy serwowania: ",
+            "Candidates selected for the next serving phase: ",
+        )
         + metric(evidence["accepted_weight_updates_this_run"]),
     ]
     if official:
@@ -100,11 +103,19 @@ def respond(root: Path, message: str | None = None) -> dict:
         wording("Prognozy w ostatnim oknie statusu: ", "Forecasts in the recent status window: ")
         + str(len(goal.get("forecasts", [])))
     )
-    if not evidence["accepted_weight_updates_this_run"]:
+    selected = evidence["accepted_weight_updates_this_run"]
+    if selected == 0:
         lines.append(
             wording(
-                "Nie mam potwierdzenia nowych zaakceptowanych wag w tym przebiegu. Zapisanie prognozy lub planu nie jest treningiem.",
-                "No newly accepted weights verified in this run. Recording a forecast or plan is not training.",
+                "Brak cyklu zakończonego wyborem kandydata do następnej fazy serwowania. Kroki optymalizatora nie oznaczają akceptacji kandydata.",
+                "No cycle selected a candidate for the next serving phase. Optimizer steps alone do not mean a candidate was accepted.",
+            )
+        )
+    elif selected is None:
+        lines.append(
+            wording(
+                "Licznik wyboru kandydata jest nieznany: brak potwierdzonego zapisu cykli dla bieżącego przebiegu.",
+                "Candidate-selection count is unknown: no verified cycle record is available for this run.",
             )
         )
     if evidence.get("run"):

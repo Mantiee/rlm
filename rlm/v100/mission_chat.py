@@ -12,7 +12,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -20,6 +20,7 @@ import requests
 
 from rlm.v100.activity import ActivityLog, append_locked
 from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.serving import assert_served_expert
 
 
 class BackendNotReady(requests.ConnectionError):
@@ -649,7 +650,15 @@ def operator_context(root: Path, message: str, state: dict) -> dict:
     return result
 
 
-def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> dict:
+def respond(
+    root: Path,
+    directory: Path,
+    request: dict,
+    accepted_cpu=None,
+    *,
+    skip_local=False,
+    lifecycle_snapshot=None,
+) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
     from rlm.v100.mission import status
@@ -848,22 +857,40 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         }
 
     mission = status(root)
-    paths = [directory / "serving-active.json", directory / "learning/live.json"]
-    current = mission.get("state", {}).get("live_profile")
-    if current:
-        paths.append(Path(current))
-    paths.extend(sorted(directory.glob("profile-*.json")))
-    path = next((p for p in paths if p.exists()), None)
-    if path is None:
-        raise BackendNotReady("Waiting for owned inference server")
-    profile = copy.deepcopy(load_profile(path, root))
+    if lifecycle_snapshot is not None:
+        # Use the exact profile snapshots whose endpoints were leased before
+        # this turn. Re-reading mutable selection files here could redirect
+        # generation to a port that was never included in the lease set.
+        profile = copy.deepcopy(lifecycle_snapshot["accepted"])
+    else:
+        paths = [directory / "serving-active.json", directory / "learning/live.json"]
+        current = mission.get("state", {}).get("live_profile")
+        if current:
+            paths.append(Path(current))
+        paths.extend(sorted(directory.glob("profile-*.json")))
+        path = next((p for p in paths if p.exists()), None)
+        if path is None:
+            raise BackendNotReady("Waiting for owned inference server")
+        profile = copy.deepcopy(load_profile(path, root))
     accepted_profile = copy.deepcopy(profile)
-    from rlm.v100.model_roles import selected_profile
+    if lifecycle_snapshot is not None:
+        planner = lifecycle_snapshot.get("planner")
+    else:
+        from rlm.v100.model_roles import selected_profile
 
-    planner = selected_profile(root, "planner")
+        planner = selected_profile(root, "planner")
     if planner is not None and preferences(root).get("remote_helper_enabled", True):
         try:
-            chosen = load_profile(planner, root)
+            chosen = (
+                copy.deepcopy(planner)
+                if lifecycle_snapshot is not None
+                else load_profile(planner, root)
+            )
+            if skip_local:
+                from rlm.v100.remote_helper import remote_profile
+
+                if not remote_profile(chosen):
+                    raise BackendNotReady("Local planner endpoint is in a serving transition")
             probe = helper_client(chosen, root)
             probe.timeout = min(probe.timeout, 5)
             backend_preflight(probe)
@@ -895,16 +922,15 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         if remote_profile(profile):
             backend_preflight(client)
             delegated = True
+        elif skip_local:
+            raise BackendNotReady("Accepted local endpoint is in a serving transition")
         else:
-            actual = client.request("/props")
-            if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
-                raise BackendNotReady("Waiting for the accepted serving model")
+            # The shared local port can temporarily serve a training candidate.
+            # Verify its protected PID, artifact hashes, execution identity and
+            # reported model before any user chat or tool call reaches it.
+            assert_served_expert(client, profile, root)
     except (requests.RequestException, OSError, ValueError) as serving_error:
         profile = copy.deepcopy(accepted_profile)
-        if not preferences(root).get("remote_helper_enabled", True):
-            raise BackendNotReady(str(serving_error)) from serving_error
-        if not profile.get("resources", {}).get("interactive_lab"):
-            raise BackendNotReady(str(serving_error)) from serving_error
         if accepted_cpu is not None and profile.get("resources", {}).get("accepted_cpu_chat"):
             try:
                 accepted_cpu.deadline = request.get("deadline", time.monotonic() + 180)
@@ -918,6 +944,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                     {"available": False, "detail": cpu_detail},
                 )
         if not cpu_master:
+            if not preferences(root).get("remote_helper_enabled", True):
+                raise BackendNotReady(str(serving_error)) from serving_error
+            if not profile.get("resources", {}).get("interactive_lab"):
+                raise BackendNotReady(str(serving_error)) from serving_error
             from rlm.v100.remote_helper import remote_profile, selected_helper
             from rlm.v100.remote_nodes import selected_node
 
@@ -1070,6 +1100,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         from rlm.v100.research_tools import research_turn
 
         client.research_owner = "A"
+        knowledge_task_id = None
         client.research_tool_names = {
             "inspect_trade_costs",
             "inspect_web_page",
@@ -1122,9 +1153,11 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         if command_verification:
             client.research_tool_names = {"get_plan"}
         research = research_turn(client, messages, schema(allow_long_goal), root)
+        knowledge_task_id = research.get("knowledge_task_id")
         tool_receipts = research.get("research_trace", [])
         result = json.loads(research["content"])
     else:
+        knowledge_task_id = None
         tool_receipts = []
         result = json.loads(
             native_turn(
@@ -1193,6 +1226,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             str(row.get("result")) for row in tool_receipts
         )
     result["tool_receipts"] = tool_receipts
+    if knowledge_task_id:
+        result["knowledge_task_id"] = knowledge_task_id
     result["applied"] = apply_actions(root, result["actions"], message)
     if dashboard_request or any(
         row["tool"] in ("write_dashboard", "repair_dashboard") for row in tool_receipts
@@ -1290,6 +1325,141 @@ def reopen_unavailable_questions(root: Path) -> dict:
     return result
 
 
+def _chat_lifecycle_profiles(root: Path, directory: Path, accepted_cpu=None) -> dict:
+    """Resolve immutable profile snapshots and every local endpoint for a turn."""
+    from rlm.v100.mission import status
+
+    mission = status(root)
+    paths = [directory / "serving-active.json", directory / "learning/live.json"]
+    current = mission.get("state", {}).get("live_profile")
+    if current:
+        paths.append(Path(current))
+    paths.extend(sorted(directory.glob("profile-*.json")))
+    selected = next((path for path in paths if path.exists()), None)
+    if selected is None:
+        return {"accepted": None, "planner": None, "profiles": []}
+    from rlm.v100.common import load_profile
+
+    accepted = load_profile(selected, root)
+    planner_profile = None
+    profiles = [accepted]
+    if preferences(root).get("remote_helper_enabled", True):
+        from rlm.v100.model_roles import selected_profile
+
+        planner = selected_profile(root, "planner")
+        if planner is not None:
+            try:
+                planner_profile = load_profile(planner, root)
+                profiles.append(planner_profile)
+            except (OSError, ValueError):
+                # respond() records and ignores an unusable optional planner.
+                pass
+    if accepted_cpu is not None and accepted.get("resources", {}).get("accepted_cpu_chat"):
+        from rlm.v100.chat_backend import cpu_profile
+
+        profiles.append(cpu_profile(accepted))
+    return {"accepted": accepted, "planner": planner_profile, "profiles": profiles}
+
+
+@contextmanager
+def _chat_endpoint_leases(root: Path, directory: Path, accepted_cpu=None, *, profiles=None):
+    """Hold shared endpoint leases from before identity checks through all tools/recovery."""
+    from rlm.v100.serving import ServingLeaseUnavailable, endpoint_lease, local_endpoint
+
+    profiles = (
+        profiles
+        if profiles is not None
+        else _chat_lifecycle_profiles(root, directory, accepted_cpu)["profiles"]
+    )
+    endpoints = {}
+    for profile in profiles:
+        endpoint = local_endpoint(profile)
+        if endpoint is not None:
+            endpoints[endpoint] = profile
+    stack = ExitStack()
+    try:
+        # Identical ordering across chat processes prevents multi-port deadlocks.
+        for endpoint in sorted(endpoints):
+            stack.enter_context(
+                endpoint_lease(root, endpoints[endpoint], exclusive=False, timeout=0.25)
+            )
+    except ServingLeaseUnavailable:
+        stack.close()
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        stack.close()
+
+
+@contextmanager
+def _chat_fallback_lease(root: Path, directory: Path, accepted_cpu=None, *, accepted_profile=None):
+    """Protect the isolated accepted CPU fallback when the master port is busy."""
+    from rlm.v100.serving import endpoint_lease
+
+    if accepted_cpu is None or not accepted_cpu:
+        yield
+        return
+    if accepted_profile is None:
+        lifecycle = _chat_lifecycle_profiles(root, directory, accepted_cpu)
+        accepted_profile = lifecycle["accepted"]
+    profile = accepted_profile
+    if not profile.get("resources", {}).get("accepted_cpu_chat"):
+        yield
+        return
+    from rlm.v100.chat_backend import cpu_profile
+    from rlm.v100.serving import ServingLeaseUnavailable
+
+    try:
+        with endpoint_lease(root, cpu_profile(profile), exclusive=False, timeout=0.25):
+            yield
+    except ServingLeaseUnavailable as error:
+        raise BackendNotReady(str(error)) from error
+
+
+def _respond_with_lifecycle(root: Path, directory: Path, request: dict, accepted_cpu=None):
+    lifecycle = _chat_lifecycle_profiles(root, directory, accepted_cpu)
+    if lifecycle["accepted"] is None:
+        raise BackendNotReady("No immutable accepted profile was available for this chat turn")
+    with _chat_endpoint_leases(
+        root, directory, accepted_cpu, profiles=lifecycle["profiles"]
+    ) as lease_acquired:
+        if lease_acquired:
+            return (
+                respond(
+                    root,
+                    directory,
+                    request,
+                    accepted_cpu,
+                    lifecycle_snapshot=lifecycle,
+                )
+                if accepted_cpu is not None
+                else respond(root, directory, request, lifecycle_snapshot=lifecycle)
+            )
+        with _chat_fallback_lease(
+            root, directory, accepted_cpu, accepted_profile=lifecycle["accepted"]
+        ):
+            return (
+                respond(
+                    root,
+                    directory,
+                    request,
+                    accepted_cpu,
+                    skip_local=True,
+                    lifecycle_snapshot=lifecycle,
+                )
+                if accepted_cpu is not None
+                else respond(
+                    root,
+                    directory,
+                    request,
+                    skip_local=True,
+                    lifecycle_snapshot=lifecycle,
+                )
+            )
+
+
 def service(root: Path, directory: Path, stop: threading.Event, accepted_cpu=None) -> None:
     try:
         service_loop(root, directory, stop, accepted_cpu)
@@ -1322,11 +1492,7 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
             },
         )
         try:
-            response = (
-                respond(root, directory, request, accepted_cpu)
-                if accepted_cpu is not None
-                else respond(root, directory, request)
-            )
+            response = _respond_with_lifecycle(root, directory, request, accepted_cpu)
             if not isinstance(response.get("answer"), str) or not response["answer"].strip():
                 raise ValueError("Empty chat reply rejected; request not completed")
             failed = response.get("execution_status") == "failed"

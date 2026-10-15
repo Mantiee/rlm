@@ -3,6 +3,10 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 if ($Revision -notmatch '^[0-9a-f]{40}$') { throw 'Use an exact published revision.' }
 $root = Join-Path $env:USERPROFILE 'ai-v100-helper'
+$manualStopPath = Join-Path $root 'helper-manual-stop.flag'
+if (Test-Path -LiteralPath $manualStopPath) {
+    throw 'RTX helper operator manual-stop flag is present; native GPU benchmark refused before runtime/model work.'
+}
 $python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Existing Synta isolated Python runtime required.' }
 $manifestPath = Join-Path $root 'models\manifests\registry.ollama.ai\library\gemma4\e2b-it-q4_K_M'

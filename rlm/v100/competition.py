@@ -74,13 +74,62 @@ def guard_cpu_process(
 
 
 def lower_cpu_priority(pid: int) -> None:
-    """Only lower scheduling priority; never undo a service's inherited nice."""
-    if os.getpriority(os.PRIO_PROCESS, pid) < 10:
-        os.setpriority(os.PRIO_PROCESS, pid, 10)
+    """Only lower scheduling priority; never undo a service's inherited priority."""
+    if os.name == "nt":
+        _lower_windows_cpu_priority(pid)
+        return
+    _lower_posix_cpu_priority(pid)
+
+
+def _lower_windows_cpu_priority(pid, *, ctypes_module=None, kernel32=None):
+    if ctypes_module is None:
+        import ctypes as ctypes_module
+    if kernel32 is None:
+        kernel32 = ctypes_module.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (
+        ctypes_module.c_uint32,
+        ctypes_module.c_int,
+        ctypes_module.c_uint32,
+    )
+    kernel32.OpenProcess.restype = ctypes_module.c_void_p
+    kernel32.SetPriorityClass.argtypes = (ctypes_module.c_void_p, ctypes_module.c_uint32)
+    kernel32.SetPriorityClass.restype = ctypes_module.c_int
+    kernel32.CloseHandle.argtypes = (ctypes_module.c_void_p,)
+    kernel32.CloseHandle.restype = ctypes_module.c_int
+    # PROCESS_SET_INFORMATION and BELOW_NORMAL_PRIORITY_CLASS.
+    handle = kernel32.OpenProcess(0x0200, 0, pid)
+    if not handle:
+        return
+    try:
+        kernel32.SetPriorityClass(handle, 0x00004000)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+_UNSET_PRIORITY_API = object()
+
+
+def _lower_posix_cpu_priority(
+    pid,
+    *,
+    getpriority=_UNSET_PRIORITY_API,
+    setpriority=_UNSET_PRIORITY_API,
+    process_scope=_UNSET_PRIORITY_API,
+):
+    if getpriority is _UNSET_PRIORITY_API:
+        getpriority = getattr(os, "getpriority", None)
+    if setpriority is _UNSET_PRIORITY_API:
+        setpriority = getattr(os, "setpriority", None)
+    if process_scope is _UNSET_PRIORITY_API:
+        process_scope = getattr(os, "PRIO_PROCESS", None)
+    if getpriority is None or setpriority is None or process_scope is None:
+        return
+    if getpriority(process_scope, pid) < 10:
+        setpriority(process_scope, pid, 10)
 
 
 @contextmanager
-def managed_server(
+def _managed_server_unleased(
     profile_path: Path, root: Path, log_path: Path, cancel: threading.Event | None = None
 ):
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +160,7 @@ def managed_server(
         yield profile
         return
 
-    if remote_profile(profile):
+    if remote_profile(profile) or profile["runtime"].get("backend") == "isolated-architecture":
         startup("checking-remote-backend", endpoint=profile["runtime"]["base_url"])
         client = helper_client(profile, root)
         from rlm.v100.remote_helper import OllamaResearchClient
@@ -283,6 +332,59 @@ def managed_server(
 
 
 @contextmanager
+def managed_server(
+    profile_path: Path,
+    root: Path,
+    log_path: Path,
+    cancel: threading.Event | None = None,
+    *,
+    lifecycle_role: str = "candidate",
+):
+    """Serve a local profile under the endpoint lifecycle protocol.
+
+    Callers must opt in to ``accepted`` only for the already-admitted serving
+    identity. Every other local listener is treated as a candidate and excludes
+    chat readers from the endpoint for its entire process lifetime.
+    """
+    if lifecycle_role not in ("accepted", "candidate", "reader-owned"):
+        raise ValueError(
+            "Managed server lifecycle role must be accepted, candidate, or reader-owned"
+        )
+    profile = load_profile(profile_path, root)
+    from rlm.v100.remote_helper import remote_profile
+
+    if remote_profile(profile):
+        with _managed_server_unleased(profile_path, root, log_path, cancel) as actual:
+            yield actual
+        return
+    from rlm.v100.serving import endpoint_lease
+
+    if lifecycle_role == "reader-owned":
+        with _managed_server_unleased(profile_path, root, log_path, cancel) as actual:
+            yield actual
+        return
+    if lifecycle_role == "accepted":
+        # Accepted listeners stay chat-readable; only their bind and teardown
+        # transitions exclude readers and candidate processes.
+        manager = _managed_server_unleased(profile_path, root, log_path, cancel)
+        with endpoint_lease(root, profile, exclusive=True):
+            actual = manager.__enter__()
+        try:
+            yield actual
+        except BaseException as error:
+            with endpoint_lease(root, profile, exclusive=True):
+                manager.__exit__(type(error), error, error.__traceback__)
+            raise
+        else:
+            with endpoint_lease(root, profile, exclusive=True):
+                manager.__exit__(None, None, None)
+        return
+    with endpoint_lease(root, profile, exclusive=True):
+        with _managed_server_unleased(profile_path, root, log_path, cancel) as actual:
+            yield actual
+
+
+@contextmanager
 def waiting_researcher(
     profile_path: Path, root: Path, log_path: Path, fallback: dict | None = None
 ):
@@ -393,7 +495,7 @@ def helper_client(
     profile: dict, root: Path | None = None, branch: str = "controller"
 ) -> LlamaCppClient:
     from rlm.v100.inference import sampling_settings, thinking_enabled
-    from rlm.v100.remote_helper import OllamaResearchClient, remote_profile
+    from rlm.v100.remote_helper import OllamaResearchClient, origin_enabled, remote_profile
 
     remote = remote_profile(profile)
     if remote and root is not None and not profile["resources"].get("calibration_only"):
@@ -405,6 +507,14 @@ def helper_client(
             if replacement is not None:
                 profile = load_profile(replacement, root)
     settings = profile["runtime"]
+    if remote and not origin_enabled(root, settings["base_url"]):
+        from rlm.v100.remote_helper import private_origin
+
+        raise RuntimeError(
+            "Remote helper origin disabled by Synta preferences: "
+            + private_origin(settings["base_url"])
+            + "; Windows RTX 3090 requires explicit remote_origin_enabled opt-in"
+        )
     if remote and root is not None:
         from rlm.v100.model_policy import retired
 
@@ -420,7 +530,8 @@ def helper_client(
             )
         from rlm.v100.mission_chat import preferences
 
-        if preferences(root).get("remote_helper_enabled", True) is False:
+        remote_preferences = preferences(root)
+        if remote_preferences.get("remote_helper_enabled", True) is False:
             raise RuntimeError(
                 "Remote GPU disabled by operator; use the accepted V100 master or CPU jobs"
             )

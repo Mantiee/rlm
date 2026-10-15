@@ -92,6 +92,12 @@ def test_status_question_does_not_call_model_or_change_plans(tmp_path, monkeypat
     assert result["actions"] == [] and result["applied"] == []
     assert "3/20" in result["answer"] and "generating" in result["answer"]
     assert "brak potwierdzonych danych" in result["answer"]
+    assert "Licznik wyboru kandydata jest nieznany" in result["answer"]
+    assert "Kandydaci wybrani do następnej fazy serwowania" in result["answer"]
+    evidence["accepted_weight_updates_this_run"] = 0
+    zero_result = chat_progress.respond(tmp_path, "co teraz robisz?")
+    assert "Brak cyklu zakończonego wyborem kandydata" in zero_result["answer"]
+    assert "Licznik wyboru kandydata jest nieznany" not in zero_result["answer"]
     monkeypatch.setattr(
         mission_chat,
         "submit",

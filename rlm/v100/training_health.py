@@ -1,6 +1,7 @@
 """Strict JSON metrics and explicit AMP overflow accounting."""
 
 import math
+import time
 from dataclasses import dataclass
 
 
@@ -71,7 +72,9 @@ class TrainingHealth:
                 "More than eight consecutive AMP overflows; candidate rejected"
             )
 
-    def report(self) -> dict:
+    def report(self, now: float | None = None) -> dict:
+        """Return numerical counters with a writer-owned observation timestamp."""
+        updated_at = time.time() if now is None else now
         eligible = (
             self.optimizer_updates > 0
             and self.finite_gradient_steps == self.optimizer_updates
@@ -80,6 +83,7 @@ class TrainingHealth:
         )
         return {
             "schema": "v100-training-health-v1",
+            "updated_at": updated_at,
             "attempted_steps": self.attempted_steps,
             "optimizer_updates": self.optimizer_updates,
             "amp_skipped_steps": self.skipped_steps,

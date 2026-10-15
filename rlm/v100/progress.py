@@ -231,7 +231,7 @@ def report(root: Path) -> dict:
     )
     lines = [
         f"Phase: {value['phase']} | Running: {value['running']}",
-        f"Learning cycles: {len(cycles)} | Accepted weight updates in this run: {value['accepted_weight_updates_this_run']}",
+        f"Learning cycles: {len(cycles)} | Candidates selected for next serving in this run: {value['accepted_weight_updates_this_run']}",
         "Successful optimizer updates observed in this run: "
         + str(value["mission_evidence"]["optimizer_updates_observed"])
         + " (None means no verified counters; not proof of zero)",

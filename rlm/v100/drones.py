@@ -123,6 +123,34 @@ def cancel(root: Path, identity: str) -> dict:
     return {"id": identity, "status": "cancelled; an in-flight bounded task may finish"}
 
 
+def admission_retry_delay(error: Exception) -> int | None:
+    """Only retry a known pre-admission GPU cooldown; never replay arbitrary tools."""
+    from rlm.v100.remote_helper import OwnedGpuCooldown
+
+    if not isinstance(error, OwnedGpuCooldown):
+        return None
+    delay = getattr(error, "retry_after_seconds", None)
+    if type(delay) is int and 15 <= delay <= 600:
+        return delay
+    return None
+
+
+def run_research_task(task, *args, **kwargs) -> dict:
+    """Convert only a typed pre-admission rejection into a safe queued receipt."""
+    try:
+        return task(*args, **kwargs)
+    except Exception as error:
+        retry_after = admission_retry_delay(error)
+        if retry_after is None:
+            raise
+        return {
+            "status": "deferred",
+            "error": str(error)[:400],
+            "retry_after_seconds": retry_after,
+            "scope": "Explicit pre-admission cooldown; model turn was rejected before inference",
+        }
+
+
 def execute(root: Path, job: dict) -> dict:
     if job["kind"] == "market-research":
         from rlm.v100.market_research import execute as market_execute
@@ -167,13 +195,24 @@ def execute(root: Path, job: dict) -> dict:
         )
     from rlm.v100.competition import helper_client
     from rlm.v100.goals import load_goal
-    from rlm.v100.income_work import accepted_master
+    from rlm.v100.income_work import MasterNotReady, accepted_master
     from rlm.v100.mission_chat import backend_preflight, preferences
     from rlm.v100.remote_helper import remote_profile, selected_helper
     from rlm.v100.researchers import research_task
 
     if preferences(root).get("remote_helper_enabled", True) is False:
-        client = accepted_master(root, job["branch"])
+        try:
+            client = accepted_master(root, job["branch"])
+        except (MasterNotReady, requests.RequestException) as error:
+            retry_after = admission_retry_delay(error)
+            if retry_after is None:
+                raise
+            return {
+                "status": "deferred",
+                "error": str(error)[:400],
+                "retry_after_seconds": retry_after,
+                "scope": "Explicit pre-admission cooldown; no model turn or tools ran",
+            }
     else:
         chosen_path = selected_helper(root, "planner" if job["kind"] == "critic" else "fast")
         profile = load_profile(chosen_path, root)
@@ -194,9 +233,20 @@ def execute(root: Path, job: dict) -> dict:
                     backend_preflight(alternative)
                 except requests.RequestException:
                     alternative = None
-            client = (
-                alternative if alternative is not None else accepted_master(root, job["branch"])
-            )
+            try:
+                client = (
+                    alternative if alternative is not None else accepted_master(root, job["branch"])
+                )
+            except (MasterNotReady, requests.RequestException) as deferred:
+                retry_after = admission_retry_delay(deferred)
+                if retry_after is None:
+                    raise
+                return {
+                    "status": "deferred",
+                    "error": str(deferred)[:400],
+                    "retry_after_seconds": retry_after,
+                    "scope": "Explicit pre-admission cooldown; no model turn or tools ran",
+                }
             ActivityLog(root, job["branch"], "resident-" + job["kind"]).write(
                 "steps",
                 "owned-node-fallback" if alternative is not None else "local-master-fallback",
@@ -247,7 +297,8 @@ def execute(root: Path, job: dict) -> dict:
         "get_plan",
         "set_plan",
     }
-    return research_task(
+    return run_research_task(
+        research_task,
         client,
         job["branch"],
         {"role": job["kind"], "brief": job["payload"]},
@@ -262,11 +313,34 @@ def finish(root: Path, identity: str, value: dict) -> None:
         interval = row["interval"]
         delay = interval
         retry = value.get("retry_after_seconds")
-        if row["kind"] == "income" and interval and type(retry) is int and 15 <= retry <= 600:
-            delay = retry
+        safe_retry = value.get("status") == "deferred"
+        retry_attempt = 0
+        try:
+            previous = json.loads(row["result"] or "{}")
+            retry_attempt = int(previous.get("retry_attempt", 0)) if safe_retry else 0
+        except (TypeError, ValueError):
+            pass
+        if (
+            safe_retry
+            and type(retry) is int
+            and 15 <= retry <= 600
+            and (interval or retry_attempt < 5)
+        ):
+            delay = max(retry, min(600, 15 * 2 ** min(retry_attempt, 5)))
+            value = {**value, "retry_attempt": retry_attempt + 1}
         state = (
             "cancelled" if row["state"] == "cancelled" else "queued" if interval else "completed"
         )
+        if state != "cancelled" and safe_retry and type(retry) is int and 15 <= retry <= 600:
+            if interval or retry_attempt < 5:
+                state = "queued"
+            else:
+                state = "failed"
+                value = {
+                    **value,
+                    "status": "deferred after bounded retries",
+                    "scope": "Cooldown persisted; task retained for operator review",
+                }
         if (
             row["kind"] != "compute-audit"
             and value.get("status") == "failed"
@@ -371,7 +445,7 @@ def service(root: Path, stop: threading.Event) -> None:
 
                 budget = local_budget(root)
                 jobs = db.execute(
-                    "SELECT * FROM jobs WHERE state='queued' AND due<=? ORDER BY due LIMIT 16",
+                    "SELECT * FROM jobs WHERE state='queued' AND due<=? ORDER BY due,rowid LIMIT 16",
                     (time.time(),),
                 ).fetchall()
                 for row in jobs:

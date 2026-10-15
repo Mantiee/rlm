@@ -180,6 +180,14 @@ def recommend_mtp(comparison: dict, require_exact_answers: bool = True) -> dict:
 def test_mtp(
     root: Path, repeats: int, draft_tokens: tuple[int, ...] = DEFAULT_DRAFT_TOKENS
 ) -> Path:
+    from rlm.v100.serving import endpoint_lease
+
+    endpoint = {"runtime": {"base_url": "http://127.0.0.1:8089"}}
+    with endpoint_lease(root, endpoint, exclusive=True):
+        return _test_mtp_unleased(root, repeats, draft_tokens)
+
+
+def _test_mtp_unleased(root: Path, repeats: int, draft_tokens: tuple[int, ...]) -> Path:
     from rlm.v100.cli import server_command
 
     if repeats < 1:

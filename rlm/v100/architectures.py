@@ -8,7 +8,6 @@ outside PyTorch. CPU workers additionally have a hard virtual-memory limit.
 import ast
 import contextlib
 import copy
-import fcntl
 import hashlib
 import json
 import os
@@ -21,6 +20,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from rlm.v100 import file_lock as fcntl
 from rlm.v100.code_lab import sandbox_command, sandbox_environment
 from rlm.v100.common import atomic_json
 from rlm.v100.goals import load_goal

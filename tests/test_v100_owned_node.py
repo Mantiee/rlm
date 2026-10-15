@@ -311,6 +311,50 @@ def test_bridge_imports_only_hash_checked_artifacts_and_retains_local_validation
     ).read_bytes() == files["weights.safetensors"]
 
 
+def test_bridge_preserves_bounded_cuda_resource_failure_diagnostic(tmp_path, monkeypatch):
+    mailbox = tmp_path / "mailbox"
+    atomic_json(tmp_path / "research/compute-config.json", {"mailbox": str(mailbox)})
+    identity, nonce = "e" * 24, "f" * 32
+    value = job(identity)
+    value["device"] = "cuda"
+    atomic_json(mailbox / "jobs" / (identity + ".json"), value)
+    atomic_json(tmp_path / "research/compute-jobs" / identity / "job.json", value)
+    atomic_json(
+        mailbox / "claims" / identity / "lease.json",
+        {"worker": "debian-3060ti-gpu", "nonce": nonce, "job_id": identity},
+    )
+    diagnostic = {
+        "device": "cuda",
+        "reasons": ["worker-host-rss-budget"],
+        "gpu_ready": True,
+        "elapsed_seconds": 4.0,
+        "host_rss_bytes": 768 * 2**20 + 1,
+        "host_available_bytes": 4 * 2**30,
+        "host_rss_limit_bytes": 768 * 2**20,
+        "host_available_minimum_bytes": 2**30,
+        "elapsed_limit_seconds": 150,
+        "arbitrary_log": "discard this",
+    }
+    monkeypatch.setattr(
+        remote_nodes,
+        "request",
+        lambda *args, **kwargs: {
+            "state": "failed",
+            "detail": "Owned compute reserve stopped: worker-host-rss-budget",
+            "resource_failure": diagnostic,
+        },
+    )
+
+    remote_nodes.cpu_bridge(tmp_path, {"cpu_ready": True, "cpu_slots": 1})
+
+    receipt = json.loads(
+        (mailbox / "results" / (identity + "-" + nonce) / "receipt.json").read_text()
+    )
+    assert receipt["state"] == "failed"
+    assert receipt["resource_failure"]["reasons"] == ["worker-host-rss-budget"]
+    assert "arbitrary_log" not in receipt["resource_failure"]
+
+
 def test_cpu_work_does_not_wait_for_gpu_qualification(tmp_path, monkeypatch):
     from rlm.v100 import distributed_compute, goal_compute
 

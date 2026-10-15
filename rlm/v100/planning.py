@@ -1,11 +1,11 @@
 """Versioned user goal and model-owned short/mid-term plans, separate from test rules."""
 
-import fcntl
 import json
 import time
 import uuid
 from pathlib import Path
 
+from rlm.v100 import file_lock as fcntl
 from rlm.v100.common import atomic_json
 from rlm.v100.goals import load_goal, set_goal
 

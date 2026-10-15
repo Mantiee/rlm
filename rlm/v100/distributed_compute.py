@@ -16,6 +16,8 @@ from rlm.v100.compute_kernel import validate
 from rlm.v100.compute_worker import read_json
 from rlm.v100.protection import file_hash
 
+CUDA_RETRY_COOLDOWN_SECONDS = 15 * 60
+
 
 def record_state(root: Path, path: Path, state: dict) -> None:
     """Journal observable job transitions once, retaining the full state artifact."""
@@ -239,7 +241,7 @@ def cancel(root: Path, identity: str) -> dict:
         raise ValueError("Invalid compute job ID")
     path = root / "research/compute-jobs" / identity / "state.json"
     state = read_json(path)
-    state.update(state="cancelled")
+    state.update(state="cancelled", retry_not_before=None, cancelled_at=time.time())
     record_state(root, path, state)
     atomic_json(mailbox_path(root) / "closed" / (identity + ".json"), {"state": "cancelled"})
     return state
@@ -266,6 +268,7 @@ def tick(root: Path) -> None:
         lease_path = mailbox / "claims" / identity / "lease.json"
         if not lease_path.exists():
             continue
+        receipt = None
         try:
             lease = read_json(lease_path, 16384)
             if (
@@ -288,6 +291,21 @@ def tick(root: Path) -> None:
                 raise ValueError("Compute worker lease expired")
             if receipt.get("nonce") != lease["nonce"] or receipt.get("job_id") != identity:
                 raise ValueError("Stale or unrelated compute result")
+            if receipt.get("state") == "cancelled":
+                state.update(
+                    state="cancelled",
+                    retry_not_before=None,
+                    cancelled_at=time.time(),
+                    detail=str(receipt.get("detail", "Remote CUDA pilot cancelled"))[:400],
+                )
+                record_state(root, path, state)
+                atomic_json(mailbox / "closed" / (identity + ".json"), {"state": "cancelled"})
+                claim = mailbox / "claims" / identity
+                if claim.exists():
+                    claim.rename(
+                        mailbox / "claims" / ("retired-" + identity + "-" + uuid.uuid4().hex)
+                    )
+                continue
             if receipt.get("state") != "complete":
                 raise ValueError(receipt.get("detail", "Remote compute failed"))
             if receipt.get("job_sha256") != state["job_sha256"]:
@@ -321,13 +339,37 @@ def tick(root: Path) -> None:
             atomic_json(mailbox / "closed" / (identity + ".json"), {"state": "imported"})
         except (ValueError, KeyError, TypeError, OSError) as error:
             attempts = state["attempts"] + 1
-            state.update(
-                state="failed" if attempts >= 3 else "queued",
-                attempts=attempts,
-                detail=str(error)[:400],
-            )
+            detail = str(error)[:400]
+            job = read_json(path.parent / "job.json")
+            if job.get("device") == "cuda":
+                from rlm.v100.remote_nodes import cuda_resource_failure
+
+                diagnostic = cuda_resource_failure(
+                    receipt.get("resource_failure") if isinstance(receipt, dict) else None
+                )
+                retry = diagnostic is not None and attempts < 3
+                failure = {
+                    "state": receipt.get("state") if isinstance(receipt, dict) else None,
+                    "detail": detail,
+                    "resource_failure": diagnostic,
+                }
+                state.update(
+                    state="queued" if retry else "failed",
+                    attempts=attempts,
+                    detail=detail,
+                    last_failure=failure,
+                    retry_not_before=(
+                        time.time() + CUDA_RETRY_COOLDOWN_SECONDS if retry else None
+                    ),
+                )
+            else:
+                state.update(
+                    state="failed" if attempts >= 3 else "queued",
+                    attempts=attempts,
+                    detail=detail,
+                )
             record_state(root, path, state)
-            if attempts >= 3:
+            if state["state"] == "failed":
                 atomic_json(mailbox / "closed" / (identity + ".json"), {"state": "failed"})
             claim = mailbox / "claims" / identity
             if claim.exists():

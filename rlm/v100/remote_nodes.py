@@ -5,6 +5,7 @@ import base64
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import threading
@@ -21,6 +22,60 @@ from rlm.v100.remote_helper import BACKEND, ORDERED_METADATA, ROLE_MODELS, metad
 
 ENDPOINT = "http://192.168.0.9:11435"
 CONTRACT = "synta-dedicated-linux-v1"
+_CUDA_RESOURCE_REASONS = {
+    "dedicated-gpu-not-ready",
+    "worker-time-budget",
+    "worker-host-rss-budget",
+    "host-ram-reserve",
+}
+
+
+def cuda_resource_failure(value: object) -> dict | None:
+    """Keep only bounded, known CUDA reserve measurements from the owned worker."""
+    if not isinstance(value, dict) or value.get("device") != "cuda":
+        return None
+    reasons = value.get("reasons")
+    if (
+        not isinstance(reasons, list)
+        or not reasons
+        or any(
+            not isinstance(reason, str) or reason not in _CUDA_RESOURCE_REASONS
+            for reason in reasons
+        )
+    ):
+        return None
+    expected = {
+        "host_rss_limit_bytes": 768 * 2**20,
+        "host_available_minimum_bytes": 2**30,
+        "elapsed_limit_seconds": 150,
+    }
+    if any(value.get(key) != limit for key, limit in expected.items()):
+        return None
+    gpu_ready = value.get("gpu_ready")
+    if type(gpu_ready) is not bool:
+        return None
+    fields = (
+        "elapsed_seconds",
+        "host_rss_bytes",
+        "host_available_bytes",
+    )
+    metrics = {}
+    for key in fields:
+        measurement = value.get(key)
+        if measurement is not None and (
+            type(measurement) not in (int, float)
+            or not math.isfinite(measurement)
+            or measurement < 0
+        ):
+            return None
+        metrics[key] = measurement
+    return {
+        "device": "cuda",
+        "reasons": list(dict.fromkeys(reasons)),
+        "gpu_ready": gpu_ready,
+        **metrics,
+        **expected,
+    }
 
 
 def request(method: str, path: str, value: dict | None = None) -> dict:
@@ -296,13 +351,43 @@ def cpu_bridge(root: Path, resources: dict) -> None:
         original = root / "research/compute-jobs" / path.stem / "job.json"
         if not original.is_file():
             continue
+        claim = mailbox / "claims" / path.stem
+        state_path = original.with_name("state.json")
+        if state_path.is_file():
+            local_state = json.loads(state_path.read_text())
+            if local_state.get("state") in (
+                "cancelled",
+                "failed",
+                "imported",
+                "locally-validated",
+            ) and not (
+                local_state.get("state") == "cancelled" and (claim / "lease.json").is_file()
+            ):
+                continue
+            if device == "cuda":
+                attempts = local_state.get("attempts", 0)
+                if type(attempts) is not int or attempts < 0:
+                    continue
+                if attempts > 0:
+                    failure = local_state.get("last_failure")
+                    diagnostic = cuda_resource_failure(
+                        failure.get("resource_failure") if isinstance(failure, dict) else None
+                    )
+                    retry_not_before = local_state.get("retry_not_before")
+                    if (
+                        diagnostic is None
+                        or type(retry_not_before) not in (int, float)
+                        or not math.isfinite(retry_not_before)
+                        or retry_not_before <= 0
+                        or time.time() < retry_not_before
+                    ):
+                        continue
         if (
             path.is_symlink()
             or path.stat().st_size > 2 * 2**20
             or path.read_bytes() != original.read_bytes()
         ):
             raise ValueError("Owned CPU mailbox input differs from the frozen host job")
-        claim = mailbox / "claims" / path.stem
         if not claim.resolve().is_relative_to(mailbox.resolve()):
             raise ValueError("Owned CPU claim escaped its mailbox")
         lease_path = claim / "lease.json"
@@ -372,7 +457,7 @@ def cpu_bridge(root: Path, resources: dict) -> None:
                     phase = "busy"
                     continue
                 raise
-        if result.get("state") not in ("queued", "running", "complete", "failed"):
+        if result.get("state") not in ("queued", "running", "complete", "failed", "cancelled"):
             raise ValueError("Unknown owned CPU lifecycle")
         atomic_json(lease_path, {**lease, "heartbeat": time.time()})
         if result["state"] == "complete":
@@ -404,11 +489,17 @@ def cpu_bridge(root: Path, resources: dict) -> None:
                     "scope": "Remote metrics untrusted; normal host safe-tensor replay is required",
                 },
             )
-        elif result["state"] == "failed":
-            atomic_json(
-                destination / "receipt.json",
-                {**lease, "state": "failed", "detail": result.get("detail", "Owned kernel failed")},
-            )
+        elif result["state"] in ("failed", "cancelled"):
+            detail = result.get("detail")
+            receipt = {
+                **lease,
+                "state": result["state"],
+                "detail": detail[:400] if isinstance(detail, str) else "Owned kernel failed",
+            }
+            diagnostic = cuda_resource_failure(result.get("resource_failure"))
+            if diagnostic is not None:
+                receipt["resource_failure"] = diagnostic
+            atomic_json(destination / "receipt.json", receipt)
 
 
 def tick(root: Path) -> dict:

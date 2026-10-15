@@ -44,17 +44,71 @@ def safe(v):
     return html.escape(str(v), quote=True)
 
 
+def engine_progress(quote_age, blocker, stale_after=180):
+    """Describe observable quote-loop activity without implying model learning."""
+    if quote_age is None:
+        return {
+            "state": "waiting",
+            "label": "BRAK ODEBRANEGO NOTOWANIA",
+            "detail": "Brak dowodu pracy pętli notowań; odpytywanie API panelu nie oznacza aktywności silnika.",
+            "class": "warn",
+        }
+    if not math.isfinite(float(quote_age)) or quote_age < 0 or quote_age > stale_after:
+        return {
+            "state": "stale",
+            "label": "ZASTÓJ — NOTOWANIE NIEAKTUALNE",
+            "detail": f"Ostatnie notowanie ma {quote_age} s; limit świeżości to {stale_after} s.",
+            "class": "red",
+        }
+    if blocker:
+        return {
+            "state": "blocked",
+            "label": "NOTOWANIA ŚWIEŻE · PAPER ZABLOKOWANY",
+            "detail": f"Pętla odbiera notowania, ale nie ma autoryzacji wykonania: {blocker}",
+            "class": "warn",
+        }
+    return {
+        "state": "active",
+        "label": "NOTOWANIA ŚWIEŻE · PĘTLA PAPER AKTYWNA",
+        "detail": "To potwierdza tylko pracę pętli notowań i symulacji; nie potwierdza treningu modelu ani zysku.",
+        "class": "green",
+    }
+
+
+def mission_control_url(host_header, configured=None):
+    """Return the canonical dashboard URL for the old paper-app entry point."""
+    if configured:
+        target = urllib.parse.urlsplit(configured)
+        if (
+            target.scheme not in {"http", "https"}
+            or not target.hostname
+            or target.username
+            or target.password
+            or target.query
+            or target.fragment
+        ):
+            raise ValueError("Mission Control URL must be an HTTP(S) origin or path")
+        return configured.rstrip("/") + "/"
+    origin = urllib.parse.urlsplit("//" + (host_header or "127.0.0.1"))
+    host = origin.hostname
+    if not host or any(ord(char) < 33 for char in host) or "/" in host or "\\" in host:
+        host = "127.0.0.1"
+    authority = f"[{host}]" if ":" in host else host
+    scheme = "https" if origin.scheme == "https" else "http"
+    return f"{scheme}://{authority}:8765/"
+
+
 PAGE = """<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synta — Symulacja zarabiania i uczenie</title>
 <style>body{background:#07111e;color:#e5f1ff;font:15px system-ui;margin:0;padding:22px}h1{font-size:25px}small,.muted{color:#92a9c3}section{background:#112239;border:1px solid #29415b;border-radius:12px;padding:16px;margin:12px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:12px}.num{font-size:29px;font-weight:700}.red{color:#ff8d8d}.green{color:#7de2ae}.warn{color:#ffd086}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:7px;text-align:left;border-bottom:1px solid #2b4055}.chartbox{height:300px;min-width:0}.chartbox canvas{display:block;width:100%;height:100%}.legend{display:flex;flex-wrap:wrap;gap:16px;margin:8px 0 12px;color:#c1d2e4;font-size:13px}.legend span{display:flex;align-items:center;gap:7px}.swatch{width:11px;height:11px;border-radius:50%;display:inline-block}.chart-values{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}.chart-value{padding:8px 11px;border-radius:8px;background:#0b1a2a;font-variant-numeric:tabular-nums}.chart-value strong{margin-left:6px}a{color:#9bcaff}@media(max-width:600px){body{padding:12px}.chartbox{height:250px}section{padding:12px}}</style></head><body>
 <h1>SY N T A · Symulacja zarabiania i uczenie</h1><p class="muted">Eksperyment papierowy — zero prawdziwych zleceń. Wyniki mogą być ujemne. Wykres pokazuje wycenę brutto mark-to-bid.</p>
-<section id="state">Łączenie z silnikiem…</section><div class="grid"><section><small>WALLET A · momentum</small><div class="num" id="a">—</div><div id="ap"></div></section><section><small>WALLET B · benchmark</small><div class="num" id="b">—</div><div id="bp"></div></section><section><small>Decyzje / minutę</small><div class="num" id="rpm">—</div><div id="count"></div></section><section><small>Źródła i nauka</small><div id="learning">—</div></section></div>
-<section><h2>Wallet A/B · aktualizacja co 2 s</h2><div class="legend" aria-label="Legenda wykresu"><span><i class="swatch" style="background:#60bdff"></i>Portfel A · momentum</span><span><i class="swatch" style="background:#f4b966"></i>Portfel B · benchmark</span></div><div class="chartbox"><canvas id="chart" role="img" aria-label="Wycena portfeli A i B w PLN według kolejnych notowań"></canvas></div><div class="chart-values" aria-live="polite"><span class="chart-value">Ostatni punkt A<strong id="chart-a">—</strong></span><span class="chart-value">Ostatni punkt B<strong id="chart-b">—</strong></span></div><p class="muted">Oś Y: wycena brutto w PLN · oś X: kolejność notowań (od najstarszego do najnowszego).</p><p class="muted" id="market"></p></section>
+<section><strong id="state">Łączenie z silnikiem…</strong><div id="state-detail" class="muted"></div></section><div class="grid"><section><small>WALLET A · research/hold</small><div class="num" id="a">—</div><div id="ap"></div><small class="muted">Hipotezy momentum są oceniane, ale A nie ma reguły wejścia.</small></section><section><small>WALLET B · benchmark</small><div class="num" id="b">—</div><div id="bp"></div></section><section><small>Decyzje / minutę</small><div class="num" id="rpm">—</div><div id="count"></div></section><section><small>Źródła i nauka</small><div id="learning">—</div></section></div>
+<section><h2>Wallet A/B · aktualizacja co 2 s</h2><div class="legend" aria-label="Legenda wykresu"><span><i class="swatch" style="background:#60bdff"></i>Portfel A · research/hold (bez wejścia)</span><span><i class="swatch" style="background:#f4b966"></i>Portfel B · benchmark</span></div><div class="chartbox"><canvas id="chart" role="img" aria-label="Wycena portfeli A i B w PLN według kolejnych notowań"></canvas></div><div class="chart-values" aria-live="polite"><span class="chart-value">Ostatni punkt A<strong id="chart-a">—</strong></span><span class="chart-value">Ostatni punkt B<strong id="chart-b">—</strong></span></div><p class="muted">Oś Y: wycena brutto w PLN · oś X: kolejność notowań (od najstarszego do najnowszego).</p><p class="muted" id="market"></p></section>
 <div class="grid"><section><h2>Transakcje paper</h2><div id="fills"></div></section><section><h2>Eksperymenty · walidacja poza próbką</h2><div id="tests"></div></section></div>
 <section><h2>News / źródła</h2><div id="news"></div></section><section><h2>Diagnostyka</h2><pre id="debug" style="white-space:pre-wrap"></pre></section>
 <script>
 const E=x=>document.getElementById(x), fmt=x=>Number(x).toLocaleString('pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2})+' PLN',esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function plot(data){window.lastChartData=data;let c=E('chart'),box=c.parentElement,rect=box.getBoundingClientRect(),scale=Math.min(window.devicePixelRatio||1,2),w=Math.max(320,Math.round(rect.width*scale)),h=Math.max(180,Math.round(rect.height*scale));if(c.width!==w||c.height!==h){c.width=w;c.height=h}let g=c.getContext('2d'),p={l:82,r:18,t:18,b:36};g.clearRect(0,0,w,h);g.font=(12*scale)+'px system-ui';data=(data||[]).filter(r=>Number.isFinite(Number(r.a))&&Number.isFinite(Number(r.b)));if(!data.length){g.fillStyle='#92a9c3';g.fillText('Oczekiwanie na notowania…',p.l,42*scale);E('chart-a').textContent='—';E('chart-b').textContent='—';return}let values=data.flatMap(r=>[Number(r.a),Number(r.b)]),lo=Math.min(...values),hi=Math.max(...values),pad=Math.max((hi-lo)*.12,2);lo-=pad;hi+=pad;let x=i=>p.l+(w-p.l-p.r)*i/Math.max(1,data.length-1),y=v=>p.t+(h-p.t-p.b)*(hi-v)/(hi-lo);for(let j=0;j<5;j++){let yy=p.t+(h-p.t-p.b)*j/4,val=hi-(hi-lo)*j/4;g.strokeStyle='#2b4055';g.lineWidth=scale;g.beginPath();g.moveTo(p.l,yy);g.lineTo(w-p.r,yy);g.stroke();g.fillStyle='#b7c9dc';g.textAlign='right';g.fillText(fmt(val),p.l-8*scale,yy+4*scale)}for(let [key,color] of [['a','#60bdff'],['b','#f4b966']]){g.beginPath();g.strokeStyle=color;g.lineWidth=2.5*scale;data.forEach((r,i)=>{let xx=x(i),yy=y(Number(r[key]));i?g.lineTo(xx,yy):g.moveTo(xx,yy)});g.stroke();let last=data.at(-1),lastX=x(data.length-1),lastY=y(Number(last[key]));g.fillStyle=color;g.beginPath();g.arc(lastX,lastY,4*scale,0,Math.PI*2);g.fill()}g.textAlign='left';g.fillStyle='#b7c9dc';g.fillText('1',p.l,h-9*scale);g.textAlign='center';g.fillText('Notowanie',p.l+(w-p.l-p.r)/2,h-9*scale);g.textAlign='right';g.fillText(String(data.length),w-p.r,h-9*scale);let last=data.at(-1);E('chart-a').textContent=fmt(last.a);E('chart-b').textContent=fmt(last.b)}
-async function refresh(){try{let r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let d=await r.json();E('state').textContent=d.blocker?'BLOKADA: '+d.blocker:'● Odbieranie notowań · '+d.time;E('state').className=d.blocker?'warn':'green';for(let k of ['a','b']){let x=d.accounts[k];E(k).textContent=fmt(x.equity);E(k+'p').textContent='P&L '+fmt(x.pnl)+' · '+x.pnl_pct.toFixed(3)+'% · gotówka '+fmt(x.cash)+' · BTC '+x.qty.toFixed(7);E(k+'p').className=x.pnl>=0?'green':'red'}E('rpm').textContent=d.decisions_last_min;E('count').textContent='Łącznie '+d.decisions+' ocen · '+d.fills.length+' filli · '+d.ticks+' notowań';E('learning').textContent='Backtesty '+d.tests.length+' · hipotezy '+d.hypotheses+' · sprawdzone '+d.hypotheses_scored+' · GPU: '+d.gpu;E('market').textContent='BTC bid/ask '+(d.quote?d.quote.bid.toFixed(2)+' / '+d.quote.ask.toFixed(2)+' PLN':'brak')+' · kurs USD/PLN '+d.fx+' · ostatnie '+(d.quote?.ts||'brak');plot(d.chart);
+function plot(data){window.lastChartData=data;let c=E('chart'),box=c.parentElement,rect=box.getBoundingClientRect(),scale=Math.min(window.devicePixelRatio||1,2),w=Math.max(320,Math.round(rect.width*scale)),h=Math.max(180,Math.round(rect.height*scale));if(c.width!==w||c.height!==h){c.width=w;c.height=h}let g=c.getContext('2d'),p={l:82,r:18,t:18,b:36};g.clearRect(0,0,w,h);g.font=(12*scale)+'px system-ui';data=(data||[]).filter(r=>r.a!=null&&r.b!=null&&Number.isFinite(Number(r.a))&&Number.isFinite(Number(r.b)));if(!data.length){g.fillStyle='#92a9c3';g.fillText('Oczekiwanie na notowania…',p.l,42*scale);E('chart-a').textContent='—';E('chart-b').textContent='—';return}let values=data.flatMap(r=>[Number(r.a),Number(r.b)]),lo=Math.min(...values),hi=Math.max(...values),pad=Math.max((hi-lo)*.12,2);lo-=pad;hi+=pad;let x=i=>p.l+(w-p.l-p.r)*i/Math.max(1,data.length-1),y=v=>p.t+(h-p.t-p.b)*(hi-v)/(hi-lo);for(let j=0;j<5;j++){let yy=p.t+(h-p.t-p.b)*j/4,val=hi-(hi-lo)*j/4;g.strokeStyle='#2b4055';g.lineWidth=scale;g.beginPath();g.moveTo(p.l,yy);g.lineTo(w-p.r,yy);g.stroke();g.fillStyle='#b7c9dc';g.textAlign='right';g.fillText(fmt(val),p.l-8*scale,yy+4*scale)}for(let [key,color] of [['a','#60bdff'],['b','#f4b966']]){g.beginPath();g.strokeStyle=color;g.lineWidth=2.5*scale;data.forEach((r,i)=>{let xx=x(i),yy=y(Number(r[key]));i?g.lineTo(xx,yy):g.moveTo(xx,yy)});g.stroke();let last=data.at(-1),lastX=x(data.length-1),lastY=y(Number(last[key]));g.fillStyle=color;g.beginPath();g.arc(lastX,lastY,4*scale,0,Math.PI*2);g.fill()}g.textAlign='left';g.fillStyle='#b7c9dc';g.fillText('1',p.l,h-9*scale);g.textAlign='center';g.fillText('Notowanie',p.l+(w-p.l-p.r)/2,h-9*scale);g.textAlign='right';g.fillText(String(data.length),w-p.r,h-9*scale);let last=data.at(-1);E('chart-a').textContent=fmt(last.a);E('chart-b').textContent=fmt(last.b)}
+async function refresh(){try{let r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let d=await r.json();let s=d.engine_progress||{label:d.blocker?'BLOKADA: '+d.blocker:'Stan silnika niezweryfikowany',detail:'Brak danych o świeżości notowania.',class:'warn'};E('state').textContent=s.label;E('state').className=s.class;E('state-detail').textContent=s.detail;for(let k of ['a','b']){let x=d.accounts[k];E(k).textContent=fmt(x.equity);E(k+'p').textContent='P&L '+fmt(x.pnl)+' · '+x.pnl_pct.toFixed(3)+'% · gotówka '+fmt(x.cash)+' · BTC '+x.qty.toFixed(7);E(k+'p').className=x.pnl>=0?'green':'red'}E('rpm').textContent=d.decisions_last_min;E('count').textContent='Łącznie '+d.decisions+' ocen · '+d.fills.length+' filli · '+d.ticks+' notowań';E('learning').textContent='Ocena hipotez/backtest: '+d.hypotheses_scored+'/'+d.hypotheses+' · trening wag: brak · GPU: '+d.gpu;E('market').textContent='BTC bid/ask '+(d.quote?d.quote.bid.toFixed(2)+' / '+d.quote.ask.toFixed(2)+' PLN':'brak')+' · kurs USD/PLN '+d.fx+' · ostatnie '+(d.quote?.ts||'brak')+' · wiek '+(d.quote_age??'brak')+' s';plot(d.chart);
 E('fills').innerHTML=d.fills.length?'<table><tr><th>UTC</th><th>Strategia</th><th>Akcja</th><th>PLN</th></tr>'+d.fills.map(x=>'<tr><td>'+esc(x.ts)+'</td><td>'+esc(x.branch)+'</td><td>'+esc(x.side)+'</td><td>'+x.amount.toFixed(2)+'</td></tr>').join('')+'</table>':'Brak filli — brak wymuszonych zakupów';
 E('tests').innerHTML=d.tests.length?'<table><tr><th>Okno</th><th>Próg</th><th>Walidacja netto</th><th>Transakcje</th></tr>'+d.tests.slice(0,12).map(x=>'<tr><td>'+x.window+'</td><td>'+x.threshold+'%</td><td>'+x.test_pct.toFixed(3)+'%</td><td>'+x.trades+'</td></tr>').join('')+'</table>':'Ładowanie historii OHLC…';
 E('news').innerHTML=d.news.length?d.news.map(x=>'<p><small>'+esc(x.date)+'</small> · '+esc(x.title)+' <a target="_blank" rel="noopener" href="'+esc(x.url)+'">źródło</a></p>').join(''):'Brak potwierdzonych newsów';
@@ -460,6 +514,10 @@ class Lab:
                 news_error=self.news_error,
                 history_error=self.history_error,
                 quote_age=round(time.time() - self.last_quote, 1) if self.last_quote else None,
+                engine_progress=engine_progress(
+                    round(time.time() - self.last_quote, 1) if self.last_quote else None,
+                    self.error,
+                ),
                 gpu="NIEPODŁĄCZONE — brak potwierdzenia CUDA",
                 promoted_strategy=self.promoted,
                 legacy_promotion=self.legacy_promotion,
@@ -495,6 +553,7 @@ def main():
     p.add_argument("--root", type=Path, default=Path.home() / "ai-v100")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8770)
+    p.add_argument("--mission-control-url", default=None)
     args = p.parse_args()
     lab = Lab(args.root)
     accelerator = Accelerator(args.root)
@@ -504,9 +563,18 @@ def main():
         def do_GET(self):
             path = self.path.split("?", 1)[0]
             if path == "/":
-                dashboard = Path(__file__).with_name("synta_live_dashboard_v4.html")
-                data = dashboard.read_bytes() if dashboard.is_file() else PAGE.encode()
-                typ = "text/html; charset=utf-8"
+                try:
+                    location = mission_control_url(
+                        self.headers.get("Host", "127.0.0.1"), args.mission_control_url
+                    )
+                except ValueError as error:
+                    self.send_error(500, str(error))
+                    return
+                self.send_response(302)
+                self.send_header("Location", location)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
             elif path == "/api/status":
                 data = json.dumps(lab.status(), ensure_ascii=False).encode()
                 typ = "application/json; charset=utf-8"

@@ -28,6 +28,92 @@ STATUS_TIMESTAMP_FIELDS = {
 STATUS_STALE_AFTER_SECONDS = 300
 
 
+def learning_activity_status(
+    activity: dict | None,
+    mission_running: bool,
+    optimizer_updates: int | None,
+    now: float | None = None,
+    optimizer_receipt_updated_at: float | None = None,
+) -> dict:
+    """Separate a fresh loop heartbeat from verified optimizer work."""
+    now = time.time() if now is None else now
+    activity = activity if isinstance(activity, dict) else {}
+    stamp = activity.get("updated")
+    age = None
+    if type(stamp) in (int, float) and math.isfinite(stamp) and stamp > 0:
+        age = now - float(stamp)
+    if age is not None and age >= 0:
+        if not mission_running or age > STATUS_STALE_AFTER_SECONDS:
+            state = "stale"
+            detail = "Heartbeat is old or mission is stopped; it does not show current work"
+        else:
+            state = "running"
+            detail = "Fresh loop heartbeat only; it does not prove optimizer progress"
+    elif not activity and mission_running:
+        state = "planned"
+        detail = "Mission is running, but no learning-stage heartbeat is recorded"
+    else:
+        state = "unknown"
+        detail = "Heartbeat timestamp is missing, invalid, or in the future"
+    optimizer_age = None
+    if (
+        type(optimizer_receipt_updated_at) in (int, float)
+        and math.isfinite(optimizer_receipt_updated_at)
+        and optimizer_receipt_updated_at > 0
+    ):
+        optimizer_age = now - float(optimizer_receipt_updated_at)
+    if (
+        type(optimizer_updates) is not int
+        or optimizer_updates < 0
+        or optimizer_age is None
+        or optimizer_age < 0
+    ):
+        optimizer_activity = "unknown"
+        optimizer_detail = (
+            "No valid writer-timestamped optimizer receipt; active training is unconfirmed"
+        )
+    elif not mission_running or optimizer_age > STATUS_STALE_AFTER_SECONDS:
+        optimizer_activity = "stale"
+        optimizer_detail = (
+            "Last optimizer receipt is old or mission is stopped; cumulative updates are historical"
+        )
+    else:
+        optimizer_activity = "active"
+        optimizer_detail = "Recent optimizer receipt; this confirms recent update activity only"
+    if type(optimizer_updates) is int and optimizer_updates >= 0:
+        training = {
+            "state": "verified",
+            "optimizer_updates": optimizer_updates,
+            "scope": "Validated same-run training-health receipts; not proof of candidate acceptance",
+        }
+    else:
+        training = {
+            "state": "unknown",
+            "optimizer_updates": None,
+            "scope": "No valid same-run optimizer counter receipt",
+        }
+    training.update(
+        activity_state=optimizer_activity,
+        activity_detail=optimizer_detail,
+        receipt_updated_at=(
+            float(optimizer_receipt_updated_at) if optimizer_age is not None else None
+        ),
+        receipt_age_seconds=(
+            round(max(0, optimizer_age), 3) if optimizer_age is not None else None
+        ),
+        stale_after_seconds=STATUS_STALE_AFTER_SECONDS,
+    )
+    return {
+        "state": state,
+        "detail": detail,
+        "stage": activity.get("stage"),
+        "observed_at": float(stamp) if age is not None else None,
+        "age_seconds": round(max(0, age), 3) if age is not None else None,
+        "stale_after_seconds": STATUS_STALE_AFTER_SECONDS,
+        "optimizer_evidence": training,
+    }
+
+
 def status_freshness(name: str, value: dict | None, now: float | None = None) -> dict:
     """Describe status receipt age; never treat filesystem mtime as evidence."""
     now = time.time() if now is None else now
@@ -133,6 +219,12 @@ def supplement(root: Path, mission: dict, report: dict, errors: list) -> dict:
     )
     evidence.update(training)
     result["mission_evidence"] = evidence
+    result["learning_activity_status"] = learning_activity_status(
+        result.get("learning_activity"),
+        bool(mission.get("running")),
+        evidence.get("optimizer_updates_observed"),
+        optimizer_receipt_updated_at=evidence.get("optimizer_receipt_updated_at"),
+    )
     from rlm.v100.public_benchmarks import progress_for_run
 
     benchmark = progress_for_run(root, Path(mission["run"]) if mission.get("run") else None)

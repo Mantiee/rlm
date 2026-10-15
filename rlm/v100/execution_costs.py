@@ -104,8 +104,34 @@ def walk(levels, quantity):
     raise ValueError("Insufficient depth; partial estimates cannot become fills")
 
 
+def walk_quote_notional(levels, quote_notional):
+    """Walk visible levels for an exact gross quote-currency notional."""
+    remaining, gross, quantity = quote_notional, Decimal(0), Decimal(0)
+    consumed = []
+    for price, size in levels:
+        available = price * size
+        spend = min(remaining, available)
+        taken = spend / price
+        gross += spend
+        quantity += taken
+        consumed.append({"price": str(price), "quantity": str(taken)})
+        remaining -= spend
+        if remaining == 0:
+            return gross, quantity, consumed
+    raise ValueError("Insufficient depth; partial estimates cannot become fills")
+
+
 def estimate(
-    book, fee, *, side, quantity, decision_at, reporting_currency, fx=None, max_age_seconds=30
+    book,
+    fee,
+    *,
+    side,
+    quantity=None,
+    quote_notional=None,
+    decision_at,
+    reporting_currency,
+    fx=None,
+    max_age_seconds=30,
 ):
     """Return an UNKNOWN or SHADOW_ESTIMATE receipt, always ineligible for execution.
 
@@ -113,6 +139,8 @@ def estimate(
     is an independently evidenced currency-pair depth book: base must equal
     trade quote currency and quote must equal reporting currency. A buy consumes
     FX asks to acquire trade currency; a sell liquidates proceeds at FX bids.
+    Specify exactly one of base ``quantity`` or gross trade-currency
+    ``quote_notional``; commission is calculated separately from that notional.
     FX fee is charged in reporting currency. Depth is an estimate of visible
     liquidity, excluding latency, queue dynamics and hidden liquidity.
     """
@@ -139,7 +167,15 @@ def estimate(
         with localcontext() as context:
             context.prec = 50
             result = calculate(
-                book, fee, side, quantity, decision_at, reporting_currency, fx, max_age_seconds
+                book,
+                fee,
+                side,
+                quantity,
+                quote_notional,
+                decision_at,
+                reporting_currency,
+                fx,
+                max_age_seconds,
             )
         receipt.update(result, state="SHADOW_ESTIMATE")
     except (ValueError, KeyError, TypeError, IndexError, DecimalException) as error:
@@ -149,7 +185,9 @@ def estimate(
     return receipt
 
 
-def calculate(book, fee, side, quantity, decision_at, reporting_currency, fx, max_age):
+def calculate(
+    book, fee, side, quantity, quote_notional, decision_at, reporting_currency, fx, max_age
+):
     if not isinstance(book, dict) or not isinstance(fee, dict):
         raise ValueError("Book and fee must be objects")
     if side not in ("buy", "sell"):
@@ -158,7 +196,14 @@ def calculate(book, fee, side, quantity, decision_at, reporting_currency, fx, ma
     if not isinstance(now, datetime):
         raise ValueError("Invalid decision time")
     age = amount(max_age, positive=True)
-    quantity = amount(quantity, positive=True)
+    if (quantity is None) == (quote_notional is None):
+        raise ValueError("Specify exactly one of base quantity or quote notional")
+    if quantity is not None:
+        requested = amount(quantity, positive=True)
+        request_kind = "base_quantity"
+    else:
+        requested = amount(quote_notional, positive=True)
+        request_kind = "quote_notional"
     provenance = {"book": evidence(book, now, age), "fee": evidence(fee, now, None)}
     base, quote = book["base_currency"], book["quote_currency"]
     if not all(
@@ -172,7 +217,11 @@ def calculate(book, fee, side, quantity, decision_at, reporting_currency, fx, ma
         raise ValueError("Fee schedule expired")
     bids, asks = book_levels(book)
     levels = asks if side == "buy" else bids
-    gross, consumed = walk(levels, quantity)
+    if request_kind == "base_quantity":
+        quantity = requested
+        gross, consumed = walk(levels, quantity)
+    else:
+        gross, quantity, consumed = walk_quote_notional(levels, requested)
     bps = amount(fee["taker_bps"])
     if bps >= 10000:
         raise ValueError("Fee rate must be below 100 percent")
@@ -204,6 +253,7 @@ def calculate(book, fee, side, quantity, decision_at, reporting_currency, fx, ma
             raise ValueError("FX fees consume entire proceeds")
     return {
         "quantity": str(quantity),
+        "requested_size": {"kind": request_kind, "value": str(requested)},
         "base_currency": base,
         "quote_currency": quote,
         "reporting_currency": reporting_currency,

@@ -141,7 +141,7 @@ def maintenance(root: Path) -> dict:
         if exclusive(processes) or status(root).get("running"):
             raise RuntimeError("Owned GPU did not become exclusive; benchmark not started")
         settings = {"server": {**profile["server"], "tune_kernels": True}}
-        measurement = benchmark(settings, folder / "accepted-master", 8097)
+        measurement = benchmark(settings, folder / "accepted-master", 8097, root=root)
         result.update(state=measurement["selection"]["state"], selection=measurement["selection"])
         result["scope"] = (
             "Native n-gram/cache/offload/thread/Flash Attention comparison on the accepted GGUF; "
@@ -164,9 +164,9 @@ def maintenance(root: Path) -> dict:
             if not path.exists():
                 continue
             try:
-                candidates[role] = benchmark(json.loads(path.read_text()), folder / role, 8097)[
-                    "selection"
-                ]
+                candidates[role] = benchmark(
+                    json.loads(path.read_text()), folder / role, 8097, root=root
+                )["selection"]
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 candidates[role] = {"state": "blocked", "error": str(error)}
         # Test a real long prefill on the small Qwen candidate; allocate only if resource gates admit it.
@@ -181,9 +181,9 @@ def maintenance(root: Path) -> dict:
                 tune_kernels=False,
             )
             try:
-                candidates["long_context"] = benchmark(candidate, folder / "context-524288", 8097)[
-                    "selection"
-                ]
+                candidates["long_context"] = benchmark(
+                    candidate, folder / "context-524288", 8097, root=root
+                )["selection"]
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 candidates["long_context"] = {"state": "blocked", "error": str(error)}
         result["candidates"] = candidates

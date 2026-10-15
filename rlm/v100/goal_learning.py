@@ -189,8 +189,8 @@ def predict(root: Path, branch: str, specification: dict) -> dict:
     now = time.time()
     if target["value"] is None or not 0 <= now - target["acquired"] <= 60:
         raise ValueError("Target must be a numeric observation fetched within 60 seconds")
-    if any(item["acquired"] > now for item in features):
-        raise ValueError("Future evidence is forbidden")
+    if any(item["acquired"] > target["acquired"] for item in features):
+        raise ValueError("Forecast evidence must be available at or before the target observation")
     plan = read(root)
     if not plan.get("long"):
         raise ValueError("Operator long-term goal must exist before goal training")
@@ -215,6 +215,47 @@ def predict(root: Path, branch: str, specification: dict) -> dict:
     return {"id": identity, **row, "state": "precommitted", "weights_changed": False}
 
 
+def _settlement_result(root: Path, prediction: dict, observed_id: str) -> dict:
+    if not isinstance(observed_id, str):
+        raise ValueError("Outcome observation must be a host observation ID")
+    spec = prediction["specification"]
+    before, after = observation(root, spec["target"]), observation(root, observed_id)
+    if (after["url"], after["field"]) != (before["url"], before["field"]):
+        raise ValueError("Outcome series differs from committed target")
+    if not prediction["due"] <= after["acquired"] <= prediction["due"] + 300:
+        raise ValueError("Outcome outside horizon + 5 minute tolerance; no fabricated label")
+    if before["value"] is None or after["value"] is None:
+        raise ValueError("Forecast settlement requires numeric observations")
+    delta = after["value"] - before["value"]
+    if not math.isfinite(delta):
+        raise ValueError("Observed change is outside the finite scoring range")
+    actual = 2 if delta > spec["threshold"] else 0 if delta < -spec["threshold"] else 1
+    probabilities = spec["probabilities"]
+    return {
+        "observation": observed_id,
+        "actual": actual,
+        "delta": delta,
+        "brier": sum((p - (index == actual)) ** 2 for index, p in enumerate(probabilities)),
+        "flat_baseline_brier": 0 if actual == 1 else 2,
+        "uniform_baseline_brier": 2 / 3,
+        "correct": probabilities.index(max(probabilities)) == actual,
+        "scope": "Observed predictive association; no causal or profit certification",
+    }
+
+
+def _verified_settlement(root: Path, prediction: dict, encoded: str) -> dict:
+    try:
+        saved = json.loads(encoded)
+        if not isinstance(saved, dict) or not isinstance(saved.get("observation"), str):
+            raise ValueError
+        expected = _settlement_result(root, prediction, saved["observation"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Stored forecast settlement is invalid") from error
+    if saved != expected:
+        raise ValueError("Stored forecast settlement changed")
+    return expected
+
+
 def settle(root: Path, identity: str, observed_id: str) -> dict:
     with database(root) as db:
         db.execute("BEGIN IMMEDIATE")
@@ -225,29 +266,8 @@ def settle(root: Path, identity: str, observed_id: str) -> dict:
         if digest(prediction) != identity:
             raise ValueError("Forecast commitment changed")
         if item[1] is not None:
-            return json.loads(item[1])
-        spec = prediction["specification"]
-        before, after = observation(root, spec["target"]), observation(root, observed_id)
-        if (after["url"], after["field"]) != (before["url"], before["field"]):
-            raise ValueError("Outcome series differs from committed target")
-        if not prediction["due"] <= after["acquired"] <= prediction["due"] + 300:
-            raise ValueError("Outcome outside horizon + 5 minute tolerance; no fabricated label")
-        delta = after["value"] - before["value"]
-        if not math.isfinite(delta):
-            raise ValueError("Observed change is outside the finite scoring range")
-        actual = 2 if delta > spec["threshold"] else 0 if delta < -spec["threshold"] else 1
-        probabilities = spec["probabilities"]
-        brier = sum((p - (index == actual)) ** 2 for index, p in enumerate(probabilities))
-        result = {
-            "observation": observed_id,
-            "actual": actual,
-            "delta": delta,
-            "brier": brier,
-            "flat_baseline_brier": 0 if actual == 1 else 2,
-            "uniform_baseline_brier": 2 / 3,
-            "correct": probabilities.index(max(probabilities)) == actual,
-            "scope": "Observed predictive association; no causal or profit certification",
-        }
+            return _verified_settlement(root, prediction, item[1])
+        result = _settlement_result(root, prediction, observed_id)
         db.execute("UPDATE forecasts SET outcome=? WHERE id=?", (json.dumps(result), identity))
     return result
 
@@ -296,7 +316,7 @@ def records(root: Path, active_only: bool = True) -> list[dict]:
             continue
         if digest(forecast) != item["id"]:
             raise ValueError("Forecast commitment changed")
-        saved = json.loads(item["outcome"])
+        saved = _verified_settlement(root, forecast, item["outcome"])
         # Recompute without trusting a model-generated or edited success field.
         before = observation(root, forecast["specification"]["target"])
         after = observation(root, saved["observation"])
@@ -309,10 +329,10 @@ def records(root: Path, active_only: bool = True) -> list[dict]:
         actual = 2 if delta > spec["threshold"] else 0 if delta < -spec["threshold"] else 1
         features = [observation(root, key) for key in spec["evidence"]]
         if (
-            any(row["acquired"] > forecast["created"] for row in features)
+            any(row["acquired"] > before["acquired"] for row in features)
             or before["acquired"] > forecast["created"]
         ):
-            raise ValueError("Training evidence contains future observations")
+            raise ValueError("Training evidence was unavailable at the target observation")
         # All examples sharing an outcome series stay together in the host split ledger.
         series = digest([source_key(before["url"]), before["field"]])
         result.append(
@@ -431,7 +451,15 @@ def status(root: Path) -> dict:
         for item in items
         if goal and json.loads(item["data"])["plan"]["long"]["id"] == goal["id"]
     ]
-    resolved = [json.loads(item["outcome"]) for item in current if item["outcome"]]
+    verified_outcomes = {}
+    for item in current:
+        prediction = json.loads(item["data"])
+        if digest(prediction) != item["id"]:
+            raise ValueError("Forecast commitment changed")
+        verified_outcomes[item["id"]] = (
+            _verified_settlement(root, prediction, item["outcome"]) if item["outcome"] else None
+        )
+    resolved = [row for row in verified_outcomes.values() if row is not None]
     admission_record = json.loads(admission.read_text()) if admission.exists() else None
     if admission_record and admission_record.get("goal_id") != (goal or {}).get("id"):
         admission_record = {
@@ -469,7 +497,7 @@ def status(root: Path) -> dict:
                 "branch": json.loads(item["data"])["branch"],
                 "question": json.loads(item["data"])["specification"]["question"][:200],
                 "probabilities": json.loads(item["data"])["specification"]["probabilities"],
-                "outcome": json.loads(item["outcome"]) if item["outcome"] else None,
+                "outcome": verified_outcomes[item["id"]],
                 "state": "resolved"
                 if item["outcome"]
                 else "expired"

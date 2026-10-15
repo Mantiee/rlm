@@ -36,6 +36,8 @@ def public_summary(value: dict | str) -> str:
         "exit_code",
         "stdout",
         "completion_scope",
+        "retry_after_seconds",
+        "retry_attempt",
     ):
         if isinstance(value.get(key), (str, int, float)):
             parts.append(f"{key}: {str(value[key])[:2000]}")

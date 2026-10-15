@@ -187,7 +187,7 @@ def test_native_maintenance_restores_profile_after_failed_benchmark(tmp_path, mo
     monkeypatch.setattr(
         inference_benchmark,
         "run",
-        lambda *a: (_ for _ in ()).throw(RuntimeError("failed native probe")),
+        lambda *a, **kwargs: (_ for _ in ()).throw(RuntimeError("failed native probe")),
     )
     resumed = []
     monkeypatch.setattr(

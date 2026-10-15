@@ -178,7 +178,11 @@ class AcceptedCPUChat:
         try:
             actual = self.stack.enter_context(
                 managed_server(
-                    path, self.root, self.directory / "accepted-cpu-chat.log", cancel=self.stop
+                    path,
+                    self.root,
+                    self.directory / "accepted-cpu-chat.log",
+                    cancel=self.stop,
+                    lifecycle_role="reader-owned",
                 )
             )
             client = helper_client(actual, self.root)

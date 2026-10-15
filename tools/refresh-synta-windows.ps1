@@ -2,6 +2,10 @@ param([Parameter(Mandatory=$true)][string]$Revision,[Parameter(Mandatory=$true)]
 $ErrorActionPreference = 'Stop'
 if ($Revision -notmatch '^[0-9a-f]{40}$') { throw 'Immutable revision required.' }
 $root = Join-Path $env:USERPROFILE 'ai-v100-helper'
+$manualStopPath = Join-Path $root 'helper-manual-stop.flag'
+if (Test-Path -LiteralPath $manualStopPath) {
+    throw 'RTX helper operator manual-stop flag is present; refresh refused before changing throughput, tasks, processes, or helper files.'
+}
 $receipt = Join-Path $root 'logs\managed-helper.json'
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $Bundle 'release.json') | ConvertFrom-Json
 $expected = $manifest.files.'rlm/v100/windows_resource_proxy.py'

@@ -213,7 +213,10 @@ class PaperBook:
 
     def events(self) -> list[dict]:
         result, previous = [], "0" * 64
-        for row in self.db.execute("SELECT * FROM events ORDER BY sequence"):
+        rows = self.db.execute("SELECT * FROM events ORDER BY sequence")
+        for expected_sequence, row in enumerate(rows, start=1):
+            if row["sequence"] != expected_sequence:
+                raise ValueError("Paper event sequence is not contiguous")
             event = dict(row)
             event["payload"] = json.loads(event["payload"])
             body = {
@@ -678,7 +681,61 @@ class PaperBook:
                     "equity": {branch: str(self.equity(state, branch)) for branch in ("A", "B")},
                 },
             )
+            quote_decisions = []
+            if kind == "quote":
+                # A healthy feed must not make the dashboard look like the
+                # controller is deciding when its model round is stalled. Add
+                # an explicit, non-executable HOLD receipt for each branch to
+                # the same ledger transaction as the quote. Model decisions
+                # may still follow, but neither these receipts nor their
+                # rationale imply a strategy signal or bypass cost gates.
+                instrument = state["instruments"][symbol]
+                decision_inputs = {
+                    "quote": observation,
+                    "quote_sequence": event["sequence"],
+                    "instrument": instrument,
+                    "fee_profile": state["fee_profiles"].get(instrument.get("fee_profile")),
+                    "risk": state["risk"],
+                }
+                for branch in ("A", "B"):
+                    proposal = {
+                        "action": "hold",
+                        "symbol": symbol,
+                        "side": "long",
+                        "budget": 0,
+                        "leverage": 1,
+                        "rationale": (
+                            "Automatic freshness receipt: no fresh model proposal was "
+                            "available for this quote. No costs were assumed and no fill "
+                            "is authorized."
+                        ),
+                        "accepted_research": [],
+                        "receipt_source": "host-quote-freshness-guard",
+                        "quote_sequence": event["sequence"],
+                    }
+                    decision_order = {
+                        **proposal,
+                        "id": uuid.uuid4().hex,
+                        "branch": branch,
+                        "created_at": self.clock().isoformat(),
+                        "asof_sequence": self.sequence(),
+                    }
+                    quote_decisions.append(
+                        self.record(
+                            state,
+                            "decision",
+                            {
+                                "proposal": decision_order,
+                                "decision_inputs": decision_inputs,
+                            },
+                            branch,
+                        )
+                    )
         ActivityLog(self.root, "controller", "paper").write("metrics", "paper-observation", event)
+        for decision_event in quote_decisions:
+            ActivityLog(self.root, decision_event["branch"], "paper").write(
+                "decisions", "paper-hold-freshness-receipt", decision_event
+            )
         return event
 
     def corporate_action(self, state: dict, symbol: str, snapshot: dict) -> list[dict]:
@@ -809,6 +866,28 @@ class PaperBook:
             if number(position["margin"]) + gross - D(
                 position["carrying_costs"]
             ) <= maintenance + fee_total(profile, quantity * price, liquidation=True):
+                cost_blocker = execution_cost_blocker(profile, quote)
+                if cost_blocker:
+                    # Legacy positions may survive a software upgrade that
+                    # invalidates their assumed cost profile. Do not book a
+                    # simulated liquidation fill using unverified FX/slippage.
+                    result.append(
+                        {
+                            "branch": branch,
+                            "symbol": symbol,
+                            "action": "liquidation-blocked",
+                            "reason": "unverified-execution-costs",
+                            "detail": cost_blocker,
+                            "order_id": position["order_id"],
+                        }
+                    )
+                    portfolio["paused"] = True
+                    state["orders"] = [
+                        order
+                        for order in state["orders"]
+                        if order["branch"] != branch or order["action"] != "open"
+                    ]
+                    continue
                 result.append(
                     self.close_position(
                         state, branch, symbol, quote, "liquidation", quantity, price
@@ -946,6 +1025,11 @@ class PaperBook:
     ) -> dict | None:
         instrument = state["instruments"][symbol]
         profile = state["fee_profiles"][instrument["fee_profile"]]
+        cost_blocker = execution_cost_blocker(profile, quote)
+        if cost_blocker:
+            # Keep the mutation boundary fail-closed even if a future caller
+            # bypasses decide()/fill_orders().
+            raise ValueError(cost_blocker)
         portfolio = state["branches"][branch]
         if instrument["product"] == "bet":
             step = number(instrument["quantity_step"], positive=True)
@@ -1085,6 +1169,11 @@ class PaperBook:
         portfolio = state["branches"][branch]
         position = portfolio["positions"][symbol]
         profile = state["fee_profiles"][state["instruments"][symbol]["fee_profile"]]
+        cost_blocker = execution_cost_blocker(profile, quote)
+        if cost_blocker:
+            # Liquidation and ordinary closes both book a price and fees.
+            # They must not become a bypass around the caller-side gate.
+            raise ValueError(cost_blocker)
         side = position["side"]
         price = (
             override_price

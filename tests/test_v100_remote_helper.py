@@ -140,7 +140,18 @@ def test_qwen36_role_checks_pin_residency_and_requested_thinking(monkeypatch):
         instance.identity()
 
 
+def opt_in_windows_origin(root):
+    # These fixtures intentionally exercise the legacy Windows helper. Keep
+    # that opt-in explicit now that .61 is denied by default in production.
+    preferences_path = root / "research/user-preferences.json"
+    preferences = json.loads(preferences_path.read_text()) if preferences_path.exists() else {}
+    origins = preferences.setdefault(remote_helper.REMOTE_ORIGIN_POLICY_KEY, {})
+    origins[URL] = True
+    atomic_json(preferences_path, preferences)
+
+
 def prepared(root):
+    opt_in_windows_origin(root)
     path = remote_helper.prepare_remote(profile(root), root, URL, 32768, DIGEST)
     return path, load_profile(path, root)
 
@@ -319,13 +330,14 @@ def test_large_remote_context_still_requires_loaded_context_and_vram_budget(
     tmp_path, transport, context
 ):
     calls, state = transport
+    opt_in_windows_origin(tmp_path)
     state["loaded"]["context_length"] = context
     path = remote_helper.prepare_remote(profile(tmp_path), tmp_path, URL, context, DIGEST)
     chosen = load_profile(path, tmp_path)
     assert chosen["runtime"]["context_window"] == context
     state["loaded"]["size_vram"] = 13 * 2**30
     with pytest.raises(ValueError, match="GPU"):
-        competition.helper_client(chosen).loaded()
+        competition.helper_client(chosen, tmp_path).loaded()
 
 
 @pytest.mark.parametrize(
@@ -548,6 +560,43 @@ def test_existing_remote_profile_gets_pacing_defaults_without_mutation(transport
     instance = competition.helper_client(settings, tmp_path)
     assert instance.helper_batch_tokens == 64 and instance.helper_duty_percent == 65
     assert settings == original
+
+
+def test_helper_client_blocks_windows_origin_until_explicit_opt_in_and_allows_09(
+    transport, tmp_path, monkeypatch
+):
+    _, settings = prepared(tmp_path)
+    # Profile preparation performs its own pinned-model identity reads; isolate
+    # the helper_client calls below so this asserts the factory's pre-HTTP gate.
+    transport[0].clear()
+    atomic_json(
+        tmp_path / "research/user-preferences.json",
+        {"remote_helper_enabled": True},
+    )
+    called = []
+
+    def forbidden(*args, **kwargs):
+        called.append((args, kwargs))
+        raise AssertionError("Disabled Windows origin must be rejected before HTTP")
+
+    monkeypatch.setattr(remote_helper.OllamaResearchClient, "remote_request", forbidden)
+    with pytest.raises(RuntimeError, match="Windows RTX 3090 requires explicit"):
+        competition.helper_client(settings, tmp_path)
+    assert not called and not transport[0]
+
+    other = copy.deepcopy(settings)
+    other["runtime"]["base_url"] = "http://192.168.0.9:11435"
+    client = competition.helper_client(other, tmp_path)
+    assert isinstance(client, remote_helper.OllamaResearchClient)
+    assert client.base_url == "http://192.168.0.9:11435"
+    assert not called and not transport[0]
+
+    preferences = json.loads((tmp_path / "research/user-preferences.json").read_text())
+    preferences[remote_helper.REMOTE_ORIGIN_POLICY_KEY] = {remote_helper.WINDOWS_3090_ORIGIN: True}
+    atomic_json(tmp_path / "research/user-preferences.json", preferences)
+    opted_in = competition.helper_client(settings, tmp_path)
+    assert isinstance(opted_in, remote_helper.OllamaResearchClient)
+    assert not called and not transport[0]
 
 
 @pytest.mark.parametrize(
@@ -1026,3 +1075,161 @@ def test_http_failures_retain_bounded_owned_backend_reason(monkeypatch, status, 
     with pytest.raises(requests.HTTPError, match=detail) as failure:
         client().remote_request("/api/chat", {"model": remote_helper.MODEL})
     assert failure.value.response.status_code == status
+
+
+def test_only_explicit_proxy_cooldown_retries_same_chat_post_once(monkeypatch):
+    calls, sleeps = [], []
+    admission = requests.Response()
+    admission.status_code = 503
+    admission.url = URL + "/api/chat"
+    admission._content = json.dumps(
+        {
+            "error": "Owned GPU cooldown: 0.4 s",
+            "resources": {
+                "contract": "synta-adaptive-windows-v1",
+                "ready": True,
+                "cooldown_seconds": 0.4,
+            },
+        }
+    ).encode()
+    admission._content_consumed = True
+    success = requests.Response()
+    success.status_code = 200
+    success.url = URL + "/api/chat"
+    success._content = b'{"accepted":true}'
+    success._content_consumed = True
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def post(self, url, **kwargs):
+            calls.append((url, kwargs["json"], kwargs["timeout"]))
+            return admission if len(calls) == 1 else success
+
+    instance = client()
+    instance.remaining_timeout = lambda: 10
+    monkeypatch.setattr(remote_helper.requests, "Session", Session)
+    monkeypatch.setattr(remote_helper.time, "sleep", sleeps.append)
+    payload = {"model": remote_helper.MODEL, "messages": [{"role": "user", "content": "x"}]}
+
+    assert instance.remote_request("/api/chat", payload) == {"accepted": True}
+    assert len(calls) == 2
+    assert calls[0][0] == calls[1][0] == URL + "/api/chat"
+    assert calls[0][1] == calls[1][1] == payload
+    assert sleeps == [pytest.approx(2.5)]
+
+
+def test_second_explicit_cooldown_preserves_bounded_queue_delay(monkeypatch):
+    response = requests.Response()
+    response.status_code = 503
+    response.url = URL + "/api/chat"
+    response._content = json.dumps(
+        {
+            "error": "Owned GPU cooldown: 3.2 s",
+            "resources": {
+                "contract": "synta-adaptive-windows-v1",
+                "ready": True,
+                "cooldown_seconds": 3.2,
+            },
+        }
+    ).encode()
+    response._content_consumed = True
+    calls, sleeps = [], []
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def post(self, url, **kwargs):
+            calls.append(url)
+            return response
+
+    instance = client()
+    instance.remaining_timeout = lambda: 30
+    monkeypatch.setattr(remote_helper.requests, "Session", Session)
+    monkeypatch.setattr(remote_helper.time, "sleep", sleeps.append)
+    with pytest.raises(remote_helper.OwnedGpuCooldown) as failure:
+        instance.remote_request("/api/chat", {"model": remote_helper.MODEL})
+    assert failure.value.retry_after_seconds == 15
+    assert len(calls) == 2 and sleeps == [pytest.approx(5.3)]
+
+
+@pytest.mark.parametrize(
+    "detail,resources,remaining",
+    [
+        (
+            "Owned helper maintenance",
+            {"contract": "synta-adaptive-windows-v1", "cooldown_seconds": 1},
+            10,
+        ),
+        (
+            "Owned GPU cooldown: 0.4 s",
+            {"contract": "other", "cooldown_seconds": 0.4},
+            10,
+        ),
+        (
+            "Owned GPU cooldown: 20 s",
+            {
+                "contract": "synta-adaptive-windows-v1",
+                "ready": True,
+                "cooldown_seconds": 20,
+            },
+            5,
+        ),
+    ],
+)
+def test_nonmatching_or_over_budget_503_never_retries(monkeypatch, detail, resources, remaining):
+    response = requests.Response()
+    response.status_code = 503
+    response.url = URL + "/api/chat"
+    response._content = json.dumps({"error": detail, "resources": resources}).encode()
+    response._content_consumed = True
+    calls, sleeps = [], []
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def post(self, url, **kwargs):
+            calls.append(url)
+            return response
+
+    instance = client()
+    instance.remaining_timeout = lambda: remaining
+    monkeypatch.setattr(remote_helper.requests, "Session", Session)
+    monkeypatch.setattr(remote_helper.time, "sleep", sleeps.append)
+
+    with pytest.raises(requests.HTTPError, match=detail):
+        instance.remote_request("/api/chat", {"model": remote_helper.MODEL})
+    assert calls == [URL + "/api/chat"]
+    assert sleeps == []
+
+
+def test_chat_post_timeout_is_never_retried(monkeypatch):
+    calls = []
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def post(self, url, **kwargs):
+            calls.append(url)
+            raise requests.Timeout("ambiguous read timeout")
+
+    monkeypatch.setattr(remote_helper.requests, "Session", Session)
+    with pytest.raises(requests.Timeout, match="ambiguous read timeout"):
+        client().remote_request("/api/chat", {"model": remote_helper.MODEL})
+    assert calls == [URL + "/api/chat"]

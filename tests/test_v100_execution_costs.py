@@ -40,7 +40,7 @@ def run(book=None, fee=None, **kwargs):
         book or default_book,
         fee or default_fee,
         side=kwargs.pop("side", "buy"),
-        quantity=kwargs.pop("quantity", "2"),
+        quantity=kwargs.pop("quantity", None if "quote_notional" in kwargs else "2"),
         decision_at=NOW,
         reporting_currency=kwargs.pop("reporting_currency", "USD"),
         **kwargs,
@@ -59,6 +59,43 @@ def test_two_level_buy_sell_and_no_double_charged_spread():
     assert buy["full_execution_costs_verified"] is False
     assert "account_fee_tier_and_rebates" in buy["unverified_cost_components"]
     assert Decimal(sell["reporting_cash"]) - Decimal(buy["reporting_cash"]) == Decimal("-8.99")
+
+
+def test_quote_notional_walks_partial_last_level_conservatively():
+    buy, sell = run(quote_notional="150"), run(side="sell", quote_notional="150")
+    assert buy["state"] == sell["state"] == "SHADOW_ESTIMATE"
+    assert buy["requested_size"] == {"kind": "quote_notional", "value": "150"}
+    assert Decimal(buy["gross_quote"]) == Decimal(sell["gross_quote"]) == 150
+    with localcontext() as context:
+        context.prec = 50
+        assert Decimal(buy["quantity"]) == Decimal(1) + Decimal(50) / Decimal(102)
+        assert Decimal(sell["quantity"]) == Decimal(1) + Decimal(51) / Decimal(98)
+        assert Decimal(buy["vwap_quote"]) == Decimal(150) / Decimal(buy["quantity"])
+        assert Decimal(sell["vwap_quote"]) == Decimal(150) / Decimal(sell["quantity"])
+        assert Decimal(buy["book_impact_quote"]) == abs(
+            Decimal(150) - Decimal(buy["quantity"]) * Decimal(100)
+        )
+        assert Decimal(sell["book_impact_quote"]) == abs(
+            Decimal(150) - Decimal(99) * Decimal(sell["quantity"])
+        )
+    assert Decimal(buy["commission_quote"]) == Decimal("1.5")
+    assert Decimal(sell["reporting_cash"]) == Decimal("148.5")
+    assert not buy["execution_eligible"] and not sell["execution_eligible"]
+
+
+def test_quote_notional_rejects_short_depth_or_ambiguous_request():
+    assert run(quote_notional="305")["state"] == "UNKNOWN"
+    assert run(quantity="2", quote_notional="150")["state"] == "UNKNOWN"
+    assert (
+        estimate(
+            fixture()[0],
+            fixture()[1],
+            side="buy",
+            decision_at=NOW,
+            reporting_currency="USD",
+        )["state"]
+        == "UNKNOWN"
+    )
 
 
 def test_fx_uses_asks_for_buy_bids_for_sell_and_independent_fees():

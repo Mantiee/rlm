@@ -1,20 +1,15 @@
 """Local execution journals with explicit decisions and operator-selected local model traces."""
 
-import errno
 import json
 import os
 import re
-import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
+from rlm.v100 import file_lock as fcntl
 
 SECRET_KEYS = {
     "authorization",
@@ -73,33 +68,13 @@ def append_locked(path: Path, text: str) -> None:
 
 @contextmanager
 def _exclusive_file_lock(handle) -> Iterator[None]:
-    """Lock one byte on Windows and the whole file on POSIX while appending."""
-    if os.name != "nt":
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-        return
-
-    # Lock a stable byte independent of the append position. Polling LK_NBLCK
-    # gives flock-like blocking behavior (unlike LK_LOCK's ten-second limit).
-    while True:
-        handle.seek(0)
-        try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            break
-        except OSError as error:
-            if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-                raise
-            time.sleep(0.05)
-    handle.seek(0, os.SEEK_END)
+    """Append while holding the cross-platform exclusive file lock."""
+    fcntl.flock(handle, fcntl.LOCK_EX)
     try:
         yield
     finally:
         handle.flush()
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 class ActivityLog:

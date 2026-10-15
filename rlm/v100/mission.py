@@ -1,7 +1,6 @@
 """Background income research and guarded learning, with adaptive context capacity."""
 
 import copy
-import fcntl
 import json
 import os
 import signal
@@ -9,6 +8,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from rlm.v100 import file_lock as fcntl
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import (
     command,
@@ -313,7 +313,12 @@ def run(root: Path, profile: dict, directory: Path) -> None:
         require_idle_gpu()
         note(directory, "loading-context", context_window=context)
         try:
-            with managed_server(path, root, directory / f"server-{context}.log") as serving:
+            with managed_server(
+                path,
+                root,
+                directory / f"server-{context}.log",
+                lifecycle_role="accepted",
+            ) as serving:
                 free = gpu_free_gib()
                 if free < 4:
                     raise RuntimeError("Context leaves less than 4 GiB inference headroom")

@@ -149,7 +149,7 @@ def main() -> None:
         raise ValueError("Require an existing native runtime and new output directory")
     profile, record = prepare(args.root, args.binary, args.role, args.context)
     save(args.output.with_suffix(".candidate.json"), {"profile": profile, "artifact": record})
-    result = run(profile, args.output, args.port)
+    result = run(profile, args.output, args.port, root=args.root)
     result["candidate"] = record
     result["production_activated"] = False
     result["scope"] = (
