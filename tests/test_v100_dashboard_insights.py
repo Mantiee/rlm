@@ -158,8 +158,8 @@ def test_100_pln_preview_explains_scaled_model_proposal_and_no_best_claim():
     if not shutil.which("node"):
         pytest.skip("Node unavailable")
     function = (
-        "function paperCapitalPreview(data){"
-        + SCRIPT.split("function paperCapitalPreview(data){", 1)[1].split(
+        "function paperEquityTimeline(parent,paper,starting,capital){"
+        + SCRIPT.split("function paperEquityTimeline(parent,paper,starting,capital){", 1)[1].split(
             "function insightsView(data){", 1
         )[0]
     )
@@ -174,13 +174,13 @@ FUNCTION
 const now=new Date(),earlier=new Date(now.getTime()-60000);
 const data={report:{
  live_execution_policy:{capital_limit_pln:100,daily_loss_stop_pln:20,max_total_loss_pln:25,leverage_enabled:false},
- live_paper:{initial_capital:'10000',branches:{A:{equity:'10000',net_pnl_before_personal_tax:'0',cash:'10000',positions:{}},B:{equity:'9987.1',net_pnl_before_personal_tax:'-12.9',cash:'9500',positions:{'BTC-KRAKEN':{quantity:'0.0015',side:'long'}}}},activity_stream:{entries:[
+ live_paper:{initial_capital:'10000',branches:{A:{equity:'10000',net_pnl_before_personal_tax:'0',cash:'10000',positions:{}},B:{equity:'9987.1',net_pnl_before_personal_tax:'-12.9',cash:'9500',positions:{'BTC-KRAKEN':{quantity:'0.0015',side:'long'}}}},equity_series:{A:[{time:earlier.toISOString(),equity:'10000'}],B:[{time:earlier.toISOString(),equity:'9987.1'}]},scenario_inputs:{A:{state:'recorded-current-positions',equity:'10000',net_exposure:'0',as_of:now.toISOString()},B:{state:'recorded-current-positions',equity:'9987.1',net_exposure:'100',as_of:now.toISOString()}},activity_stream:{entries:[
   {branch:'A',category:'decision',time:earlier.toISOString(),proposal:{source:'model-proposal',status:'recorded',action:'open',symbol:'BTC-KRAKEN',budget:500,leverage:1,rationale:'Small evidence-backed paper proposal.',quote:{bid:'64000',ask:'64010'}}},
   {branch:'B',category:'decision',time:now.toISOString(),proposal:{source:'model-proposal',status:'recorded',action:'hold',symbol:'BTC-KRAKEN',budget:0,rationale:'Wait for verified costs.'}}
  ]},blockers:['BTC costs unknown']},paper_blockers:['BTC costs unknown'],recent_exploratory_backtests:[]}};
 paperCapitalPreview(data);
 const collect=n=>(n.tagName||'')+' '+(n.textContent||'')+' '+JSON.stringify(n.attributes||{})+' '+(n.children||[]).map(collect).join(' ');const output=collect(created);
-for(const value of ['Strategia A','OPEN · BTC-KRAKEN','5.00 PLN','Bid/ask przy decyzji: 64000 / 64010','Powód modelu: Small evidence-backed paper proposal.','Strategia B','HOLD','99.87 PLN','95.00 PLN','0.00001500 long','100 PLN','svg','Historia proponowanej ekspozycji','"cx"','Historycznych migawek salda 100 PLN księga nie zapisuje'])if(!output.includes(value))throw Error('Missing 100 PLN preview evidence: '+value+'\n'+output);
+for(const value of ['Strategia A','OPEN · BTC-KRAKEN','5.00 PLN','Bid/ask przy decyzji: 64000 / 64010','Powód modelu: Small evidence-backed paper proposal.','Strategia B','HOLD','99.87 PLN','95.00 PLN','0.00001500 long','100 PLN','svg','Historia proponowanej ekspozycji','Jak zmienia się wartość obu portfeli paper','Co jeśli cena ruszy się od teraz?','+5% ceny →','Księga nie prowadzi osobnego rachunku 100 PLN'])if(!output.includes(value))throw Error('Missing 100 PLN preview evidence: '+value+'\n'+output);
 """.replace("FUNCTION", function)
     result = subprocess.run(
         ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=5

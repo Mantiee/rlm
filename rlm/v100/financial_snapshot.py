@@ -350,8 +350,8 @@ def live_ledger(root: Path) -> dict:
         if payload.get("state_sha256") != sha(state) or sha(body) != event["event_hash"]:
             raise ValueError("Ledger tail or state checksum differs")
         activity_stream = {"state": "unknown", "entries": [], "counts": None}
+        parsed_events = []
         try:
-            parsed_events = []
             total_payload_bytes = 0
             previous_hash = None
             previous_sequence = None
@@ -425,6 +425,59 @@ def live_ledger(root: Path) -> dict:
                 "resolved_fills": None,
             }
         now = book.clock()
+        equity_series = {branch: [] for branch in state["branches"]}
+        if activity_stream["state"] == "verified-tail":
+            for history_event in parsed_events:
+                if history_event["kind"] != "observation":
+                    continue
+                sampled = history_event["payload"].get("equity")
+                if not isinstance(sampled, dict):
+                    continue
+                for branch in equity_series:
+                    try:
+                        equity = number(sampled[branch])
+                    except (KeyError, ValueError, TypeError):
+                        continue
+                    equity_series[branch].append(
+                        {
+                            "time": history_event["time"],
+                            "sequence": history_event["sequence"],
+                            "equity": str(equity),
+                            "net_pnl": str(equity - number(state["initial_capital"])),
+                        }
+                    )
+        # A transparent price-shock calculator can explain current exposure without
+        # presenting a forecast. It is unavailable if a quote is stale or a product
+        # has non-linear settlement (for example, a fixed-outcome bet).
+        scenario_inputs = {}
+        for branch, portfolio in state["branches"].items():
+            net_exposure = number("0")
+            reason = None
+            for symbol, position in portfolio["positions"].items():
+                instrument = state["instruments"].get(symbol, {})
+                quote = state["quotes"].get(symbol)
+                if instrument.get("product") == "bet":
+                    reason = "Fixed-outcome positions do not have a linear price-shock model"
+                    break
+                if not quote:
+                    reason = f"Missing quote for {symbol}"
+                    break
+                if (now - timestamp(quote["available_at"])).total_seconds() > state["risk"][
+                    "quote_age_seconds"
+                ]:
+                    reason = f"Stale quote for {symbol}"
+                    break
+                field = "bid" if position["side"] == "long" else "ask"
+                direction = 1 if position["side"] == "long" else -1
+                net_exposure += number(position["quantity"]) * number(quote[field]) * direction
+            scenario_inputs[branch] = {
+                "state": "unavailable" if reason else "recorded-current-positions",
+                "reason": reason,
+                "equity": branches[branch]["equity"],
+                "net_exposure": None if reason else str(net_exposure),
+                "as_of": now.isoformat(),
+                "scope": "Linear price shock on current recorded position notionals; excludes new decisions, costs, FX changes, fills, and execution constraints.",
+            }
         active_fees = {i["fee_profile"] for i in state["instruments"].values()}
         blockers = [
             "expired fees: " + key
@@ -465,6 +518,8 @@ def live_ledger(root: Path) -> dict:
             "decision_attempts": decision_attempts,
             "last_decision_attempt": decision_attempts[0] if decision_attempts else None,
             "activity_stream": activity_stream,
+            "equity_series": equity_series,
+            "scenario_inputs": scenario_inputs,
             "model_decision_evidence": model_decision_evidence(
                 decision_attempts, now=now.timestamp()
             ),

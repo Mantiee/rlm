@@ -107,7 +107,7 @@ def test_resource_response_ignores_dashboard_history_and_uses_host_job_receipts(
         mission_chat,
         "load_profile",
         lambda *a: {
-            "runtime": {},
+            "runtime": {"base_url": "http://127.0.0.1:8765"},
             "server": {"model": str(model)},
             "resources": {"interactive_lab": True},
         },
@@ -119,6 +119,9 @@ def test_resource_response_ignores_dashboard_history_and_uses_host_job_receipts(
         sampling_args={"max_tokens": 2048},
         activity_context={},
     )
+    # This test is about request isolation and host-job receipts; serving identity
+    # is covered independently by startup-verification tests.
+    monkeypatch.setattr(mission_chat, "assert_served_expert", lambda *args: None)
     monkeypatch.setattr(competition, "helper_client", lambda *a: client)
     old = mission_chat.submit(tmp_path, "Edit dashboard")
     with mission_chat.connect(tmp_path) as db:

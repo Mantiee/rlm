@@ -671,15 +671,29 @@ def test_live_paper_snapshot_returns_chain_checked_activity_counts(tmp_path):
     book = PaperBook(tmp_path)
     book.initialize()
     book.note("controller", {"status": "decision-round-started", "cycle": 1})
+    with book.db:
+        book.record(
+            book.state(),
+            "observation",
+            {
+                "observation": {"kind": "quote", "symbol": "TEST"},
+                "equity": {"A": "10000", "B": "10000"},
+                "trades": [],
+            },
+            "A",
+        )
     book.close()
 
     snapshot = live_ledger(tmp_path)
     activity = snapshot["activity_stream"]
     assert activity["state"] == "verified-tail"
-    assert activity["window_events"] == 2
-    assert activity["counts"]["observations"] == 0
+    assert activity["window_events"] == 3
+    assert activity["counts"]["observations"] == 1
     assert activity["counts"]["model_decisions"] == 0
     assert activity["counts"]["decision_round_attempts"] == 1
     assert activity["counts"]["paper_execution_attempts"] == 0
     assert activity["counts"]["confirmed_fills"] == 0
-    assert activity["entries"][-1]["label"] == "Model decision round receipt"
+    assert any(entry["label"] == "Model decision round receipt" for entry in activity["entries"])
+    assert snapshot["equity_series"]["A"][-1]["equity"] == "10000"
+    assert snapshot["equity_series"]["B"][-1]["net_pnl"] == "0"
+    assert snapshot["scenario_inputs"]["A"]["state"] == "recorded-current-positions"

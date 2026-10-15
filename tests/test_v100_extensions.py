@@ -203,10 +203,13 @@ def test_default_goal_is_self_upgrade_and_keeps_user_goal(tmp_path):
 
 
 @pytest.mark.parametrize("exit_price,profitable", [("120", True), ("80", False)])
-def test_outcome_preferences_use_causal_inputs_and_include_losses(tmp_path, exit_price, profitable):
+def test_outcome_preferences_use_causal_inputs_and_include_losses(
+    tmp_path, monkeypatch, exit_price, profitable
+):
     from rlm.v100 import reward_policy
-    from tests.test_v100_paper import decide, quote, setup
+    from tests.test_v100_paper import allow_cost_math_only, decide, quote, setup
 
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(tmp_path)
     book.ingest(quote(clock))
     decide(book)
