@@ -116,15 +116,11 @@ def test_cuda_failure_persists_diagnostic_and_cooldown_before_retry(tmp_path, mo
 
     distributed_compute.tick(tmp_path)
 
-    state = compute_worker.read_json(
-        tmp_path / "research/compute-jobs" / identity / "state.json"
-    )
+    state = compute_worker.read_json(tmp_path / "research/compute-jobs" / identity / "state.json")
     assert state["state"] == "queued"
     assert state["attempts"] == 1
     assert state["retry_not_before"] >= before + distributed_compute.CUDA_RETRY_COOLDOWN_SECONDS
-    assert state["last_failure"]["resource_failure"]["reasons"] == [
-        "worker-host-rss-budget"
-    ]
+    assert state["last_failure"]["resource_failure"]["reasons"] == ["worker-host-rss-budget"]
 
     monkeypatch.setattr(remote_nodes, "request", lambda *args, **kwargs: pytest.fail("retried"))
     remote_nodes.cpu_bridge(
@@ -151,9 +147,7 @@ def test_cuda_failure_without_structured_diagnostic_is_terminal(tmp_path, monkey
 
     distributed_compute.tick(tmp_path)
 
-    state = compute_worker.read_json(
-        tmp_path / "research/compute-jobs" / identity / "state.json"
-    )
+    state = compute_worker.read_json(tmp_path / "research/compute-jobs" / identity / "state.json")
     assert state["state"] == "failed"
     assert state["last_failure"]["resource_failure"] is None
     assert state["retry_not_before"] is None
@@ -197,9 +191,7 @@ def test_cancelled_cuda_job_is_not_reclaimed_and_remote_lease_is_deleted(tmp_pat
     )
     distributed_compute.tick(tmp_path)
 
-    state = compute_worker.read_json(
-        tmp_path / "research/compute-jobs" / identity / "state.json"
-    )
+    state = compute_worker.read_json(tmp_path / "research/compute-jobs" / identity / "state.json")
     assert state["state"] == "cancelled"
     assert state["retry_not_before"] is None
     assert calls == [("DELETE", "/api/synta-cpu/" + identity + "-" + nonce)]

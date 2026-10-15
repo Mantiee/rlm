@@ -358,9 +358,7 @@ def tick(root: Path) -> None:
                     attempts=attempts,
                     detail=detail,
                     last_failure=failure,
-                    retry_not_before=(
-                        time.time() + CUDA_RETRY_COOLDOWN_SECONDS if retry else None
-                    ),
+                    retry_not_before=(time.time() + CUDA_RETRY_COOLDOWN_SECONDS if retry else None),
                 )
             else:
                 state.update(
