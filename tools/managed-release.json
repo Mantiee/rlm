@@ -15,7 +15,7 @@
     "rlm/v100/source_sync.py": "e315e1bd6e62ff0ce6a0c235ed857d89ab4ea12bb979322e53ec1e23f2c5ee38",
     "tools/bootstrap-synta-3060.sh": "2b1554d1ff98e1572f67474af362ea272384cba2733354cfce62f0f70bc9c3fa",
     "tools/attach-synta-3060.sh": "b16079c4a9f66fee567740e41012877d0e90e9708bfa9b475da2fc5db5e51fbf",
-    "rlm/v100/owned_node.py": "3ee550ab2febb61225e7e0ee9994fc0f72368f4f54a28b87fa88b93ba5264011",
+    "rlm/v100/owned_node.py": "a648755a12897a70e760c058af0e77d429597be2690904078f6288eba2a1c95d",
     "rlm/v100/owned_node_update.py": "37b44f6a05616309d27f6d12a7a225810596d288af0b4a18c64af86afb019f48",
     "rlm/v100/compute_kernel.py": "4de170205910ee4b0989a0d6f28170add12a260b8182d03a5d4022befa769857",
     "rlm/v100/compute_worker.py": "1b2c8b8ede53193b87b65dab4302b408e4c82ab5309132e3077430f49761a3ba",
@@ -82,7 +82,10 @@
     "rlm/v100/paper.py": "6e681ea77b3c34bda4e32970481253a7539d93113eaa2b25a4b3f89ff14e8c54",
     "rlm/v100/spot_bootstrap.py": "f5dca8a70fb874086ccf1e71948d9187556a8b96e5c6a26e5a4fb5d764679d41",
     "rlm/v100/financial_snapshot.py": "0f20fcfea5c69a74ee00fc8b29d425e6a901671fb45535f8fe4b00d909c92a7f",
-    "tools/start-v100-dashboard.sh": "013d1e78ce846d1f58b8a435678545919c99a60c2a1ad49d27ffb0f180921227"
+    "tools/start-v100-dashboard.sh": "013d1e78ce846d1f58b8a435678545919c99a60c2a1ad49d27ffb0f180921227",
+    "rlm/v100/chat_plan.py": "b9f5bbef271465beb78d4ccc4bed5650a66fee92361247379516f3e76fcadc63",
+    "rlm/v100/execution_costs.py": "2638a21092b0a16820956de02d4468ed9854e541ae36ccb17195c8b67f34d57f",
+    "rlm/v100/paper_cost_sources.py": "dcb2afff0d0c229c6673774fd5f817c267164219a25a30364710775619868187"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

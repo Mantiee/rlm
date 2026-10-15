@@ -17,6 +17,91 @@ from rlm.v100.common import atomic_json
 
 
 @pytest.mark.parametrize(
+    "changes,reasons",
+    [
+        ({"gpu_ready": False}, ["dedicated-gpu-not-ready"]),
+        ({"elapsed": 150.001}, ["worker-time-budget"]),
+        ({"rss": owned_node.CPU_RAM + 1}, ["worker-host-rss-budget"]),
+        ({"available": 2**30 - 1}, ["host-ram-reserve"]),
+        (
+            {"gpu_ready": False, "rss": owned_node.CPU_RAM + 1},
+            ["dedicated-gpu-not-ready", "worker-host-rss-budget"],
+        ),
+    ],
+)
+def test_compute_guard_distinguishes_gpu_host_rss_and_shared_ram(changes, reasons):
+    measurements = {
+        "cuda_job": True,
+        "gpu_ready": True,
+        "elapsed": 1.0,
+        "rss": 500 * 2**20,
+        "available": 4 * 2**30,
+    }
+    measurements.update(changes)
+    failure = owned_node.compute_reserve_failure(**measurements)
+    assert failure["reasons"] == reasons
+    assert failure["host_rss_bytes"] == measurements["rss"]
+    assert failure["host_available_bytes"] == measurements["available"]
+    assert failure["host_rss_limit_bytes"] == 768 * 2**20
+    assert failure["elapsed_limit_seconds"] == 150
+
+
+def test_compute_guard_keeps_exact_existing_resource_boundaries_and_cpu_independence():
+    assert (
+        owned_node.compute_reserve_failure(
+            cuda_job=False,
+            gpu_ready=False,
+            elapsed=150,
+            rss=owned_node.CPU_RAM,
+            available=2**30,
+        )
+        is None
+    )
+
+
+def test_cuda_worker_records_measured_host_rss_failure_and_releases_gpu(tmp_path, monkeypatch):
+    import psutil
+
+    folder = tmp_path / "pilot"
+    atomic_json(folder / "status.json", {"state": "queued"})
+    atomic_json(folder / "job.json", {"device": "cuda"})
+    process = SimpleNamespace(pid=123, returncode=None)
+
+    def kill():
+        process.returncode = -9
+
+    process.poll = lambda: process.returncode
+    process.kill = kill
+    process.wait = lambda: process.returncode
+    monkeypatch.setattr(owned_node.subprocess, "Popen", lambda *a, **kw: process)
+    monkeypatch.setattr(
+        psutil,
+        "Process",
+        lambda pid: SimpleNamespace(
+            memory_info=lambda: SimpleNamespace(rss=owned_node.CPU_RAM + 1)
+        ),
+    )
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=4 * 2**30))
+    node = owned_node.Node.__new__(owned_node.Node)
+    node.source = tmp_path
+    node.gpu_lock = threading.Lock()
+    node.cpu_lock = threading.Lock()
+    node.state = {"ready": True}
+    node.processes = {"pilot": None}
+    node.gpu_compute_claimed = True
+    node.run_cpu("pilot", folder)
+    status = json.loads((folder / "status.json").read_text())
+    assert status["state"] == "failed"
+    assert status["detail"] == "Owned compute reserve stopped: worker-host-rss-budget"
+    assert status["resource_failure"]["host_rss_bytes"] == 768 * 2**20 + 1
+    assert status["resource_failure"]["reasons"] == ["worker-host-rss-budget"]
+    assert process.returncode == -9
+    assert not node.gpu_lock.locked()
+    assert not node.gpu_compute_claimed
+    assert not node.processes
+
+
+@pytest.mark.parametrize(
     "ram,temp,free,ready",
     [
         (3, 55, 2, True),

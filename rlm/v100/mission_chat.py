@@ -183,8 +183,10 @@ def trade_visualization_reply(root: Path) -> dict:
 
 def direct_facts(root: Path, message: str) -> dict | None:
     """Explicit read-only host questions never queue behind GPU work."""
-    from rlm.v100 import chat_facts, chat_progress
+    from rlm.v100 import chat_facts, chat_plan, chat_progress
 
+    if chat_plan.requested(message):
+        return chat_plan.respond(root)
     if trade_visualization_requested(message):
         return trade_visualization_reply(root)
     if message.strip() == "/status" or chat_progress.requested(message):
@@ -659,6 +661,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
+    from rlm.v100 import chat_plan
+
+    if chat_plan.requested(message):
+        return chat_plan.respond(root)
     command_verification = bool(
         re.fullmatch(
             r"Execute a read-only check: use get_plan once, then report the recorded goal\. Do not change plans, files, preferences, models or schedule work\. Command verification ID: [a-f0-9]{40}",

@@ -22,6 +22,34 @@ CONTRACT = "synta-dedicated-linux-v1"
 CPU_RAM = 768 * 2**20
 
 
+def compute_reserve_failure(
+    *, cuda_job: bool, gpu_ready: bool, elapsed: float, rss: int, available: int
+) -> dict | None:
+    """Explain a fixed-kernel stop without exposing arbitrary logs or changing limits."""
+    reasons = []
+    if cuda_job and not gpu_ready:
+        reasons.append("dedicated-gpu-not-ready")
+    if not math.isfinite(elapsed) or elapsed < 0 or elapsed > 150:
+        reasons.append("worker-time-budget")
+    if type(rss) is not int or rss < 0 or rss > CPU_RAM:
+        reasons.append("worker-host-rss-budget")
+    if type(available) is not int or available < 2**30:
+        reasons.append("host-ram-reserve")
+    if not reasons:
+        return None
+    return {
+        "reasons": reasons,
+        "device": "cuda" if cuda_job else "cpu",
+        "gpu_ready": bool(gpu_ready),
+        "elapsed_seconds": round(elapsed, 3) if math.isfinite(elapsed) else None,
+        "host_rss_bytes": rss if type(rss) is int else None,
+        "host_available_bytes": available if type(available) is int else None,
+        "host_rss_limit_bytes": CPU_RAM,
+        "host_available_minimum_bytes": 2**30,
+        "elapsed_limit_seconds": 150,
+    }
+
+
 def worker_failure(log: Path, code: int) -> str:
     """Return known failure categories, never arbitrary worker output or secrets."""
     try:
@@ -335,13 +363,18 @@ class Node:
                     while process.poll() is None:
                         if (folder / "cancel").exists():
                             raise RuntimeError("Cancelled by owning controller")
-                        if (
-                            (cuda_job and not self.state.get("ready"))
-                            or time.monotonic() - started > 150
-                            or psutil.Process(process.pid).memory_info().rss > CPU_RAM
-                            or psutil.virtual_memory().available < 2**30
-                        ):
-                            raise RuntimeError("Owned CPU time/RAM reserve exceeded")
+                        failure = compute_reserve_failure(
+                            cuda_job=cuda_job,
+                            gpu_ready=bool(self.state.get("ready")),
+                            elapsed=time.monotonic() - started,
+                            rss=psutil.Process(process.pid).memory_info().rss,
+                            available=psutil.virtual_memory().available,
+                        )
+                        if failure:
+                            status["resource_failure"] = failure
+                            raise RuntimeError(
+                                "Owned compute reserve stopped: " + ", ".join(failure["reasons"])
+                            )
                         atomic(
                             folder / "status.json",
                             {**status, "state": "running", "updated": time.time()},
