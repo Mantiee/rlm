@@ -57,6 +57,7 @@ function paperLabsPanel(data){
  }
 }
 function workView(data){
+githubCiPanel(data);
 paperLabsPanel(data);
 modelDeploymentView(data);
 statusFreshnessView(data);
@@ -78,6 +79,31 @@ restoreDisclosures();const plans=data.live?.goals||{};$('goals').textContent=JSO
 
 function statusFreshnessView(data){
 const rows=data.report?.status_freshness||{},p=panel('status-freshness-panel','Status receipt freshness',$('cards'));p.replaceChildren();const h=document.createElement('h2');h.textContent='Status receipt freshness';p.append(h);const note=document.createElement('p');note.className='muted';note.textContent='Age of the recorded status receipt only; this does not validate the underlying evidence. Unknown means no trusted timestamp; unavailable means the file could not be read.';p.append(note);const table=document.createElement('table'),head=document.createElement('tr');for(const label of ['Source','State','Observed at','Age']){const th=document.createElement('th');th.textContent=label;head.append(th)}table.append(head);for(const [name,row] of Object.entries(rows)){const tr=document.createElement('tr');for(const value of [row.source||name,row.state||'unknown',typeof row.observed_at==='number'?new Date(row.observed_at*1000).toLocaleString():'unknown',typeof row.age_seconds==='number'?`${Math.round(row.age_seconds)} s`:'unknown']){const td=document.createElement('td');td.textContent=String(value);tr.append(td)}table.append(tr)}if(!Object.keys(rows).length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=4;td.textContent='No status receipts recorded';tr.append(td);table.append(tr)}p.append(table);
+}
+
+function githubCiPanel(data){
+ const snap=data.report?.github_ci||{},p=panel('github-ci-panel','GitHub PRs and checks',$('cards'));p.replaceChildren();
+ const h=document.createElement('h2');h.textContent='GitHub PRs and CI checks';p.append(h);
+ const note=document.createElement('p');note.className='muted';note.textContent='Public, read-only check-run snapshots for Mantiee/rlm. Green checks validate only the recorded commit; they do not prove deployment, runtime correctness, or revenue.';p.append(note);
+ textField(p,'Repository',snap.repository||'unknown');textField(p,'Snapshot state',snap.state||'unknown');
+ textField(p,'Observed at',snap.observed_at?new Date(snap.observed_at).toLocaleString():'unknown');
+ if(typeof snap.age_seconds==='number')textField(p,'Snapshot age',Math.max(0,Math.round(snap.age_seconds))+' seconds'+(snap.state==='stale'?' — STALE':''));
+ if(snap.error)textField(p,'Feed detail',snap.error.kind||'unknown');
+ const table=document.createElement('table'),head=document.createElement('tr');
+ for(const label of ['PR','Title','State','Checks','Head SHA']){const th=document.createElement('th');th.textContent=label;head.append(th)}table.append(head);
+ const rows=Array.isArray(snap.pull_requests)?snap.pull_requests:[];
+ for(const row of rows.slice(0,5)){
+  const tr=document.createElement('tr'),prCell=document.createElement('td'),titleCell=document.createElement('td');
+  if(Number.isInteger(row.number)&&row.number>0&&row.number<=1000000){const link=document.createElement('a');link.href='https://github.com/Mantiee/rlm/pull/'+row.number;link.rel='noopener';link.target='_blank';link.textContent='#'+row.number;prCell.append(link)}else prCell.textContent='unknown';
+  titleCell.textContent=typeof row.title==='string'?row.title:'unknown';
+  const stateCell=document.createElement('td');stateCell.textContent=(row.state||'unknown')+' / '+(row.check_state||'unknown');
+  const checksCell=document.createElement('td'),checks=Array.isArray(row.check_runs)?row.check_runs:[];
+  checksCell.textContent=checks.length?checks.slice(0,100).map(check=>(check.name||'unknown')+': '+(check.status||'unknown')+(check.conclusion?' ('+check.conclusion+')':'')).join('\n'):'No check runs; status unknown';
+  const shaCell=document.createElement('td');shaCell.textContent=typeof row.head_sha==='string'?row.head_sha:'unknown';
+  tr.append(prCell,titleCell,stateCell,checksCell,shaCell);table.append(tr);
+ }
+ if(!rows.length){const tr=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=5;cell.textContent='No cached PR/check snapshot; status unknown';tr.append(cell);table.append(tr)}
+ p.append(table);
 }
 
 function modelDeploymentView(data){

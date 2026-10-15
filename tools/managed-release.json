@@ -6,7 +6,7 @@
   "files": {
     "tools/prepare-managed-windows.ps1": "714caf9e678b42ad0a723c125de594d31ae21819247ee96bba25e3055dc5dbfe",
     "tools/benchmark-synta-windows.ps1": "7875d9ce54f534bf3596e36e53e25f05c024d9900e83ef9cfef97ee995441c38",
-    "tools/serve-v100-dashboard.py": "42a83a747549592cebdedc448e78cace4bf601446d5152274f90082802a7ef0c",
+    "tools/serve-v100-dashboard.py": "df1d388b2d595a7269dec6b52f311f1374f83a186041eab00a3a0dbeffb28c72",
     "tools/qualify-synta-models-debian.sh": "6ad0254352f4f888e255721b7900b26239da71a741e418018f88b77e25f0d0dd",
     "rlm/v100/managed_bootstrap.py": "8fa85d165ede664938188ef8d24bbfbb55695458cc423f92103314893d625328",
     "rlm/v100/inference_benchmark.py": "b65cd1dcdc1ba46cfad00fa768726d7a8b5f80cbccc7fccab13717894cf09c25",
@@ -55,7 +55,7 @@
     "rlm/v100/research_tools.py": "86d94cb745cddd5c26b4b9e061136d1553666a3c13df8dfbed89ee5f3c76eabd",
     "rlm/v100/decision_memory.py": "03af73225f358b6c7b0bd60318ea372dc2cd51c7537f1bab5de4dbc51cabb72b",
     "tools/update-synta-v98.sh": "671162e9fd27382b9449ea68661e1468b37537f62c1bfb906a97578f1fa5203f",
-    "rlm/v100/dashboard_layout.py": "96bdadf96eea45eeacabce65594ae1854cae802ee0452d50d83e1121f88e2bb7",
+    "rlm/v100/dashboard_layout.py": "b409f166d83e17eda2783ac22b3dd7c663357758da756d5a4620692e65ef6ed0",
     "tools/update-synta-v99.sh": "b78f2e702d60077cf71c609ec9c6eaf8d60c05b22a19918c1987e68ed764fb93",
     "tools/update-synta-v100.sh": "79fe723f02ba6c50a5ec9d223a105bac26d9f3d100bbb8d847138d1eaa9316b8",
     "rlm/v100/remote_nodes.py": "df584ff0175eb84d02455c47d13573d3221df4efafb0b8281754dd8f5dd69529",
@@ -86,7 +86,8 @@
     "rlm/v100/chat_plan.py": "b9f5bbef271465beb78d4ccc4bed5650a66fee92361247379516f3e76fcadc63",
     "rlm/v100/execution_costs.py": "12f1d8bbb85a5af9138049ef281af94ddd6b3c0a84a280b3be6425e033650a50",
     "rlm/v100/paper_cost_sources.py": "dcb2afff0d0c229c6673774fd5f817c267164219a25a30364710775619868187",
-    "tools/synta_live_dashboard_v4.html": "b40dae3980b5a8ca1fca805360c46fc55ecfcd77b9155c14fee5251891559551"
+    "tools/synta_live_dashboard_v4.html": "b40dae3980b5a8ca1fca805360c46fc55ecfcd77b9155c14fee5251891559551",
+    "rlm/v100/github_dashboard.py": "4ab6b6301f78e9769f2fd93fa43acdf991ecc578b1e5fe1829f7a14eec2dd4fc"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

@@ -98,6 +98,9 @@ class DashboardState:
         self.mission_reader = mission_reader
         self.data = {"collected_at": time.time(), "errors": ["Pierwsze zbieranie danych trwa"]}
         self.stop = threading.Event()
+        from rlm.v100.github_dashboard import cached
+
+        self.github_ci = cached(self.root)
         self.report_collection = {"state": "waiting", "updated": time.time()}
         self.layout = {"guest_file": GUEST_TEMPLATE, "state": "waiting for guest template"}
         self.page = render_template(BASE_TEMPLATE, validate_template(BASE_TEMPLATE))
@@ -210,6 +213,27 @@ class DashboardState:
             self.sync_layout()
             self.stop.wait(30)
 
+    def github_loop(self):
+        """Refresh public PR/check metadata out of band and never block dashboard polling."""
+        from rlm.v100.github_dashboard import REFRESH_SECONDS, cached, refresh
+
+        while not self.stop.is_set():
+            current = cached(self.root)
+            if current.get("state") in ("unavailable", "stale", "unknown"):
+                try:
+                    refresh(self.root)
+                except (OSError, ValueError, TypeError, RuntimeError) as error:
+                    self.github_ci = {
+                        **current,
+                        "state": "unavailable",
+                        "error": {"kind": "refresh_failed", "detail": str(error)[:200]},
+                    }
+                else:
+                    self.github_ci = cached(self.root)
+            else:
+                self.github_ci = current
+            self.stop.wait(REFRESH_SECONDS)
+
     def refresh(self):
         errors, report, gpu = [], {}, {}
         mission = self.mission_reader(self.root)
@@ -241,6 +265,9 @@ class DashboardState:
         from rlm.v100.dashboard_snapshot import supplement
 
         report = supplement(self.root, mission, report, errors)
+        from rlm.v100.github_dashboard import cached as cached_github_ci
+
+        report["github_ci"] = cached_github_ci(self.root)
         try:
             result = subprocess.run(
                 [
@@ -471,7 +498,7 @@ def main():
     with DashboardServer((args.bind, args.port), state) as server:
         threads = [
             threading.Thread(target=target, daemon=True)
-            for target in (state.loop, state.report_loop, state.layout_loop)
+            for target in (state.loop, state.report_loop, state.layout_loop, state.github_loop)
         ]
         for thread in threads:
             thread.start()
