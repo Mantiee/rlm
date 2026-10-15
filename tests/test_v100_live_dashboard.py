@@ -509,7 +509,9 @@ const archive=document.getElementById('action-archive'),select=document.getEleme
 let archiveCalls=0;fetch=async()=>{archiveCalls++;return {ok:true,json:async()=>({days:['2026-10-10'],day:'2026-10-10',events:[{id:'proof',time:'now',kind:'tool-result',payload:{result:'actual'}}],next_cursor:200,archive_bytes:200})}};
 (async()=>{listeners.click({target:document.getElementById('archive-load')});await new Promise(resolve=>setTimeout(resolve,10));const rows=document.getElementById('archive-rows');if(rows.children.length!==1)throw Error('Archive click did not load live DOM');const opened=rows.children[0];opened.open=true;for(let i=0;i<3;i++)stablePaint(()=>archivePanel());if(document.getElementById('action-archive')!==archive||rows.children[0]!==opened||!opened.open)throw Error('Expanded archive reset during refresh');listeners.click({target:document.getElementById('archive-load')});await new Promise(resolve=>setTimeout(resolve,10));if(archiveCalls!==2||rows.children.length!==1)throw Error('Archive stopped responding or duplicated events')})().catch(error=>{console.error(error);process.exitCode=1});
 """
-    result = subprocess.run(["node", "-"], input=program, text=True, capture_output=True, timeout=5)
+    result = subprocess.run(
+        ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=5
+    )
     assert result.returncode == 0, result.stderr
 
 
