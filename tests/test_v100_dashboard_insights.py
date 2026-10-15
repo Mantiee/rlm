@@ -149,6 +149,52 @@ def test_live_board_reads_verified_paper_ledger_and_current_evaluation():
     assert "RTX 3060 Ti" in SCRIPT
 
 
+def test_100_pln_preview_explains_scaled_model_proposal_and_no_best_claim():
+    import shutil
+    import subprocess
+
+    from rlm.v100.dashboard_insights import SCRIPT
+
+    if not shutil.which("node"):
+        pytest.skip("Node unavailable")
+    function = "function paperCapitalPreview(data){" + SCRIPT.split(
+        "function paperCapitalPreview(data){", 1
+    )[1].split("function insightsView(data){", 1)[0]
+    program = r"""
+class Element { constructor(tag){this.tagName=tag;this.children=[];this.style={};this.dataset={};this.attributes={};this.textContent=''} append(...nodes){this.children.push(...nodes)} replaceChildren(...nodes){this.children=nodes} setAttribute(key,value){this.attributes[key]=value} }
+const nodes={'live-mission-board':new Element('section')};let created;
+const document={createElement:tag=>new Element(tag),createElementNS:(ns,tag)=>new Element(tag)};
+function $(id){return nodes[id]}
+function panel(id,title,after){created=new Element('section');created.id=id;return created}
+function textField(parent,label,value){const node=new Element('p');node.textContent=label+': '+String(value);parent.append(node)}
+FUNCTION
+const now=new Date(),earlier=new Date(now.getTime()-60000);
+const data={report:{
+ live_execution_policy:{capital_limit_pln:100,daily_loss_stop_pln:20,max_total_loss_pln:25,leverage_enabled:false},
+ live_paper:{initial_capital:'10000',branches:{A:{equity:'10000',net_pnl_before_personal_tax:'0',cash:'10000',positions:{}},B:{equity:'9987.1',net_pnl_before_personal_tax:'-12.9',cash:'9500',positions:{'BTC-KRAKEN':{quantity:'0.0015',side:'long'}}}},activity_stream:{entries:[
+  {branch:'A',category:'decision',time:earlier.toISOString(),proposal:{source:'model-proposal',status:'recorded',action:'open',symbol:'BTC-KRAKEN',budget:500,leverage:1,rationale:'Small evidence-backed paper proposal.',quote:{bid:'64000',ask:'64010'}}},
+  {branch:'B',category:'decision',time:now.toISOString(),proposal:{source:'model-proposal',status:'recorded',action:'hold',symbol:'BTC-KRAKEN',budget:0,rationale:'Wait for verified costs.'}}
+ ]},blockers:['BTC costs unknown']},paper_blockers:['BTC costs unknown'],recent_exploratory_backtests:[]}};
+paperCapitalPreview(data);
+const collect=n=>(n.tagName||'')+' '+(n.textContent||'')+' '+JSON.stringify(n.attributes||{})+' '+(n.children||[]).map(collect).join(' ');const output=collect(created);
+for(const value of ['Strategia A','OPEN · BTC-KRAKEN','5.00 PLN','Bid/ask przy decyzji: 64000 / 64010','Powód modelu: Small evidence-backed paper proposal.','Strategia B','HOLD','99.87 PLN','95.00 PLN','0.00001500 long','100 PLN','svg','Historia proponowanej ekspozycji','"cx"','Historycznych migawek salda 100 PLN księga nie zapisuje'])if(!output.includes(value))throw Error('Missing 100 PLN preview evidence: '+value+'\n'+output);
+""".replace("FUNCTION", function)
+    result = subprocess.run(
+        ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=5
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_100_pln_timeline_only_uses_model_decisions_with_recorded_budgets():
+    from rlm.v100.dashboard_insights import SCRIPT
+
+    assert "proposal.source==='model-proposal'" in SCRIPT
+    assert "const proposals=(stream.entries||[]).filter" in SCRIPT
+    assert "HOLD = 0 PLN" in SCRIPT
+    assert "Wykres pokazuje propozycję, nie wykonanie ani saldo" in SCRIPT
+    assert "paper_blockers" in SCRIPT
+
+
 def test_current_blocker_does_not_reuse_previous_cycle_failure():
     from rlm.v100.dashboard_insights import SCRIPT
 

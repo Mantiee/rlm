@@ -141,6 +141,37 @@ def paper_fill_evidence(report: dict | None, now: float | None = None) -> dict:
 def paper_activity_stream(events: list[dict], pending_orders: int | None) -> dict:
     """Summarize a bounded, tail-linked paper ledger window without inferring actions."""
     entries = []
+
+    def proposal_receipt(proposal: dict, payload: dict, source: str | None, status: str) -> dict:
+        """Expose the model's own bounded proposal fields for an explanatory UI."""
+        details = {
+            key: proposal.get(key)
+            for key in (
+                "action",
+                "symbol",
+                "side",
+                "budget",
+                "leverage",
+                "rationale",
+                "model_action_blocked",
+            )
+            if proposal.get(key) is not None
+        }
+        if isinstance(details.get("rationale"), str):
+            details["rationale"] = details["rationale"][:600]
+        if isinstance(source, str) and source:
+            details["source"] = source[:80]
+        details["status"] = status[:80]
+        inputs = payload.get("decision_inputs") or {}
+        quote = inputs.get("quote") if isinstance(inputs, dict) else None
+        if isinstance(quote, dict):
+            details["quote"] = {
+                key: quote[key]
+                for key in ("bid", "ask", "observed_at", "available_at")
+                if quote.get(key) is not None
+            }
+        return details
+
     counts = {
         "observations": 0,
         "model_decisions": 0,
@@ -220,6 +251,9 @@ def paper_activity_stream(events: list[dict], pending_orders: int | None) -> dic
                         for value in (action, proposal.get("symbol"), source)
                         if value is not None
                     ),
+                    "proposal": proposal_receipt(
+                        proposal, payload, source, "recorded"
+                    ),
                 }
             )
             if action in attempt_actions:
@@ -256,6 +290,9 @@ def paper_activity_stream(events: list[dict], pending_orders: int | None) -> dic
                                 payload.get("error"),
                             )
                             if value
+                        ),
+                        "proposal": proposal_receipt(
+                            rejected, payload, "model-proposal", "blocked"
                         ),
                     }
                 )

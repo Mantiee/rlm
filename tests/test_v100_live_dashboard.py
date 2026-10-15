@@ -584,8 +584,19 @@ def test_paper_activity_stream_separates_quotes_decisions_attempts_and_fills():
                     "proposal": {
                         "action": "open",
                         "symbol": "BTC-KRAKEN",
+                        "side": "long",
+                        "budget": 500,
+                        "leverage": 1,
+                        "rationale": "Fresh quote supports a small paper test.",
                         "proposal_source": "model-proposal",
-                    }
+                    },
+                    "decision_inputs": {
+                        "quote": {
+                            "bid": "64000",
+                            "ask": "64010",
+                            "observed_at": "2026-10-15T11:00:00Z",
+                        }
+                    },
                 },
             },
             {
@@ -645,6 +656,12 @@ def test_paper_activity_stream_separates_quotes_decisions_attempts_and_fills():
     assert stream["entries"][1]["label"] == "Confirmed paper fill"
     assert "fill not implied" in stream["entries"][3]["detail"]
     assert "blocked" in stream["entries"][6]["label"]
+    proposal = stream["entries"][2]["proposal"]
+    assert proposal["source"] == "model-proposal"
+    assert proposal["budget"] == 500
+    assert proposal["quote"]["ask"] == "64010"
+    assert "Fresh quote" in proposal["rationale"]
+    assert stream["entries"][6]["proposal"]["status"] == "blocked"
 
 
 def test_live_paper_snapshot_returns_chain_checked_activity_counts(tmp_path):

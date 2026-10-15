@@ -98,8 +98,81 @@ function liveMissionBoard(data){
  for(const event of recent){const line=document.createElement('div');line.className='live-board-event';const time=document.createElement('time');time.textContent=event.time||'Unknown time';const body=document.createElement('span');body.textContent=event.label||event.action||event.kind||event.type||event.summary||'Recorded event';line.append(time,body);events.append(line)}
  box.append(events);
 }
+function paperCapitalPreview(data){
+ const anchor=$('live-mission-board');if(!anchor)return;
+ const p=panel('paper-capital-preview','Co model proponuje przy kapitale 100 PLN? — symulacja',$('live-mission-board'));p.replaceChildren();
+ const h=document.createElement('h2');h.textContent='Co model proponuje przy kapitale 100 PLN?';p.append(h);
+ const report=data.report||{},paper=report.live_paper||{},policy=report.live_execution_policy||{},stream=paper.activity_stream||{};
+ const capital=Number(policy.capital_limit_pln??100),starting=Number(paper.initial_capital),now=Date.now()/1000;
+ textField(p,'Limit symulacji',`${Number.isFinite(capital)?capital.toFixed(2):'UNKNOWN'} PLN · dzienny stop ${policy.daily_loss_stop_pln??'UNKNOWN'} PLN · łączny stop ${policy.max_total_loss_pln??'UNKNOWN'} PLN · dźwignia ${policy.leverage_enabled===true?'włączona':'wyłączona'}`);
+ textField(p,'Aktualizacja','Propozycje odświeżają się razem ze snapshotem dashboardu co 5 sekund. To nie są zlecenia.');
+ const wallets=document.createElement('div');wallets.className='live-board-metrics';p.append(wallets);
+ for(const branch of ['A','B']){
+  const source=paper.branches?.[branch],card=document.createElement('article');card.className='live-board-metric';wallets.append(card);
+  const title=document.createElement('strong');title.textContent=`Portfel ${branch} — równowartość na 100 PLN`;card.append(title);
+  const detail=document.createElement('small');detail.style.whiteSpace='pre-wrap';
+  const equity=Number(source?.equity),pnl=Number(source?.net_pnl_before_personal_tax),cash=Number(source?.cash);
+  if(Number.isFinite(starting)&&starting>0&&source&&Number.isFinite(equity)){
+   const money=value=>Number.isFinite(value)?`${(value*capital/starting).toFixed(2)} PLN`:'UNKNOWN';
+   const positions=Object.entries(source.positions||{}).map(([symbol,position])=>{const units=Number(typeof position==='object'?position.quantity:position);return `${symbol} ${Number.isFinite(units)?(units*capital/starting).toFixed(8):'UNKNOWN'}${position?.side?' '+position.side:''}`}).join(', ')||'brak zapisanej pozycji';
+   detail.textContent=`Wartość po wycenie: ${money(equity)}\nP&L księgi: ${money(pnl)}\nGotówka: ${money(cash)}\nPozycje (skalowane jednostki): ${positions}`;
+  }else detail.textContent='Saldo albo pochodzenie kapitału UNKNOWN w tej migawce.';
+  card.append(detail);
+ }
+ textField(p,'Zakres sald','To przeskalowany odczyt aktualnej księgi A/B, nie osobny rachunek 100 PLN. Wartość pozycji zależy od wyceny księgi; wynik nie uwzględnia niezweryfikowanych kosztów jako rzeczywistego wyniku. Historycznych migawek salda 100 PLN księga nie zapisuje.');
+ const latest=new Map();
+ for(const entry of stream.entries||[]){const proposal=entry.proposal||{};if(!entry.branch||!['A','B'].includes(entry.branch)||proposal.source!=='model-proposal')continue;latest.set(entry.branch,{entry,proposal})}
+ const grid=document.createElement('div');grid.className='live-board-metrics';p.append(grid);
+ for(const branch of ['A','B']){
+  const item=latest.get(branch),card=document.createElement('article');card.className='live-board-metric';grid.append(card);
+  const title=document.createElement('strong');title.textContent=`Strategia ${branch}`;card.append(title);
+  const body=document.createElement('small');body.style.whiteSpace='pre-wrap';card.append(body);
+  if(!item){body.textContent='Brak potwierdzonej decyzji modelu w zweryfikowanym oknie księgi.';continue}
+  const {entry,proposal}=item,stamp=Date.parse(entry.time||'')/1000,age=Number.isFinite(stamp)?now-stamp:null;
+  const action=String(proposal.action||'UNKNOWN').toUpperCase(),symbol=proposal.symbol||'instrument niepodany';
+  const rawBudget=Number(proposal.budget),normalized=Number.isFinite(rawBudget)&&Number.isFinite(starting)&&starting>0&&Number.isFinite(capital)?Math.max(0,Math.min(capital,rawBudget*capital/starting)):null;
+  const budget=normalized===null?'kwota nieznana':`${normalized.toFixed(2)} PLN (proporcjonalna skala z portfela ${starting.toFixed(2)} PLN)`;
+  const quote=proposal.quote||{},quoteText=quote.bid!==undefined||quote.ask!==undefined?`\nBid/ask przy decyzji: ${quote.bid??'UNKNOWN'} / ${quote.ask??'UNKNOWN'}`:'';
+  const blocked=proposal.model_action_blocked?`\nModel chciał: ${proposal.model_action_blocked}; bramka zamieniła to na HOLD.`:'';
+  const reason=proposal.rationale?`\nPowód modelu: ${proposal.rationale}`:'';
+  body.textContent=`${action} · ${symbol}\nBudżet dla 100 PLN: ${String(proposal.action||'').toLowerCase()==='hold'?'0.00 PLN — gotówka pozostaje wolna':budget}\nStatus: ${proposal.status||'zapisano'}${age===null?' · czas UNKNOWN':` · ${Math.max(0,Math.round(age))} s temu`}${quoteText}${blocked}${reason}`;
+ }
+ const proposals=(stream.entries||[]).filter(entry=>{
+  const proposal=entry.proposal||{};
+  return ['A','B'].includes(entry.branch)&&proposal.source==='model-proposal'&&Number.isFinite(Date.parse(entry.time||''));
+ }).map(entry=>{
+  const proposal=entry.proposal,raw=Number(proposal.budget);
+  const amount=String(proposal.action||'').toLowerCase()==='hold'?0:
+   Number.isFinite(raw)&&Number.isFinite(starting)&&starting>0&&Number.isFinite(capital)?Math.max(0,Math.min(capital,raw*capital/starting)):null;
+  return {...entry,amount};
+ }).filter(entry=>entry.amount!==null).slice(-100);
+ const chartTitle=document.createElement('h3');chartTitle.textContent='Historia proponowanej ekspozycji dla dwóch osobnych portfeli po 100 PLN';p.append(chartTitle);
+ const note=document.createElement('p');note.className='muted';note.textContent='Każdy punkt to zapisana decyzja modelu przeskalowana proporcjonalnie z księgi paper. HOLD = 0 PLN. Wykres pokazuje propozycję, nie wykonanie ani saldo. Oś czasu obejmuje zweryfikowane decyzje w ostatnim oknie księgi; nowe punkty dochodzą, gdy system zapisze następną decyzję. Brak prognozy przyszłości.';p.append(note);
+ if(proposals.length){
+  const ns='http://www.w3.org/2000/svg',chart=document.createElementNS(ns,'svg');chart.setAttribute('viewBox','0 0 800 280');chart.setAttribute('role','img');chart.setAttribute('aria-label','Historia proponowanej ekspozycji A i B, w przeliczeniu na kapitał 100 PLN');
+  const add=(tag,attrs,text)=>{const node=document.createElementNS(ns,tag);for(const [key,value] of Object.entries(attrs))node.setAttribute(key,String(value));if(text!==undefined)node.textContent=text;chart.append(node);return node};
+  const left=78,right=780,top=40,bottom=210,maxValue=Number.isFinite(capital)&&capital>0?capital:100,times=proposals.map(row=>Date.parse(row.time)),minTime=Math.min(...times),maxTime=Math.max(...times);
+  for(let i=0;i<=4;i++){const value=maxValue*(1-i/4),y=top+(bottom-top)*i/4;add('line',{x1:left,x2:right,y1:y,y2:y,stroke:'#35445a','stroke-dasharray':'4 4'});add('text',{x:left-9,y:y+4,fill:'#bdcde1','font-size':12,'text-anchor':'end'},value.toFixed(0)+' zł')}
+  for(const [branch,color,name,legendX] of [['A','#57b7ff','Strategia A',left],['B','#f9c36b','Strategia B',left+160]]){
+   const rows=proposals.filter(row=>row.branch===branch),points=rows.map(row=>`${maxTime===minTime?(left+right)/2:left+(Date.parse(row.time)-minTime)/(maxTime-minTime)*(right-left)},${bottom-row.amount/maxValue*(bottom-top)}`).join(' ');
+   if(rows.length>1)add('polyline',{points,fill:'none',stroke:color,'stroke-width':3});
+   for(const row of rows){const x=maxTime===minTime?(left+right)/2:left+(Date.parse(row.time)-minTime)/(maxTime-minTime)*(right-left),y=bottom-row.amount/maxValue*(bottom-top);add('circle',{cx:x,cy:y,r:5,fill:color});}
+   add('line',{x1:legendX,x2:legendX+24,y1:246,y2:246,stroke:color,'stroke-width':3});add('text',{x:legendX+31,y:250,fill:'#bdcde1','font-size':12},`${name} · ${rows.length} decyzji`);
+  }
+  const clock=value=>new Date(value).toLocaleString('pl-PL',{timeZone:'UTC',hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'})+' UTC';
+  add('text',{x:left,y:230,fill:'#bdcde1','font-size':11},clock(minTime));add('text',{x:right,y:230,fill:'#bdcde1','font-size':11,'text-anchor':'end'},clock(maxTime));p.append(chart);
+  const last=proposals.slice(-8).reverse().map(row=>`${row.time} · ${row.branch} · ${String(row.proposal.action||'UNKNOWN').toUpperCase()} ${row.proposal.symbol||''} · ${row.amount.toFixed(2)} PLN`).join('\n');
+  const history=document.createElement('pre');history.textContent=last;p.append(history);
+ }else textField(p,'Historia decyzji','Brak modelowych propozycji z kompletną kwotą w zweryfikowanym oknie księgi. HOLD-y ochronne i same notowania nie są propozycją modelu.');
+ const blockers=Array.isArray(report.paper_blockers)?report.paper_blockers:[];
+ textField(p,'Dlaczego może nie wykonać',blockers.length?blockers.slice(0,3).join(' · '):'Brak blokad w tej migawce; nadal potrzebne jest potwierdzenie fillu i kosztów.');
+ textField(p,'Jak czytać kwotę','A i B to oddzielne strategie, każda przeskalowana proporcjonalnie z zapisanej decyzji większej księgi do limitu 100 PLN. To nie osobna inferencja na koncie 100 PLN. Nie przewiduje przyszłości, fillu ani zysku. Saldo i P&L 100 PLN nie są udawane: wymagają osobnej, ciągłej księgi symulacji i potwierdzonych kosztów.');
+ const comparison=(report.recent_exploratory_backtests||[]).filter(row=>row.triage?.state==='hypothesis for independent future testing');
+ textField(p,'Wybór strategii','Nie ma potwierdzonej „najlepszej” strategii. Dostępne kandydatury z historycznego replay: '+(comparison.length?comparison.map(row=>row.parameters?.rule||'candidate').join(', '):'brak kandydata, który przeszedł triage')+'. Ranking historyczny nie dowodzi przewagi na przyszłość.');
+}
 function insightsView(data){
  liveMissionBoard(data);
+ paperCapitalPreview(data);
  const r=data.report||{},g=r.mission_evidence?.goal_learning||{},policy=g.cpu_shadow_policy||{},work=r.income_work||{},sources=r.source_acquisition||{},workFreshness=r.status_freshness?.income_work||{};
  const p=panel('overview-panel','What is actually happening',$('cards'));p.replaceChildren();const h=document.createElement('h2');h.textContent='Work towards the goal';p.append(h);textField(p,'Verified revenue','Unavailable: no verified payment ledger connected');textField(p,'Current model-selected work',work.state||'No work receipt in this snapshot');textField(p,'Last work recorded',work.updated?new Date(work.updated*1000).toLocaleString():'unknown');textField(p,'Work receipt age',work.updated?`${Math.max(0,Math.round((Date.now()/1000-work.updated)/60))} minutes; refreshing the page does not create a new result`:'No dated work receipt');textField(p,'Successful tool receipts in last experiment',work.successful_tool_receipts);textField(p,'Meaning','A source read or a successful process is not a validated experiment, a model update or earned money.');textField(p,'CPU shadow learning',policy.state||'No policy receipt');textField(p,'Verified outcomes used by CPU policy',policy.trained_outcomes);textField(p,'Gemma candidates selected for next serving',r.accepted_weight_updates_this_run);const issueReceipts=[{name:'Income work',value:work.error,freshness:workFreshness.state||'unknown'},{name:'Learning loop',value:r.learning_activity?.reason,freshness:r.status_freshness?.learning_activity?.state||'unknown'},{name:'Paper fee source',value:r.paper_fee_source?.error,freshness:r.status_freshness?.paper_fee_source?.state||'unknown'}].filter(issue=>issue.value);const reportedIssue=issueReceipts.find(issue=>issue.freshness==='fresh')||issueReceipts[0];const currentWorkError=reportedIssue?`${reportedIssue.freshness==='fresh'?'Current':reportedIssue.freshness==='stale'?'Last recorded (historical)':'Last recorded (freshness unknown)'} ${reportedIssue.name} issue: ${reportedIssue.value}`:'None recorded in current receipts';textField(p,'Current blocker / last recorded error',currentWorkError);
  detailsField(p,'Last experiment receipt',JSON.stringify(work,null,2),'overview-work');
