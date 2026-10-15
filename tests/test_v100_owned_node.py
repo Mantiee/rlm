@@ -450,7 +450,7 @@ def test_failed_owned_worker_persists_measured_resource_reason(tmp_path, monkeyp
         psutil,
         "Process",
         lambda pid: SimpleNamespace(
-            memory_info=lambda: SimpleNamespace(rss=owned_node.CPU_RAM + 1)
+            memory_info=lambda: SimpleNamespace(rss=owned_node.CPU_RAM + 2**20)
         ),
     )
 
