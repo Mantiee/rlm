@@ -1,7 +1,7 @@
 {
   "schema": "synta-managed-release-v1",
-  "version": 108,
-  "linux_installer": "tools/update-synta-v108.sh",
+  "version": 109,
+  "linux_installer": "tools/update-synta-v109.sh",
   "windows_prepare": "tools/prepare-managed-windows.ps1",
   "files": {
     "tools/prepare-managed-windows.ps1": "79ac4ad0b9d4a8c4773e5af673bc0d0ce58bbb7b618c1f17d11897f960602472",
@@ -120,7 +120,8 @@
     "rlm/v100/training_health.py": "befa75520fecea998d132f68e48f9afa7f14b8f1aa22ce2c0d92ebbebe7a7039",
     "tools/update-synta-v107.sh": "39d359877e53b76b3ee259811942722d4665d28497e22527f8cb5f4fb7d2808b",
     "rlm/v100/dashboard_redirect.py": "16ad41fba3760eae584c9963a48d223a1bb740d828057618b23e8b35c6ee757c",
-    "tools/update-synta-v108.sh": "2d61bbc89e715aa88a724c8ce314836f9616dd3cb12ae1934214b4c7bfc0e426"
+    "tools/update-synta-v108.sh": "2d61bbc89e715aa88a724c8ce314836f9616dd3cb12ae1934214b4c7bfc0e426",
+    "tools/update-synta-v109.sh": "0b6536e71072265b8bd485091977aebc660490393f21fc052d8b4cc104ae7d53"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
