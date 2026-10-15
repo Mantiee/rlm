@@ -22,6 +22,33 @@ CONTRACT = "synta-dedicated-linux-v1"
 CPU_RAM = 768 * 2**20
 
 
+def worker_failure(log: Path, code: int) -> str:
+    """Return known failure categories, never arbitrary worker output or secrets."""
+    try:
+        if log.is_symlink():
+            raise ValueError("Linked worker log")
+        with log.open("rb") as stream:
+            stream.seek(max(0, log.stat().st_size - 8192))
+            tail = stream.read(8192).decode("utf-8", errors="replace")
+        for marker, detail in (
+            ("No module named 'numpy'", "Missing NumPy required for checkpoint serialization"),
+            (
+                "Requested interactive experiment device is unavailable",
+                "CUDA training runtime unavailable",
+            ),
+            (
+                "Compute trial made no validated improvement",
+                "No validated improvement; weights not promoted",
+            ),
+            ("Nonfinite compute training loss", "Nonfinite training loss; candidate rejected"),
+        ):
+            if marker in tail:
+                return detail
+    except (OSError, ValueError):
+        pass
+    return f"Fixed compute kernel exited {code}; full worker.log retained on owned node"
+
+
 def atomic(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".new")
@@ -321,7 +348,9 @@ class Node:
                         )
                         time.sleep(1)
                     if process.returncode:
-                        raise RuntimeError("Fixed CPU kernel failed; inspect worker.log")
+                        raise RuntimeError(
+                            worker_failure(folder / "worker.log", process.returncode)
+                        )
                 finally:
                     if process.poll() is None:
                         process.kill()

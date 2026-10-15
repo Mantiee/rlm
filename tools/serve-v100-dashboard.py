@@ -375,7 +375,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 from rlm.v100.release_selector import current
 
                 body, mime = (
-                    json.dumps(current(self.server.state.root)).encode(),
+                    json.dumps(current(self.server.state.root, self.client_address[0])).encode(),
                     "application/json",
                 )
             elif route == "/api/status":
