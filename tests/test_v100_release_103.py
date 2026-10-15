@@ -96,8 +96,10 @@ def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
 def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release):
     content = (ROOT / f"tools/update-synta-v{release}.sh").read_text()
     if release == 110:
-        assert "Active mission cycle" in content
+        assert "Active training cycle" in content
         assert "cycle > completed" in content
+        assert "learning.get('stage') in training_stages" in content
+        assert "alternative-architecture-training-and-tests" in content
         assert "Mission service is not active; no service changed" in content
     else:
         assert "active candidate training/evaluation retained".lower() in content.lower()

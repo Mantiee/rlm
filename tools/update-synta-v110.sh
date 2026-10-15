@@ -104,8 +104,19 @@ root = Path(os.environ['AI_V100_ROOT'])
 record = status(root)
 learning=record.get('learning', {})
 cycle, completed = learning.get('cycle_in_progress'), learning.get('completed_cycles')
-if record.get('running') is True and type(cycle) is int and type(completed) is int and cycle > completed:
-    raise SystemExit(f'Active mission cycle {cycle} retained; package update deferred')
+training_stages = {
+    'candidate-training-and-independent-tests',
+    'scratch-architecture-training-and-tests',
+    'alternative-architecture-training-and-tests',
+}
+if (
+    record.get('running') is True
+    and type(cycle) is int
+    and type(completed) is int
+    and cycle > completed
+    and learning.get('stage') in training_stages
+):
+    raise SystemExit(f'Active training cycle {cycle} retained; package update deferred')
 if not record.get('run'):
     raise SystemExit('No mission profile to preserve; no service changed')
 for line in subprocess.check_output(['ps', '-eo', 'pid=,args='], text=True).splitlines():
