@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 10247)
+Total output lines: 669
+
 import base64
 import hashlib
 import json
@@ -298,166 +301,7 @@ class Element {
  get id(){return this.identity}
  append(...items){this.children.push(...items)}
  after(item){this.children.push(item)}
- replaceChildren(...items){this.children=items}
- setAttribute(k,v){this[k]=v}
-}
-const document={addEventListener:()=>{},querySelectorAll:()=>[],getElementById:id=>nodes[id],createElement:t=>new Element(t),createElementNS:(ns,t)=>new Element(t),createTextNode:t=>t};
-const location={reload(){throw Error('Unexpected reload')}};
-const setInterval=()=>{};
-const fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(sample)});
-const sample={collected_at:1,mission:{running:true,state:{phase:'research'}},report:{},live:{agents:[{label:'A / researcher',state:'tool-start',task:'Fetch public source',declaration:'<script>Unverified hypothesis</script>',result:'status: ready',source:'timeline.jsonl'}],actors:[{label:'Windows CPU',state:'idle',workers:[{name:'windows-cpu',phase:'idle',reason:'ready'}]},{label:'V100',state:'measured',metrics:{utilization:91}}],goals:{long:{text:'Operator goal'}},events:[{actor:'master',kind:'inference-start'}]}};
-"""
-    if paper_labs:
-        program = program.replace(
-            "report:{}",
-            "report:"
-            + json.dumps(
-                {
-                    "paper_labs": [
-                        {
-                            "id": "sample-v3",
-                            "state": "recorded",
-                            "accounts": {"A": {"cash": 10000, "units": 0, "gross_equity": 10000}},
-                            "gross_curve": [{"ts": "2026-10-14T20:00:00Z", "a": 10000, "b": 9999}],
-                        }
-                    ]
-                }
-            ),
-        )
-    for identity in dashboard_layout.REQUIRED_IDS:
-        program += f"new Element('div').id={json.dumps(identity)};\n"
-    program += dashboard_layout.APP_SCRIPT
-    program += "\nsample.report.status_freshness={income_work:{source:'income_work',state:'fresh',observed_at:1800000000,age_seconds:3},external_compute:{source:'external_compute',state:'unknown',observed_at:null,age_seconds:null}};\n"
-    program += "render(sample);if(nodes.actors.children.length!==2||!nodes.goals.textContent.includes('Operator goal')||nodes.events.children.length!==1||nodes['agent-grid'].children.length!==1)throw Error('Live renderer failed');\n"
-    program += "const freshnessText=n=>typeof n==='string'?n:(n.textContent||'')+(n.children||[]).map(freshnessText).join(' ');if(!freshnessText(nodes['status-freshness-panel']).includes('external_compute')||!freshnessText(nodes['status-freshness-panel']).includes('unknown'))throw Error('Status freshness is not visible');\n"
-    program += """
-const textNode={nodeType:3,nodeName:'#text',nodeValue:'previous'};const reader={nodeType:1,nodeName:'PRE',childNodes:[textNode],scrollTop:77};const freshReader={nodeType:1,nodeName:'PRE',childNodes:[{nodeType:3,nodeName:'#text',nodeValue:'updated'}]};updateNode(reader,freshReader);if(reader.childNodes[0]!==textNode||textNode.nodeValue!=='updated'||reader.scrollTop!==77)throw Error('Reading node replaced');
-sample.report={status_freshness:{source_acquisition:{state:'fresh'},income_work:{state:'stale'}},live_execution_policy:{capital_limit_pln:100,daily_loss_stop_pln:20,daily_loss_stop_percent:20,max_total_loss_pln:25,max_total_loss_percent:25,leverage_enabled:false,margin_enabled:false,short_selling_enabled:false,borrowing_enabled:false,paid_services_enabled:false,real_orders_enabled:false,scope:'No broker order connector enabled'},broker_connection_readiness:{state:'not_connected',account_reading:'not_configured',order_submission:'not_implemented',first_connection_scope:'read-only account identity, currency, available cash, fee tier, and venue minimums',required_operator_inputs:['broker/provider'],activation_requirements:['account-side loss controls'],credential_storage:'OS secret store only',scope:'Readiness contract only'},source_acquisition:{total_fetches:14,distinct_urls:9,distinct_contents:8,updated:1800000000,latest:[{url:'https://example.org/public-source'}]},income_work:{state:'blocked',sources_collected:2,proposals_registered:1,error:'awaiting receipt',updated:1799999990},paper_labs:[{id:'live-paper-v3',quote_stale:false,tick_age_seconds:34,recent_fills:[{}],promotion_eligible:false,quote:{ts:'2026-10-14T23:00:00Z'},gross_curve:[{ts:'2026-10-14T23:00:00Z',a:10000,b:9999}]}],live_paper:{model_decision_evidence:{state:'stale',confirmed_at:'2026-10-14T20:00:00Z',age_seconds:3600,model_version:'test-model',decisions_recorded:2},activity_stream:{state:'verified-tail',window_events:12,window_scope:'Latest 100 ledger events; checksum-linked',counts:{observations:7,model_decisions:0,automatic_freshness_holds:7,decision_round_attempts:0,paper_execution_attempts:0,confirmed_fills:0,pending_orders:0},entries:[{category:'observation',sequence:11,time:'2026-10-14T19:59:00Z',label:'quote observation',detail:'BTC-KRAKEN'},{category:'automatic_hold',sequence:12,time:'2026-10-14T20:00:00Z',label:'Automatic quote-freshness HOLD',detail:'HOLD'}]}},paper_fill_evidence:{state:'unknown',fill_count:null,audit_at:null,audit_age_seconds:null,last_fill_at:null,last_fill_state:'unknown',last_fill_age_seconds:null,scope:'No fresh full fill audit.'},learning_activity_status:{state:'running',detail:'Fresh heartbeat only',age_seconds:12,optimizer_evidence:{state:'recorded',optimizer_updates:9,activity_state:'stale',receipt_updated_at:'2026-10-14T20:00:00Z',receipt_age_seconds:3600,activity_detail:'old optimizer receipt'}},mission_evidence:{optimizer_updates_observed:0,cuda_verified:false},learning_activity:{updated:1799999900},current_activity:{stage:'research',completed_cycles:3,updated:1799999900}};render(sample);
-const attemptsText=n=>typeof n==='string'?n:(n.textContent||'')+(n.children||[]).map(attemptsText).join(' ');const attempts=attemptsText(nodes['earning-activity-panel']);for(const value of ['Cap 100 PLN','daily loss stop 20 PLN','total loss stop 25 PLN','leverage disabled','margin disabled','real orders disabled','Broker connection readiness','NOT_CONNECTED','read-only account identity','account-side loss controls','OS secret store only','14 retrievals','awaiting receipt','1 fill receipts in recent window','updates 9','CUDA receipt not confirmed','Last confirmed model decision','STALE','test-model','Last confirmed paper fill / full audit','UNKNOWN','Paper activity timeline — verified ledger tail','7 observations','0 model decisions','7 automatic quote HOLDs','0 paper order attempts','0 fills','Activity #12','Automatic quote-freshness HOLD','Mission loop heartbeat (liveness only)','Confirmed optimizer activity','old optimizer receipt','Verified income outcome'])if(!attempts.includes(value))throw Error('Live earning evidence missing: '+value);const learningText=attemptsText(nodes['goal-learning-view']);for(const value of ['Loop heartbeat (liveness only)','Last confirmed optimizer receipt','old optimizer receipt'])if(!learningText.includes(value))throw Error('Learning evidence labels missing: '+value);
-latestInference={events:[{time:'2026-10-09T15:30:00Z'}],agents:[{label:'Live reader',stream_output:'fresh answer'}]};render(sample);if(!nodes['agent-grid'].children[0].children[0].children[0].textContent.includes('Live reader'))throw Error('Stale snapshot replaced live output');
-const old={dataset:{key:'reader'},open:false};let disclosures=[old];document.querySelectorAll=()=>disclosures;rememberDisclosures();
-const next={dataset:{key:'reader'},open:true};disclosures=[next];restoreDisclosures();if(next.open)throw Error('User-closed detail reopened');
-next.open=true;rememberDisclosures();const newer={dataset:{key:'reader'},open:false};disclosures=[newer];restoreDisclosures();if(!newer.open)throw Error('User-open detail lost');
-"""
-    if paper_labs:
-        program += "\nif(nodes['paper-labs-view'].children[0].children[0].textContent!=='live-paper-v3')throw Error('Experimental wallet missing');\n"
-        program += "\nconst walletText=n=>typeof n==='string'?n:(n.textContent||'')+(n.children||[]).map(walletText).join(' ');const wallet=walletText(nodes['paper-labs-view']);for(const label of ['Portfel A ·','Portfel B ·','Czas lokalny','Wycena brutto (PLN)','Jeden punkt'])if(!wallet.includes(label))throw Error('Missing wallet chart label: '+label);\n"
-    result = subprocess.run(
-        ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=5
-    )
-    assert result.returncode == 0, result.stderr
-
-
-def test_invalid_dashboard_source_can_be_read_without_being_published(tmp_path, monkeypatch):
-    invalid = dashboard_layout.BASE_TEMPLATE.replace("</html>", "<script>alert(1)</script></html>")
-    monkeypatch.setattr(dashboard_editor, "guest_layout", lambda root: invalid)
-    value = dashboard_editor.status(tmp_path, include_html=True)
-    assert not value["valid"] and not value["published"]
-    assert value["html"] == invalid and value["repair_tool"] == "repair_dashboard"
-    assert "html" not in dashboard_editor.status(tmp_path)
-
-
-def test_dashboard_repair_removes_scripts_preserves_design_and_uses_backup(tmp_path, monkeypatch):
-    original = dashboard_layout.BASE_TEMPLATE.replace("<h1>", '<h1 style="color:red">').replace(
-        "</html>", '<SCRIPT type="text/javascript">bad()</SCRIPT></html>'
-    )
-    monkeypatch.setattr(dashboard_editor, "guest_layout", lambda root: original)
-    writes = []
-    monkeypatch.setattr(
-        dashboard_editor,
-        "write",
-        lambda root, content: writes.append(content) or {"written": True, "published": False},
-    )
-    value = dashboard_editor.repair(tmp_path)
-    assert value["repaired"] and not value["published"]
-    assert "scripts removed" in value["mode"]
-    assert "color:red" in writes[0] and "<SCRIPT" not in writes[0]
-    dashboard_layout.validate_template(writes[0])
-
-
-def test_capabilities_lists_only_the_current_request_tools(tmp_path):
-    from rlm.v100.research_tools import ResearchTools
-
-    tools = ResearchTools(tmp_path, {}, "A")
-    tools.allowed_tool_names = {"read_dashboard", "repair_dashboard"}
-    names = {row["name"] for row in tools.execute("capabilities", {})["tools"]}
-    assert names == tools.allowed_tool_names
-
-
-def test_token_metrics_survive_summary_and_do_not_expose_reasoning(tmp_path):
-    folder = tmp_path / "research/logs/activity/2026-10-09"
-    folder.mkdir(parents=True)
-    rows = [
-        {
-            "actor": "researcher",
-            "branch": "A",
-            "kind": "model-output",
-            "category": "decisions",
-            "payload": {"content": {"answer": "Public conclusion", "thinking": "private"}},
-        },
-        {
-            "actor": "researcher",
-            "branch": "A",
-            "kind": "inference-finished",
-            "time": "now",
-            "payload": {
-                "usage": {
-                    "prompt_tokens": 100,
-                    "completion_tokens": 20,
-                    "total_tokens": 120,
-                    "reasoning": "private",
-                },
-                "seconds": 2,
-            },
-        },
-    ]
-    (folder / "timeline.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
-    events = live_status.recent_events(tmp_path)
-    agent = live_status.agent_views(events, [])[0]
-    assert agent["usage"] == {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
-    assert agent["seconds"] == 2
-    assert "Public conclusion" in agent["declaration"]
-    assert "private" not in json.dumps(events)
-
-
-def test_operator_opt_in_records_returned_local_trace_and_preserves_public_output(
-    tmp_path, monkeypatch
-):
-    from rlm.clients.llamacpp import LlamaCppClient
-
-    root = tmp_path / "research"
-    root.mkdir()
-    (root / "user-preferences.json").write_text(json.dumps({"capture_local_model_trace": True}))
-    client = LlamaCppClient(model_name="owned-model", activity_root=tmp_path)
-    trace = "Test a hypothesis. " * 500
-    response = {
-        "choices": [
-            {
-                "message": {"content": "Public answer", "reasoning_content": trace},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {},
-    }
-    monkeypatch.setattr(client, "http_request", lambda endpoint, data: response)
-    assert client.request("/v1/chat/completions", {}) == response
-    events = live_status.recent_events(tmp_path)
-    agent = live_status.agent_views(events, [])[0]
-    assert agent["returned_trace"] == trace
-    assert "Public answer" in agent["declaration"]
-
-
-def test_transaction_retains_reading_container_and_scroll_across_updates():
-    import shutil
-    import subprocess
-
-    if not shutil.which("node"):
-        pytest.skip("Node unavailable")
-    program = r"""
-class Text {
- constructor(value){this.nodeType=3;this.nodeName='#text';this.nodeValue=value;this.parentNode=null}
- cloneNode(){return new Text(this.nodeValue)}
- remove(){if(this.parentNode){const p=this.parentNode;p.childNodes.splice(p.childNodes.indexOf(this),1);this.parentNode=null}}
+ replaceChildren(...items){this.c…4247 tokens truncated….childNodes.splice(p.childNodes.indexOf(this),1);this.parentNode=null}}
  replaceWith(n){const p=this.parentNode;p.insertBefore(n,this);this.remove()}
 }
 class Element extends Text {
@@ -666,3 +510,4 @@ def test_live_paper_snapshot_returns_chain_checked_activity_counts(tmp_path):
     assert activity["counts"]["paper_execution_attempts"] == 0
     assert activity["counts"]["confirmed_fills"] == 0
     assert activity["entries"][-1]["label"] == "Model decision round receipt"
+

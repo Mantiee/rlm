@@ -157,12 +157,35 @@ def test_current_blocker_does_not_reuse_previous_cycle_failure():
     assert "learning.last_cycle?.detail" not in blocker
 
 
-def test_stale_income_error_is_labelled_historical():
+def test_stale_income_error_does_not_mask_fresh_paper_fee_blocker():
+    import shutil
+    import subprocess
+
     from rlm.v100.dashboard_insights import SCRIPT
 
-    assert "workFreshness.state==='stale'" in SCRIPT
-    assert "last recorded error is historical" in SCRIPT
-    assert "Current blocker / last recorded error" in SCRIPT
+    if not shutil.which("node"):
+        pytest.skip("Node unavailable")
+    expression = SCRIPT.split("const issueReceipts=", 1)[1].split(
+        ";textField(p,'Current blocker / last recorded error'", 1
+    )[0]
+    program = """
+function choose(work,r,workFreshness){
+ const issueReceipts=EXPRESSION;
+ return currentWorkError;
+}
+const value=choose({error:'historic income failure'},
+ {learning_activity:{},paper_fee_source:{error:'fee publication mismatch'},status_freshness:{paper_fee_source:{state:'fresh'}}},
+ {state:'stale'});
+if(value!=='Current Paper fee source issue: fee publication mismatch')throw Error('Fresh paper blocker was hidden by stale income receipt: '+value);
+const historical=choose({error:'historic income failure'},
+ {learning_activity:{},paper_fee_source:{error:'historic fee failure'},status_freshness:{paper_fee_source:{state:'stale'}}},
+ {state:'stale'});
+if(historical!=='Last recorded (historical) Income work issue: historic income failure')throw Error('Stale income issue was not marked historical: '+historical);
+""".replace("EXPRESSION", expression)
+    result = subprocess.run(
+        ["node", "-"], input=program, text=True, encoding="utf-8", capture_output=True, timeout=5
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_live_board_distinguishes_completions_failures_and_idle_gpu():
@@ -232,3 +255,4 @@ def test_learning_panel_displays_optimizer_receipt_freshness_separately():
 
     assert "Last confirmed optimizer receipt" in PAGE
     assert "Optimizer receipt detail" in PAGE
+

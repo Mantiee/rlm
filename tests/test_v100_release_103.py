@@ -14,34 +14,41 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_managed_channel_is_a_genuine_pinned_new_package():
     manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
     config = (ROOT / "pyproject.toml").read_text()
-    assert manifest["version"] == 109
-    assert 'version = "0.1.3+v100.109"' in config
+    assert manifest["version"] == 110
+    assert 'version = "0.1.3+v100.110"' in config
     installer = manifest["linux_installer"]
-    assert installer == "tools/update-synta-v109.sh"
+    assert installer == "tools/update-synta-v110.sh"
     content = (ROOT / installer).read_bytes()
     assert manifest["files"][installer] == hashlib.sha256(content).hexdigest()
 
 
-def test_managed_channel_v109_redirects_legacy_income_link_after_port_override():
+def test_managed_channel_v110_redirects_legacy_income_link_after_port_override():
     manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
     config = (ROOT / "pyproject.toml").read_text()
-    assert manifest["version"] == 109
-    assert 'version = "0.1.3+v100.109"' in config
-    assert manifest["linux_installer"] == "tools/update-synta-v109.sh"
+    assert manifest["version"] == 110
+    assert 'version = "0.1.3+v100.110"' in config
+    assert manifest["linux_installer"] == "tools/update-synta-v110.sh"
     assert "rlm/v100/dashboard_redirect.py" in manifest["files"]
     installer = (ROOT / manifest["linux_installer"]).read_text()
-    assert "range(78, 110)" in installer
+    assert "range(78, 111)" in installer
     assert "synta-income-learning.service" in installer
     assert "v100-dashboard.service" in installer
     assert "--port 8766" in installer
     assert "zz-merged-dashboard.conf" in installer
-    assert "--target http://192.168.0.68:8765/?v=109" in installer
+    assert (
+        'DASHBOARD_EXEC="$(systemctl --user show v100-dashboard.service -p ExecStart --value)"'
+        in installer
+    )
+    assert 'DASHBOARD_BIND="$(printf \'%s\' "$DASHBOARD_EXEC" | sed -nE' in installer
+    assert "--target http://$DASHBOARD_BIND:8765/?v=110" in installer
+    assert "--target http://192." not in installer
 
 
-def test_v107_through_v109_updaters_are_monotonic_successors():
+def test_v107_through_v110_updaters_are_monotonic_successors():
     v107 = (ROOT / "tools/update-synta-v107.sh").read_text()
     v108 = (ROOT / "tools/update-synta-v108.sh").read_text()
     v109 = (ROOT / "tools/update-synta-v109.sh").read_text()
+    v110 = (ROOT / "tools/update-synta-v110.sh").read_text()
     manifest = json.loads((ROOT / "tools/managed-release.json").read_text())
     assert "tools/update-synta-v106.sh" not in manifest["files"]
     assert "range(78, 108)" in v107
@@ -56,6 +63,10 @@ def test_v107_through_v109_updaters_are_monotonic_successors():
     assert "requires v78-v109" in v109
     assert "0.1.3+v100.109" in v109
     assert "v109-package-recovery" in v109
+    assert "range(78, 111)" in v110
+    assert "requires v78-v110" in v110
+    assert "0.1.3+v100.110" in v110
+    assert "v110-package-recovery" in v110
 
 
 def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
@@ -81,10 +92,15 @@ def test_v103_cutover_preserves_checkpoint_and_refuses_active_learning():
     assert parsed.returncode == 0, parsed.stderr
 
 
-@pytest.mark.parametrize("release", [104, 105, 106, 107, 108, 109])
+@pytest.mark.parametrize("release", [104, 105, 106, 107, 108, 109, 110])
 def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release):
     content = (ROOT / f"tools/update-synta-v{release}.sh").read_text()
-    assert "active candidate training/evaluation retained".lower() in content.lower()
+    if release == 110:
+        assert "Active mission cycle" in content
+        assert "cycle > completed" in content
+        assert "Mission service is not active; no service changed" in content
+    else:
+        assert "active candidate training/evaluation retained".lower() in content.lower()
     assert "flock -n -x 9" in content
     assert '"$RECOVERY_HELPER" restore' in content
     assert content.index("'snapshot'") < content.index("print(stop(root)")
@@ -105,3 +121,4 @@ def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release
         text=True,
     )
     assert parsed.returncode == 0, parsed.stderr
+
