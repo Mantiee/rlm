@@ -81,7 +81,8 @@
     "tools/update-synta-v105.sh": "de4da42ad293bfb3c2a878f6aa9fba2e1f8179c7ac98c65c2c0329e27d18d74f",
     "rlm/v100/paper.py": "6e681ea77b3c34bda4e32970481253a7539d93113eaa2b25a4b3f89ff14e8c54",
     "rlm/v100/spot_bootstrap.py": "f5dca8a70fb874086ccf1e71948d9187556a8b96e5c6a26e5a4fb5d764679d41",
-    "rlm/v100/financial_snapshot.py": "0f20fcfea5c69a74ee00fc8b29d425e6a901671fb45535f8fe4b00d909c92a7f"
+    "rlm/v100/financial_snapshot.py": "0f20fcfea5c69a74ee00fc8b29d425e6a901671fb45535f8fe4b00d909c92a7f",
+    "tools/start-v100-dashboard.sh": "013d1e78ce846d1f58b8a435678545919c99a60c2a1ad49d27ffb0f180921227"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
