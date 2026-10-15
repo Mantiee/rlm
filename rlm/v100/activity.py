@@ -1,12 +1,20 @@
 """Local execution journals with explicit decisions and operator-selected local model traces."""
 
-import fcntl
+import errno
 import json
 import os
 import re
+import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 SECRET_KEYS = {
     "authorization",
@@ -58,10 +66,40 @@ def append_locked(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        with _exclusive_file_lock(handle):
+            handle.write(text)
+            handle.flush()
+
+
+@contextmanager
+def _exclusive_file_lock(handle) -> Iterator[None]:
+    """Lock one byte on Windows and the whole file on POSIX while appending."""
+    if os.name != "nt":
         fcntl.flock(handle, fcntl.LOCK_EX)
-        handle.write(text)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        return
+
+    # Lock a stable byte independent of the append position. Polling LK_NBLCK
+    # gives flock-like blocking behavior (unlike LK_LOCK's ten-second limit).
+    while True:
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            break
+        except OSError as error:
+            if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                raise
+            time.sleep(0.05)
+    handle.seek(0, os.SEEK_END)
+    try:
+        yield
+    finally:
         handle.flush()
-        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 class ActivityLog:
