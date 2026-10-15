@@ -196,4 +196,3 @@ MERGED_DASHBOARD_CHANGED=0
 trap - EXIT
 rm -f "$RESTORE_MARKER"
 flock -u 9
-

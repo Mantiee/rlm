@@ -255,4 +255,3 @@ def test_learning_panel_displays_optimizer_receipt_freshness_separately():
 
     assert "Last confirmed optimizer receipt" in PAGE
     assert "Optimizer receipt detail" in PAGE
-

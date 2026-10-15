@@ -121,4 +121,3 @@ def test_recovery_release_keeps_resource_policy_and_has_package_rollback(release
         text=True,
     )
     assert parsed.returncode == 0, parsed.stderr
-
