@@ -157,9 +157,12 @@ def test_100_pln_preview_explains_scaled_model_proposal_and_no_best_claim():
 
     if not shutil.which("node"):
         pytest.skip("Node unavailable")
-    function = "function paperCapitalPreview(data){" + SCRIPT.split(
-        "function paperCapitalPreview(data){", 1
-    )[1].split("function insightsView(data){", 1)[0]
+    function = (
+        "function paperCapitalPreview(data){"
+        + SCRIPT.split("function paperCapitalPreview(data){", 1)[1].split(
+            "function insightsView(data){", 1
+        )[0]
+    )
     program = r"""
 class Element { constructor(tag){this.tagName=tag;this.children=[];this.style={};this.dataset={};this.attributes={};this.textContent=''} append(...nodes){this.children.push(...nodes)} replaceChildren(...nodes){this.children=nodes} setAttribute(key,value){this.attributes[key]=value} }
 const nodes={'live-mission-board':new Element('section')};let created;

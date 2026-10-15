@@ -251,9 +251,7 @@ def paper_activity_stream(events: list[dict], pending_orders: int | None) -> dic
                         for value in (action, proposal.get("symbol"), source)
                         if value is not None
                     ),
-                    "proposal": proposal_receipt(
-                        proposal, payload, source, "recorded"
-                    ),
+                    "proposal": proposal_receipt(proposal, payload, source, "recorded"),
                 }
             )
             if action in attempt_actions:
