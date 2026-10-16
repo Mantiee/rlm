@@ -211,6 +211,11 @@ def test_standalone_work_ignores_history_and_output_recovery_cannot_apply_plans(
         }
 
     client.request = request
+    # This case isolates conversation history and output recovery; serving
+    # process/receipt identity has independent tests.
+    monkeypatch.setattr(
+        mission_chat, "assert_served_expert", lambda client, profile, root: client.request("/props")
+    )
     monkeypatch.setattr(competition, "helper_client", lambda *a: client)
     seen = []
 
@@ -273,7 +278,7 @@ def test_phone_signin_is_not_serve_readiness(tmp_path, monkeypatch, configured):
         {
             "owner_login": "owner",
             "origin": "https://" + host,
-            "dashboard": "http://192.168.0.68:8765",
+            "dashboard": "http://127.0.0.1:8765",
         },
     )
 
@@ -292,3 +297,20 @@ def test_phone_signin_is_not_serve_readiness(tmp_path, monkeypatch, configured):
     if not configured:
         assert "approve" in result["next_step"] and "Serve" in result["blockers"][0]
     assert "iPhone" in result["scope"]
+
+
+@pytest.mark.parametrize(
+    "message", ["zaczniesz zarabiać w końcu?", "kiedy zaczniesz zarabiać?", "Kiedy zarobisz?"]
+)
+def test_income_progress_question_needs_no_model(tmp_path, monkeypatch, message):
+    observed = {"answer": "Recorded evidence only.", "actions": [], "applied": []}
+    monkeypatch.setattr(chat_progress, "respond", lambda root, question: observed)
+    assert mission_chat.direct_facts(tmp_path, message) == observed
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["zacznij zarabiać", "uruchom handel i zaczniesz zarabiać?", "kup BTC, kiedy zarobisz?"],
+)
+def test_income_action_is_not_silently_replaced_with_status(message):
+    assert not chat_progress.requested(message)

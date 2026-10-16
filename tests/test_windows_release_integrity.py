@@ -16,6 +16,7 @@ def test_every_release_file_downloads_with_its_published_hash(tmp_path, monkeypa
     payloads = {}
     for name, expected in manifest["files"].items():
         content = (ROOT / name).read_bytes()
+        assert b"\r\n" not in content, f"Release artifact must preserve LF on every OS: {name}"
         assert hashlib.sha256(content).hexdigest() == expected, name
         payloads[name] = content
     module = bootstrap(monkeypatch)

@@ -1,6 +1,8 @@
 """Read-only, bounded training evidence for the operator and research agents."""
 
+import hashlib
 import json
+import math
 import sqlite3
 from pathlib import Path
 
@@ -86,51 +88,9 @@ def collect(root: Path) -> dict:
                     {"path": str(path), "summary": "Unavailable within read budget"}
                 )
                 result["errors"].append({"path": str(path), "detail": str(error)[:300]})
-        paths = sorted(
-            (run / "learning").glob("update-*/**/training_health.json"),
-            key=lambda path: path.stat().st_mtime_ns,
-            reverse=True,
-        )
-        result["training_runs_omitted"] = max(0, len(paths) - 24)
-        for path in paths[:24]:
-            try:
-                health = read_record(path)
-                counters = {
-                    key: health.get(key)
-                    for key in (
-                        "attempted_steps",
-                        "optimizer_updates",
-                        "amp_skipped_steps",
-                        "finite_gradient_steps",
-                    )
-                }
-                if any(type(value) is not int or value < 0 for value in counters.values()):
-                    raise ValueError("Missing or invalid optimizer counters")
-                if (
-                    counters["attempted_steps"]
-                    != counters["optimizer_updates"] + counters["amp_skipped_steps"]
-                ):
-                    raise ValueError("Inconsistent optimizer counters")
-                evidence = {"path": str(path), **counters}
-                retention = path.parent / "retention.json"
-                if retention.exists():
-                    record = read_record(retention)
-                    evidence["retention"] = {
-                        "path": str(retention),
-                        "configuration": record.get("configuration"),
-                        "fisher_samples": record.get("fisher_samples"),
-                        "scope": "Configured reference; not proof of retention or promotion",
-                    }
-                growth = path.parent / "capacity-growth.json"
-                if growth.exists():
-                    evidence["capacity_growth"] = {"path": str(growth), **read_record(growth)}
-                result["training_runs"].append(evidence)
-            except (ValueError, OSError) as error:
-                result["errors"].append({"path": str(path), "detail": str(error)[:300]})
-        if result["training_runs"]:
-            result["optimizer_updates_observed"] = sum(
-                row["optimizer_updates"] for row in result["training_runs"]
-            )
+        training = training_receipts(run)
+        result["errors"].extend(training.pop("errors"))
+        result.update(training)
         for row in cycles[-4:]:
             if row.get("detail"):
                 result["errors"].append(
@@ -156,4 +116,95 @@ def collect(root: Path) -> dict:
             )
         except (ValueError, OSError) as error:
             result["errors"].append({"path": str(path), "detail": str(error)[:300]})
+    return result
+
+
+def training_receipts(run: Path) -> dict:
+    """Read current-run numerical evidence without aggregate financial/goal audits."""
+    result = {
+        "optimizer_updates_observed": None,
+        "optimizer_receipt_updated_at": None,
+        "training_runs": [],
+        "errors": [],
+    }
+    paths = sorted(
+        (run / "learning").glob("update-*/**/training_health.json"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    result["training_runs_omitted"] = max(0, len(paths) - 24)
+    for path in paths[:24]:
+        try:
+            health = read_record(path)
+            counters = {
+                key: health.get(key)
+                for key in (
+                    "attempted_steps",
+                    "optimizer_updates",
+                    "amp_skipped_steps",
+                    "finite_gradient_steps",
+                )
+            }
+            if any(type(value) is not int or value < 0 for value in counters.values()):
+                raise ValueError("Missing or invalid optimizer counters")
+            if (
+                counters["attempted_steps"]
+                != counters["optimizer_updates"] + counters["amp_skipped_steps"]
+            ):
+                raise ValueError("Inconsistent optimizer counters")
+            evidence = {"path": str(path), **counters}
+            updated_at = health.get("updated_at")
+            if type(updated_at) in (int, float) and math.isfinite(updated_at) and updated_at > 0:
+                evidence["updated_at"] = float(updated_at)
+                previous = result["optimizer_receipt_updated_at"]
+                if previous is None or updated_at > previous:
+                    result["optimizer_receipt_updated_at"] = float(updated_at)
+            else:
+                evidence["updated_at"] = None
+            manifest_path = path.parent / "manifest.json"
+            checkpoint_receipts = []
+            if manifest_path.is_file():
+                manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+                for complete_path in sorted(path.parent.glob("checkpoint-*/complete.json")):
+                    complete = read_record(complete_path)
+                    checkpoint = complete_path.parent
+                    try:
+                        checkpoint_step = int(checkpoint.name.removeprefix("checkpoint-"))
+                    except ValueError:
+                        continue
+                    required = (
+                        "trainer_state.json",
+                        "optimizer.pt",
+                        "scheduler.pt",
+                        "rng_state.pth",
+                    )
+                    if (
+                        type(complete.get("step")) is int
+                        and complete["step"] == checkpoint_step
+                        and complete.get("manifest_sha256") == manifest_sha256
+                        and all((checkpoint / name).is_file() for name in required)
+                    ):
+                        checkpoint_receipts.append(
+                            {"step": checkpoint_step, "path": str(checkpoint)}
+                        )
+            evidence["checkpoints"] = checkpoint_receipts
+            retention = path.parent / "retention.json"
+            if retention.exists():
+                record = read_record(retention)
+                evidence["retention"] = {
+                    "path": str(retention),
+                    "configuration": record.get("configuration"),
+                    "fisher_samples": record.get("fisher_samples"),
+                    "scope": "Configured reference; not proof of retention or promotion",
+                }
+            growth = path.parent / "capacity-growth.json"
+            if growth.exists():
+                evidence["capacity_growth"] = {"path": str(growth), **read_record(growth)}
+            result["training_runs"].append(evidence)
+        except (ValueError, OSError) as error:
+            result["errors"].append({"path": str(path), "detail": str(error)[:300]})
+    if result["training_runs"]:
+        result["optimizer_updates_observed"] = sum(
+            row["optimizer_updates"] for row in result["training_runs"]
+        )
     return result

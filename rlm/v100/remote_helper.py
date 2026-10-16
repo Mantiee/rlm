@@ -37,9 +37,21 @@ ROLE_MODELS = {
     "qwen3.6:35b-a3b-q4_K_M": ("Q4_K_M", 21),
 }
 BACKEND = "ollama-research"
+WINDOWS_3090_ORIGIN = "http://192.168.0.61:11435"
+REMOTE_ORIGIN_POLICY_KEY = "remote_origin_enabled"
 HELPER_WORKLOAD_LOCK = threading.Lock()
 DEDICATED_WORKLOAD_LOCKS: dict[str, threading.Lock] = {}
 HELPER_PACING: dict[str, dict] = {}
+
+
+class OwnedGpuCooldown(requests.HTTPError):
+    """An explicit pre-admission rejection that can safely return to the queue."""
+
+    def __init__(self, message: str, response, retry_after_seconds: int):
+        super().__init__(message, response=response)
+        self.retry_after_seconds = retry_after_seconds
+
+
 FULL_METADATA = "ollama-full-v1"
 STABLE_METADATA = "ollama-stable-v2"
 ORDERED_METADATA = "ollama-canonical-v3"
@@ -94,6 +106,29 @@ def private_origin(value: str) -> str:
     ):
         raise ValueError("Remote helper requires an explicit private IPv4 HTTP origin and port")
     return value.rstrip("/")
+
+
+def origin_enabled(root: Path | None, value: str) -> bool:
+    """Apply Synta's persistent per-origin policy before a remote client is built.
+
+    The stopped Windows RTX 3090 is opt-in only. Other private origins remain
+    available by default, with an explicit false value serving as an opt-out.
+    """
+    origin = private_origin(value)
+    if root is None:
+        return origin != WINDOWS_3090_ORIGIN
+    try:
+        from rlm.v100.mission_chat import preferences
+
+        configured = preferences(root).get(REMOTE_ORIGIN_POLICY_KEY, {})
+    except (OSError, ValueError, TypeError):
+        # An unreadable policy must never silently re-enable the stopped host.
+        return origin != WINDOWS_3090_ORIGIN
+    if not isinstance(configured, dict):
+        return origin != WINDOWS_3090_ORIGIN
+    if origin == WINDOWS_3090_ORIGIN:
+        return configured.get(origin) is True
+    return configured.get(origin) is not False
 
 
 def remote_profile(profile: dict) -> bool:
@@ -385,48 +420,89 @@ class OllamaResearchClient(LlamaCppClient):
                         str(context.get("chat_request_id", context.get("request_id", ""))),
                     )[:64],
                 }
-            with method(
-                self.base_url + endpoint,
-                timeout=(min(5, self.remaining_timeout()), self.remaining_timeout()),
-                allow_redirects=False,
-                stream=True,
-                **arguments,
-            ) as response:
-                if 300 <= response.status_code < 400:
-                    raise ValueError("Remote helper redirected the request")
-                try:
-                    response.raise_for_status()
-                except requests.HTTPError as failure:
-                    body = bytearray()
-                    for block in response.iter_content(512):
-                        body.extend(block)
-                        if len(body) > 2048:
-                            break
-                    detail = None
-                    if len(body) <= 2048:
-                        try:
-                            packet = json.loads(body)
-                        except (ValueError, UnicodeError):
-                            packet = None
-                        if isinstance(packet, dict) and isinstance(packet.get("error"), str):
-                            detail = packet["error"][:300]
-                    if detail:
-                        raise requests.HTTPError(
-                            str(failure) + "; remote error: " + detail,
-                            response=response,
-                            request=failure.request,
-                        ) from failure
-                    raise
-                if endpoint == "/api/chat" and data and data.get("stream"):
-                    from rlm.v100.streaming import ollama_reply
+            for attempt in range(2):
+                with method(
+                    self.base_url + endpoint,
+                    timeout=(min(5, self.remaining_timeout()), self.remaining_timeout()),
+                    allow_redirects=False,
+                    stream=True,
+                    **arguments,
+                ) as response:
+                    if 300 <= response.status_code < 400:
+                        raise ValueError("Remote helper redirected the request")
+                    try:
+                        response.raise_for_status()
+                    except requests.HTTPError as failure:
+                        body = bytearray()
+                        for block in response.iter_content(512):
+                            body.extend(block)
+                            if len(body) > 2048:
+                                break
+                        packet = None
+                        if len(body) <= 2048:
+                            try:
+                                packet = json.loads(body)
+                            except (ValueError, UnicodeError):
+                                pass
+                        detail = (
+                            packet.get("error")
+                            if isinstance(packet, dict) and isinstance(packet.get("error"), str)
+                            else None
+                        )
+                        resources = packet.get("resources") if isinstance(packet, dict) else None
+                        cooldown = (
+                            resources.get("cooldown_seconds")
+                            if isinstance(resources, dict)
+                            else None
+                        )
+                        explicit_admission = (
+                            response.status_code == 503
+                            and endpoint == "/api/chat"
+                            and data is not None
+                            and detail is not None
+                            and detail.startswith("Owned GPU cooldown:")
+                            and isinstance(resources, dict)
+                            and resources.get("contract") == "synta-adaptive-windows-v1"
+                            and resources.get("ready") is True
+                            and type(cooldown) in (int, float)
+                            and math.isfinite(cooldown)
+                            and 0 < cooldown <= 300
+                        )
+                        if explicit_admission and attempt == 0:
+                            # The proxy rejects this request before forwarding it.
+                            # Its published snapshot may lag by one sensor interval.
+                            delay = cooldown + 2.1
+                            if delay < self.remaining_timeout():
+                                time.sleep(delay)
+                                continue
+                        if explicit_admission:
+                            # Both attempts were rejected before proxy admission. Preserve
+                            # that distinction so the owning worker can requeue this
+                            # read-only turn instead of recording a terminal model error.
+                            retry_after = max(15, min(600, math.ceil(cooldown + 2.1)))
+                            raise OwnedGpuCooldown(
+                                str(failure) + "; remote error: " + detail,
+                                response,
+                                retry_after,
+                            ) from failure
+                        if detail:
+                            raise requests.HTTPError(
+                                str(failure) + "; remote error: " + detail,
+                                response=response,
+                                request=failure.request,
+                            ) from failure
+                        raise
+                    if endpoint == "/api/chat" and data and data.get("stream"):
+                        from rlm.v100.streaming import ollama_reply
 
-                    return ollama_reply(response.iter_lines(chunk_size=128), self.stream_delta)
-                body = bytearray()
-                for block in response.iter_content(65536):
-                    body.extend(block)
-                    if len(body) > 2 * 1024**2:
-                        raise ValueError("Remote helper response exceeds its byte budget")
-                result = json.loads(body)
+                        return ollama_reply(response.iter_lines(chunk_size=128), self.stream_delta)
+                    body = bytearray()
+                    for block in response.iter_content(65536):
+                        body.extend(block)
+                        if len(body) > 2 * 1024**2:
+                            raise ValueError("Remote helper response exceeds its byte budget")
+                    result = json.loads(body)
+                    break
         if not isinstance(result, dict) or result.get("error"):
             raise ValueError("Remote helper returned an invalid response")
         return result

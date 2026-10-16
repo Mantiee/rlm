@@ -1,3 +1,4 @@
+# IPv4 addresses below are synthetic fixtures; no test contacts these hosts.
 import json
 
 import pytest
@@ -27,9 +28,13 @@ def test_full_windows_throughput_requires_explicit_opt_in():
         remote_helper.validate_workload(256, 100, throughput_mode="true")
 
 
-def test_retired_remote_production_routes_to_unavailability(tmp_path):
+def test_retired_remote_production_routes_to_unavailability(tmp_path, monkeypatch):
     atomic_json(tmp_path / "research/model-roles/model-policy.json", {"version": 90})
-    profile = {"runtime": {"model_name": "qwen3.5:9b-q8_0"}, "resources": {"device": "remote"}}
+    profile = {
+        "runtime": {"model_name": "qwen3.5:9b-q8_0", "base_url": "http://helper.invalid:11435"},
+        "resources": {"device": "remote"},
+    }
+    monkeypatch.setattr(remote_helper, "origin_enabled", lambda root, url: True)
     with pytest.raises(requests.ConnectionError, match="Retired remote"):
         competition.helper_client(profile, tmp_path)
 
@@ -62,7 +67,7 @@ def test_gemma_identity_does_not_accept_qwen_tokenizer():
         "template": "fixed template",
     }
     client = remote_helper.OllamaResearchClient(
-        base_url="http://192.168.0.61:11435",
+        base_url="http://10.0.0.1:11435",
         model_name="gemma4:e2b-it-q4_K_M",
         model_digest="a" * 64,
         metadata_sha256="",

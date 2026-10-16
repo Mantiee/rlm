@@ -16,6 +16,18 @@ PENDING = "readonly-pending"
 RUNNING = "readonly-running"
 
 
+class PlannerOriginDisabled(RuntimeError):
+    """A previously admitted planner is excluded by the current origin policy."""
+
+
+def planner_origin_enabled(root: Path, path: Path) -> bool:
+    from rlm.v100.common import load_profile
+    from rlm.v100.remote_helper import origin_enabled, remote_profile
+
+    profile = load_profile(path, root)
+    return not remote_profile(profile) or origin_enabled(root, profile["runtime"]["base_url"])
+
+
 def submit(root: Path, message: str) -> str | None:
     from rlm.v100.chat_resources import instruction
     from rlm.v100.mission_chat import preferences
@@ -30,7 +42,8 @@ def submit(root: Path, message: str) -> str | None:
         return None
     if not (root / "research/model-roles/active.json").is_file():
         return None
-    if selected_profile(root, "planner") is None:
+    planner = selected_profile(root, "planner")
+    if planner is None or not planner_origin_enabled(root, planner):
         return None
     identity = uuid.uuid4().hex
     with connect(root) as db:
@@ -68,6 +81,8 @@ def response(root: Path, row: dict) -> dict:
     path = selected_profile(root, "planner")
     if path is None:
         raise requests.ConnectionError("Waiting for an admitted planner")
+    if not planner_origin_enabled(root, path):
+        raise PlannerOriginDisabled("Planner origin disabled; use the accepted local fallback")
     client = helper_client(load_profile(path, root), root)
     client.request_deadline = time.monotonic() + 90
     client.timeout = min(client.timeout, 5)
@@ -138,8 +153,9 @@ def work(root: Path, stop: threading.Event) -> None:
                     and failure.response is not None
                     and failure.response.status_code in (502, 503)
                 )
-                if isinstance(failure, requests.ConnectionError) and "heavy game running" in str(
-                    failure
+                if isinstance(failure, PlannerOriginDisabled) or (
+                    isinstance(failure, requests.ConnectionError)
+                    and "heavy game running" in str(failure)
                 ):
                     # This saved request is action-free. The command worker can
                     # use the accepted CPU fallback under the operator's policy.

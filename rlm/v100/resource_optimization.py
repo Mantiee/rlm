@@ -1,11 +1,11 @@
 """Execute bounded resource tuning directly, without an LLM choosing an unrelated experiment."""
 
-import fcntl
 import json
 import re
 import time
 from pathlib import Path
 
+from rlm.v100 import file_lock as fcntl
 from rlm.v100.chat_goals import normalized
 from rlm.v100.common import atomic_json
 

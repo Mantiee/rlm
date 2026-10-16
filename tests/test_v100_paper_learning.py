@@ -69,6 +69,28 @@ def test_bridge_preserves_bankroll_uses_one_lease_and_detects_goal_changes(tmp_p
     book.close()
 
 
+def test_decision_round_writes_attempt_receipts_visible_to_dashboard(tmp_path, monkeypatch):
+    from rlm.v100 import paper_agents
+    from rlm.v100.financial_snapshot import live_ledger
+
+    book = PaperBook(tmp_path)
+    book.initialize()
+    book.close()
+    path = tmp_path / "settings.json"
+    atomic_json(path, settings())
+    monkeypatch.setattr(paper_agents, "paper_decision_round", lambda *args: [])
+
+    session = paper_learning.PaperLearning(tmp_path, path)
+    result = session.decision_round({"runtime": {"model_version": "test-model"}}, cycle=3)
+
+    assert result["status"] == "decision-round-completed"
+    assert result["decisions_recorded"] == 0
+    attempt = live_ledger(tmp_path)["last_decision_attempt"]
+    assert attempt["status"] == "decision-round-completed"
+    assert attempt["cycle"] == 3
+    assert attempt["model_version"] == "test-model"
+
+
 def test_crypto_poll_requires_registered_sources_and_fees(tmp_path):
     book = PaperBook(tmp_path)
     book.initialize()

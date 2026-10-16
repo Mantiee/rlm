@@ -261,9 +261,25 @@ def run(root: Path, branch: str, arguments: dict, *, source_snapshot: tuple | No
         )
     from rlm.v100.protection import file_hash
 
+    normalized_data_sha256 = hashlib.sha256(
+        json.dumps({"bars": bars, "events": events}, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    source_snapshot_sha256 = hashlib.sha256(
+        json.dumps(
+            [{"url": source["url"], "sha256": source["sha256"]} for source in sources],
+            sort_keys=True,
+            default=str,
+        ).encode()
+    ).hexdigest()
     key = hashlib.sha256(
         json.dumps(
-            {"parameters": arguments, "bars": bars, "events": events}, sort_keys=True, default=str
+            {
+                "parameters": arguments,
+                "normalized_data_sha256": normalized_data_sha256,
+                "source_snapshot_sha256": source_snapshot_sha256,
+            },
+            sort_keys=True,
+            default=str,
         ).encode()
     ).hexdigest()
     cache = root / "research/backtests/cache" / (key + ".json")
@@ -363,13 +379,19 @@ def run(root: Path, branch: str, arguments: dict, *, source_snapshot: tuple | No
     directory = root / "research/backtests" / ("run-" + uuid.uuid4().hex[:12])
     directory.mkdir(parents=True)
     for index, source in enumerate(sources):
-        (directory / f"source-{index}.json").write_text(source["body"])
+        (directory / f"source-{index}.json").write_bytes(source["body"].encode("utf-8"))
     result = {
         "branch": branch,
         "walk_forward": folds,
         "cache_reused": False,
         "fetched_at": now.isoformat(),
         "parameters": arguments,
+        "normalized_data_sha256": normalized_data_sha256,
+        "source_snapshot_sha256": source_snapshot_sha256,
+        "evidence_note": (
+            "Matching normalized-data hashes identify analytically equivalent inputs; "
+            "repeated or byte-distinct snapshots are not independent evidence."
+        ),
         "sources": [
             {key: value for key, value in source.items() if key != "body"} for source in sources
         ],

@@ -133,7 +133,9 @@ def test_legacy_chat_migration_safe_with_concurrent_readers(tmp_path):
         assert all(pool.map(read, range(8)))
 
 
-def test_readiness_wait_releases_next_question_and_preserves_deferred_request(tmp_path, monkeypatch):
+def test_readiness_wait_releases_next_question_and_preserves_deferred_request(
+    tmp_path, monkeypatch
+):
     first = mission_chat.submit(tmp_path, "waiting")
     second = mission_chat.submit(tmp_path, "facts")
     seen = []
@@ -144,13 +146,22 @@ def test_readiness_wait_releases_next_question_and_preserves_deferred_request(tm
             raise mission_chat.BackendNotReady("waiting for accepted weights")
         return {"answer": "facts", "actions": [], "applied": []}
 
-    monkeypatch.setattr(mission_chat, "respond", respond)
+    # This test exercises queue/retry handling, not accepted-profile acquisition.
+    monkeypatch.setattr(
+        mission_chat,
+        "_respond_with_lifecycle",
+        lambda root, directory, request, accepted_cpu=None: respond(root, directory, request),
+    )
 
     class Stop:
+        calls = 0
+
         def wait(self, seconds):
-            return len(seen) >= 2
+            self.calls += 1
+            return len(seen) >= 2 or self.calls > 6
 
     mission_chat.service_loop(tmp_path, tmp_path, Stop())
+    assert seen == [first, second]
     assert mission_chat.inspect(tmp_path, first)["wait_started"] > 0
     assert mission_chat.inspect(tmp_path, second)["state"] == "completed"
     with mission_chat.connect(tmp_path) as db:
@@ -158,10 +169,14 @@ def test_readiness_wait_releases_next_question_and_preserves_deferred_request(tm
     seen.clear()
 
     class One:
+        calls = 0
+
         def wait(self, seconds):
-            return bool(seen)
+            self.calls += 1
+            return bool(seen) or self.calls > 3
 
     mission_chat.service_loop(tmp_path, tmp_path, One())
+    assert seen == [first]
     assert mission_chat.inspect(tmp_path, first)["state"] == "queued"
 
 

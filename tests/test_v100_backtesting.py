@@ -42,6 +42,35 @@ def test_backtest_selects_parameters_only_before_chronological_split(tmp_path, m
     assert "not verified financial training labels" in first["scope"]
 
 
+def test_cache_binds_exact_source_snapshot_and_tracks_normalized_data(tmp_path):
+    data = candles()
+    url = "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600"
+    compact_body = json.dumps(data, separators=(",", ":"))
+    spaced_body = json.dumps(data, indent=2)
+    args = {
+        "price_url": url,
+        "event_url": "",
+        "rule": "momentum",
+        "fee_bps": 40,
+        "slippage_bps": 10,
+    }
+
+    first = backtesting.run(tmp_path, "A", args, source_snapshot=(url, compact_body))
+    second = backtesting.run(tmp_path, "B", args, source_snapshot=(url, spaced_body))
+
+    assert first["cache_reused"] is False
+    assert second["cache_reused"] is False
+    assert first["normalized_data_sha256"] == second["normalized_data_sha256"]
+    assert first["source_snapshot_sha256"] != second["source_snapshot_sha256"]
+    assert first["sources"][0]["sha256"] != second["sources"][0]["sha256"]
+    assert Path(second["report"]).parent.joinpath(
+        "source-0.json"
+    ).read_bytes() == spaced_body.encode("utf-8")
+    saved = json.loads(Path(second["report"]).read_text())
+    assert saved["sources"][0]["sha256"] == second["sources"][0]["sha256"]
+    assert "not independent evidence" in second["evidence_note"]
+
+
 def test_future_prices_and_unpublished_events_cannot_change_earlier_signals():
     bars = backtesting.bars_from_source(
         "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600",

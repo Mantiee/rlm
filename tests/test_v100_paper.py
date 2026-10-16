@@ -2,13 +2,15 @@ import copy
 import hashlib
 import json
 import sqlite3
+import threading
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
-from rlm.v100 import paper_agents, paper_feeds, paper_tools
+from rlm.v100 import paper, paper_agents, paper_feeds, paper_tools
+from rlm.v100.execution_cost_gate import execution_cost_blocker
 from rlm.v100.paper import FEE_FIELDS, PaperBook, fee_total
 from rlm.v100.paper_reports import scheduled_reports, summarize, write_report
 
@@ -76,6 +78,17 @@ def setup(tmp_path, product="spot", market="crypto", fee_changes=None):
     return book, clock, config
 
 
+def allow_cost_math_only(monkeypatch):
+    """Isolate simulated accounting tests from the independent evidence gate.
+
+    The configured trust root is intentionally empty, so ordinary synthetic
+    fixtures must never authorize a fill. Tests using this helper exercise
+    downstream paper mechanics only; gate behavior is covered separately with
+    the real execution_cost_blocker and unpatched mutation boundaries.
+    """
+    monkeypatch.setattr(paper, "execution_cost_blocker", lambda _profile, _quote: None)
+
+
 def quote(clock, price="100", symbol="TEST", product="spot", previous=None, size="100", **extras):
     result = {
         "kind": "quote",
@@ -114,7 +127,10 @@ def decide(book, action="open", branch="A", budget="400", leverage="1", symbol="
     )
 
 
-def test_decision_is_sealed_before_next_quote_and_reopen_preserves_portfolios(tmp_path):
+def test_decision_is_sealed_before_next_quote_and_reopen_preserves_portfolios(
+    tmp_path, monkeypatch
+):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(tmp_path)
     book.ingest(quote(clock))
     event = decide(book)
@@ -131,6 +147,148 @@ def test_decision_is_sealed_before_next_quote_and_reopen_preserves_portfolios(tm
     with pytest.raises(FileExistsError, match="reset"):
         reopened.initialize()
     reopened.close()
+
+
+def test_each_quote_records_fresh_non_executable_hold_for_both_branches(tmp_path):
+    book, clock, _ = setup(tmp_path)
+    observation = book.ingest(quote(clock))
+
+    events = book.events()
+    decisions = [event for event in events if event["kind"] == "decision"]
+    assert [event["branch"] for event in decisions] == ["A", "B"]
+    assert all(
+        event["payload"]["proposal"]["action"] == "hold"
+        and event["payload"]["proposal"]["receipt_source"] == "host-quote-freshness-guard"
+        and event["payload"]["proposal"]["quote_sequence"] == observation["sequence"]
+        and event["payload"]["decision_inputs"]["quote_sequence"] == observation["sequence"]
+        for event in decisions
+    )
+    state = book.state()
+    profile = state["fee_profiles"][state["instruments"]["TEST"]["fee_profile"]]
+    assert execution_cost_blocker(profile, observation["payload"]["observation"])
+    assert state["branches"]["A"]["positions"] == {}
+    assert state["branches"]["B"]["positions"] == {}
+    assert not observation["payload"]["trades"]
+    book.close()
+
+
+def test_fast_decision_round_records_model_activity_for_each_branch(tmp_path, monkeypatch):
+    book, clock, _ = setup(tmp_path)
+    book.ingest(quote(clock))
+    monkeypatch.setattr(paper_agents, "helper_client", lambda *args: SimpleNamespace())
+    monkeypatch.setattr(
+        paper_agents,
+        "native_turn",
+        lambda *args, **kwargs: {
+            "content": json.dumps(
+                {
+                    "action": "hold",
+                    "symbol": "TEST",
+                    "side": "long",
+                    "budget": 0,
+                    "leverage": 1,
+                    "rationale": "No validated edge; preserve the paper balance.",
+                    "accepted_research": [],
+                }
+            )
+        },
+    )
+    from rlm.v100 import mission_chat
+
+    monkeypatch.setattr(mission_chat, "emit_alert", lambda *args: None)
+    profile = {"runtime": {"model_version": "test-model", "max_output_tokens": 512}}
+
+    result = paper_agents.paper_decision_round(book, profile)
+
+    assert len(result) == 2
+    assert all(
+        event["payload"]["proposal"]["proposal_source"] == "model-proposal"
+        and event["payload"]["proposal"]["action"] == "hold"
+        for event in result
+    )
+    assert book.state()["orders"] == []
+    book.close()
+
+
+def test_fast_model_trade_proposal_is_recorded_as_hold_when_costs_are_unknown(
+    tmp_path, monkeypatch
+):
+    book, clock, _ = setup(tmp_path)
+    book.ingest(quote(clock))
+    monkeypatch.setattr(paper_agents, "helper_client", lambda *args: SimpleNamespace())
+    monkeypatch.setattr(
+        paper_agents,
+        "native_turn",
+        lambda *args, **kwargs: {
+            "content": json.dumps(
+                {
+                    "action": "open",
+                    "symbol": "TEST",
+                    "side": "long",
+                    "budget": 400,
+                    "leverage": 1,
+                    "rationale": "Test candidate only.",
+                    "accepted_research": [],
+                }
+            )
+        },
+    )
+    from rlm.v100 import mission_chat
+
+    monkeypatch.setattr(mission_chat, "emit_alert", lambda *args: None)
+    profile = {"runtime": {"model_version": "test-model", "max_output_tokens": 512}}
+
+    result = paper_agents.paper_decision_round(book, profile)
+
+    assert len(result) == 2
+    assert all(
+        event["payload"]["proposal"]["action"] == "hold"
+        and event["payload"]["proposal"]["model_action_blocked"] == "open"
+        and "Execution costs UNKNOWN" in event["payload"]["proposal"]["rationale"]
+        for event in result
+    )
+    assert book.state()["orders"] == []
+    book.close()
+
+
+def test_paper_loop_keeps_deciding_while_research_worker_runs(tmp_path, monkeypatch):
+    book, _, _ = setup(tmp_path)
+    book.close()
+    release_research = threading.Event()
+    decision_cycles = []
+    research_started = []
+
+    def decision_round(*args):
+        decision_cycles.append(len(decision_cycles))
+        if len(decision_cycles) == 2:
+            release_research.set()
+        return []
+
+    def research_worker(*args):
+        research_started.append(True)
+        assert release_research.wait(timeout=2)
+        return []
+
+    ticks = iter((0, 60, 120, 180))
+    monkeypatch.setattr(paper_agents.time, "monotonic", lambda: next(ticks, 240))
+    monkeypatch.setattr(paper_agents.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(paper_agents, "paper_decision_round", decision_round)
+    monkeypatch.setattr(paper_agents, "_paper_research_worker", research_worker)
+    monkeypatch.setattr(paper_agents, "scheduled_reports", lambda *_: [])
+    monkeypatch.setattr(paper_agents, "write_report", lambda *_: "test report")
+    monkeypatch.setattr(paper_feeds, "poll_crypto", lambda *_: [])
+
+    paper_agents.paper_loop(
+        tmp_path,
+        {"runtime": {"model_version": "test"}},
+        None,
+        interval=30,
+        cycles=2,
+        crypto=True,
+    )
+
+    assert decision_cycles == [0, 1]
+    assert research_started == [True]
 
 
 def test_unknown_expired_or_asymmetric_fees_are_not_ignored(tmp_path):
@@ -163,7 +321,53 @@ def test_unknown_expired_or_asymmetric_fees_are_not_ignored(tmp_path):
     book.close()
 
 
-def test_net_profit_includes_both_sides_fees_spread_and_slippage(tmp_path):
+def test_decision_rejects_unknown_execution_costs_without_mutating_ledger(tmp_path):
+    book, clock, _ = setup(tmp_path)
+    book.ingest(quote(clock))
+    before_state = copy.deepcopy(book.state())
+    before_sequence = book.sequence()
+
+    with pytest.raises(ValueError, match="Execution costs UNKNOWN"):
+        decide(book)
+
+    assert book.state() == before_state
+    assert book.sequence() == before_sequence
+    assert book.state()["orders"] == []
+    book.close()
+
+
+def test_legacy_pending_order_is_cancelled_when_costs_are_unknown(tmp_path):
+    book, clock, _ = setup(tmp_path)
+    first = book.ingest(quote(clock))
+    state = book.state()
+    state["orders"].append(
+        {
+            "id": "legacy-unverified-order",
+            "branch": "A",
+            "symbol": "TEST",
+            "action": "open",
+            "side": "long",
+            "leverage": "1",
+            "remaining_budget": "400",
+            "created_at": first["payload"]["observation"]["available_at"],
+        }
+    )
+    clock.advance()
+    next_quote = quote(clock)
+
+    trades = book.fill_orders(state, "TEST", next_quote)
+
+    assert len(trades) == 1
+    assert trades[0]["action"] == "cancel"
+    assert trades[0]["reason"] == "unverified-execution-costs"
+    assert "Execution costs UNKNOWN" in trades[0]["detail"]
+    assert state["orders"] == []
+    assert state["branches"]["A"]["positions"] == {}
+    book.close()
+
+
+def test_net_profit_includes_both_sides_fees_spread_and_slippage(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(
         tmp_path,
         fee_changes={
@@ -189,7 +393,10 @@ def test_net_profit_includes_both_sides_fees_spread_and_slippage(tmp_path):
     book.close()
 
 
-def test_partial_fill_is_limited_by_liquidity_and_remaining_budget_is_reserved(tmp_path):
+def test_partial_fill_is_limited_by_liquidity_and_remaining_budget_is_reserved(
+    tmp_path, monkeypatch
+):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(tmp_path)
     book.ingest(quote(clock))
     decide(book)
@@ -249,7 +456,24 @@ def test_stale_decision_context_and_editing_history_are_rejected(tmp_path):
     book.close()
 
 
-def test_diversification_counts_pending_correlated_exposure(tmp_path):
+def test_paper_event_sequence_is_contiguous(tmp_path):
+    book, clock, _ = setup(tmp_path)
+    events = book.events()
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+
+    # Tamper only with this temporary fixture: keep the event hash and relative
+    # order unchanged while creating a sequence gap that the ledger must reject.
+    book.db.execute("DROP TRIGGER immutable_events_update")
+    book.db.execute(
+        "UPDATE events SET sequence=sequence+1 WHERE sequence=(SELECT MAX(sequence) FROM events)"
+    )
+    with pytest.raises(ValueError, match="sequence is not contiguous"):
+        book.events()
+    book.close()
+
+
+def test_diversification_counts_pending_correlated_exposure(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, config = setup(tmp_path)
     for index in range(1, 5):
         instrument = {**config["instruments"][0], "symbol": f"TEST{index}"}
@@ -264,7 +488,10 @@ def test_diversification_counts_pending_correlated_exposure(tmp_path):
     book.close()
 
 
-def test_isolated_liquidation_cannot_drain_other_cash_and_uses_interval_extreme(tmp_path):
+def test_isolated_liquidation_cannot_drain_other_cash_and_uses_interval_extreme(
+    tmp_path, monkeypatch
+):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(tmp_path, product="isolated-linear")
     initial = quote(clock, product="isolated-linear")
     book.ingest(initial)
@@ -284,6 +511,93 @@ def test_isolated_liquidation_cannot_drain_other_cash_and_uses_interval_extreme(
     book.close()
 
 
+def test_legacy_liquidation_with_unverified_costs_is_blocked_not_booked(tmp_path):
+    book, clock, _ = setup(tmp_path, product="isolated-linear")
+    initial = quote(clock, product="isolated-linear")
+    state = book.state()
+    # Simulate a position persisted by an older version before the current
+    # execution-cost gate existed. Do not use the guarded fill API as a fixture.
+    state["branches"]["A"]["cash"] = "9600"
+    state["branches"]["A"]["positions"]["TEST"] = {
+        "side": "long",
+        "quantity": "12",
+        "entry": "100",
+        "margin": "400",
+        "allocation": "400",
+        "entry_costs": "0",
+        "carrying_costs": "0",
+        "opened_at": initial["available_at"],
+        "last_mark_at": initial["available_at"],
+        "order_id": "legacy-position",
+    }
+
+    clock.advance()
+    adverse = quote(
+        clock,
+        product="isolated-linear",
+        previous=initial["available_at"],
+        mark="40",
+        mark_low="40",
+        mark_high="40",
+    )
+    trades = book.mark_positions(state, "TEST", initial, adverse)
+
+    assert trades[0]["action"] == "liquidation-blocked"
+    assert "Execution costs UNKNOWN" in trades[0]["detail"]
+    assert "TEST" in state["branches"]["A"]["positions"]
+    assert state["branches"]["A"]["paused"] is True
+    book.close()
+
+
+def test_direct_open_position_cannot_bypass_execution_cost_gate(tmp_path):
+    book, clock, _ = setup(tmp_path)
+    quote_event = quote(clock)
+    state = book.state()
+    before = copy.deepcopy(state)
+    order = {
+        "id": "direct-open",
+        "side": "long",
+        "leverage": "1",
+        "remaining_budget": "400",
+    }
+    original_order = copy.deepcopy(order)
+    try:
+        with pytest.raises(ValueError, match="Execution costs UNKNOWN"):
+            book.open_position(
+                state, "A", "TEST", quote_event, order, Decimal("400"), Decimal("100")
+            )
+        assert state == before
+        assert order == original_order
+    finally:
+        book.close()
+
+
+@pytest.mark.parametrize("action", ["close", "liquidation"])
+def test_direct_close_position_cannot_bypass_execution_cost_gate(tmp_path, action):
+    book, clock, _ = setup(tmp_path)
+    quote_event = quote(clock)
+    state = book.state()
+    state["branches"]["A"]["positions"]["TEST"] = {
+        "side": "long",
+        "quantity": "1",
+        "entry": "100",
+        "margin": "100",
+        "allocation": "100",
+        "entry_costs": "0",
+        "carrying_costs": "0",
+        "opened_at": quote_event["available_at"],
+        "last_mark_at": quote_event["available_at"],
+        "order_id": "direct-close",
+    }
+    before = copy.deepcopy(state)
+    try:
+        with pytest.raises(ValueError, match="Execution costs UNKNOWN"):
+            book.close_position(state, "A", "TEST", quote_event, action, Decimal("1"))
+        assert state == before
+    finally:
+        book.close()
+
+
 @pytest.mark.parametrize("changed", [{"loss_cap": "account"}, {"auto_add_margin": True}])
 def test_unbounded_or_cross_margin_product_is_not_admitted(tmp_path, changed):
     clock = Clock()
@@ -296,7 +610,8 @@ def test_unbounded_or_cross_margin_product_is_not_admitted(tmp_path, changed):
     book.close()
 
 
-def test_settled_funding_is_charged_once_at_its_actual_mark(tmp_path):
+def test_settled_funding_is_charged_once_at_its_actual_mark(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(tmp_path, product="isolated-linear")
     first = quote(clock, product="isolated-linear")
     book.ingest(first)
@@ -321,7 +636,8 @@ def test_settled_funding_is_charged_once_at_its_actual_mark(tmp_path):
     book.close()
 
 
-def test_sports_tax_fees_and_independent_outcome_settlement(tmp_path):
+def test_sports_tax_fees_and_independent_outcome_settlement(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(
         tmp_path,
         product="bet",
@@ -353,7 +669,8 @@ def test_sports_tax_fees_and_independent_outcome_settlement(tmp_path):
     book.close()
 
 
-def test_stock_split_preserves_value_and_dividend_uses_past_entitlement(tmp_path):
+def test_stock_split_preserves_value_and_dividend_uses_past_entitlement(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(tmp_path, market="equities")
     book.ingest(quote(clock))
     decide(book)
@@ -398,7 +715,8 @@ def test_stock_split_preserves_value_and_dividend_uses_past_entitlement(tmp_path
     book.close()
 
 
-def test_reports_contain_audited_trades_charts_and_no_real_money_promotion(tmp_path):
+def test_reports_contain_audited_trades_charts_and_no_real_money_promotion(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(tmp_path)
     book.ingest(quote(clock))
     decide(book)
@@ -513,6 +831,7 @@ def test_tester_stress_is_read_only_and_uses_host_fees(tmp_path):
     # Tool's real clock is later than the fixture: keep the test clock explicit.
     factory = PaperBook
     monkeypatch = pytest.MonkeyPatch()
+    allow_cost_math_only(monkeypatch)
     monkeypatch.setattr(paper_tools, "PaperBook", lambda root: factory(root, clock))
     try:
         result = paper_tools.execute(
@@ -542,7 +861,8 @@ def test_tester_stress_is_read_only_and_uses_host_fees(tmp_path):
         book.close()
 
 
-def test_void_refunds_are_itemized_and_costs_reconcile(tmp_path):
+def test_void_refunds_are_itemized_and_costs_reconcile(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(
         tmp_path,
         product="bet",
@@ -569,7 +889,8 @@ def test_void_refunds_are_itemized_and_costs_reconcile(tmp_path):
     book.close()
 
 
-def test_winnings_below_declared_tax_threshold_are_not_flat_taxed(tmp_path):
+def test_winnings_below_declared_tax_threshold_are_not_flat_taxed(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     book, clock, _ = setup(
         tmp_path,
         product="bet",

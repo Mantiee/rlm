@@ -152,13 +152,19 @@ def test_missing_result_is_explicit_non_retryable_failure_and_real_archive_reads
 def test_empty_or_failed_reply_is_not_completed(tmp_path, monkeypatch, reply):
     identity = mission_chat.submit(tmp_path, "request")
     calls = []
-    monkeypatch.setattr(mission_chat, "respond", lambda *a: calls.append(1) or reply)
+    monkeypatch.setattr(
+        mission_chat, "_respond_with_lifecycle", lambda *a: calls.append(1) or reply
+    )
 
     class Stop:
+        checks = 0
+
         def wait(self, seconds):
-            return bool(calls)
+            self.checks += 1
+            return bool(calls) or self.checks > 3
 
     mission_chat.service_loop(tmp_path, tmp_path, Stop())
+    assert calls == [1]
     result = mission_chat.inspect(tmp_path, identity)
     assert result["state"] == "failed" and result["error"]
 

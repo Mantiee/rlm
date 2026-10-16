@@ -1,12 +1,15 @@
 """Local execution journals with explicit decisions and operator-selected local model traces."""
 
-import fcntl
 import json
 import os
 import re
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+
+from rlm.v100 import file_lock as fcntl
 
 SECRET_KEYS = {
     "authorization",
@@ -58,8 +61,18 @@ def append_locked(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        handle.write(text)
+        with _exclusive_file_lock(handle):
+            handle.write(text)
+            handle.flush()
+
+
+@contextmanager
+def _exclusive_file_lock(handle) -> Iterator[None]:
+    """Append while holding the cross-platform exclusive file lock."""
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
         handle.flush()
         fcntl.flock(handle, fcntl.LOCK_UN)
 

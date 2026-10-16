@@ -1,3 +1,4 @@
+# IPv4 addresses below are synthetic fixtures; no test contacts these hosts.
 import base64
 import hashlib
 import json
@@ -14,6 +15,123 @@ import requests
 
 from rlm.v100 import owned_node, remote_helper, remote_nodes
 from rlm.v100.common import atomic_json
+
+
+@pytest.mark.parametrize(
+    "changes,reasons",
+    [
+        ({"gpu_ready": False}, ["dedicated-gpu-not-ready"]),
+        ({"elapsed": 150.001}, ["worker-time-budget"]),
+        ({"rss": owned_node.CUDA_RAM + 1}, ["worker-host-rss-budget"]),
+        ({"available": 2**30 - 1}, ["host-ram-reserve"]),
+        (
+            {"gpu_ready": False, "rss": owned_node.CUDA_RAM + 1},
+            ["dedicated-gpu-not-ready", "worker-host-rss-budget"],
+        ),
+    ],
+)
+def test_compute_guard_distinguishes_gpu_host_rss_and_shared_ram(changes, reasons):
+    measurements = {
+        "cuda_job": True,
+        "gpu_ready": True,
+        "elapsed": 1.0,
+        "rss": 500 * 2**20,
+        "available": 4 * 2**30,
+    }
+    measurements.update(changes)
+    failure = owned_node.compute_reserve_failure(**measurements)
+    assert failure["reasons"] == reasons
+    assert failure["host_rss_bytes"] == measurements["rss"]
+    assert failure["host_available_bytes"] == measurements["available"]
+    assert failure["host_rss_limit_bytes"] == 1536 * 2**20
+    assert failure["elapsed_limit_seconds"] == 150
+
+
+def test_compute_guard_keeps_exact_existing_resource_boundaries_and_cpu_independence():
+    assert (
+        owned_node.compute_reserve_failure(
+            cuda_job=False,
+            gpu_ready=False,
+            elapsed=150,
+            rss=owned_node.CPU_RAM,
+            available=2**30,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("cuda_job,limit", [(False, 768 * 2**20), (True, 1536 * 2**20)])
+def test_compute_host_rss_budget_is_device_specific(cuda_job, limit):
+    measurements = dict(cuda_job=cuda_job, gpu_ready=True, elapsed=2.002, available=14 * 2**30)
+    assert owned_node.compute_reserve_failure(**measurements, rss=limit) is None
+    failure = owned_node.compute_reserve_failure(**measurements, rss=limit + 1)
+    assert failure["host_rss_limit_bytes"] == limit
+    assert failure["reasons"] == ["worker-host-rss-budget"]
+    measured = owned_node.compute_reserve_failure(**measurements, rss=911847424)
+    assert (measured is None) is cuda_job
+
+
+@pytest.mark.parametrize(
+    "limit,accepted", [(768 * 2**20, True), (1536 * 2**20, True), (2**31, False), (True, False)]
+)
+def test_cuda_receipt_accepts_only_exact_current_or_historical_budget(limit, accepted):
+    value = dict(
+        device="cuda",
+        reasons=["worker-time-budget"],
+        gpu_ready=True,
+        elapsed_seconds=151,
+        host_rss_bytes=911847424,
+        host_available_bytes=14 * 2**30,
+        host_rss_limit_bytes=limit,
+        host_available_minimum_bytes=2**30,
+        elapsed_limit_seconds=150,
+    )
+    result = remote_nodes.cuda_resource_failure(value)
+    assert (result is not None) is accepted
+    if accepted:
+        assert result["host_rss_limit_bytes"] == limit
+
+
+def test_cuda_worker_records_measured_host_rss_failure_and_releases_gpu(tmp_path, monkeypatch):
+    import psutil
+
+    folder = tmp_path / "pilot"
+    atomic_json(folder / "status.json", {"state": "queued"})
+    atomic_json(folder / "job.json", {"device": "cuda"})
+    process = SimpleNamespace(pid=123, returncode=None)
+
+    def kill():
+        process.returncode = -9
+
+    process.poll = lambda: process.returncode
+    process.kill = kill
+    process.wait = lambda: process.returncode
+    monkeypatch.setattr(owned_node.subprocess, "Popen", lambda *a, **kw: process)
+    monkeypatch.setattr(
+        psutil,
+        "Process",
+        lambda pid: SimpleNamespace(
+            memory_info=lambda: SimpleNamespace(rss=owned_node.CUDA_RAM + 1)
+        ),
+    )
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=4 * 2**30))
+    node = owned_node.Node.__new__(owned_node.Node)
+    node.source = tmp_path
+    node.gpu_lock = threading.Lock()
+    node.cpu_lock = threading.Lock()
+    node.state = {"ready": True}
+    node.processes = {"pilot": None}
+    node.gpu_compute_claimed = True
+    node.run_cpu("pilot", folder)
+    status = json.loads((folder / "status.json").read_text())
+    assert status["state"] == "failed"
+    assert status["detail"] == "Owned compute reserve stopped: worker-host-rss-budget"
+    assert status["resource_failure"]["host_rss_bytes"] == 1536 * 2**20 + 1
+    assert status["resource_failure"]["reasons"] == ["worker-host-rss-budget"]
+    assert process.returncode == -9
+    assert not node.gpu_lock.locked()
+    assert not node.gpu_compute_claimed
+    assert not node.processes
 
 
 @pytest.mark.parametrize(
@@ -41,7 +159,7 @@ def test_full_duty_is_scoped_to_the_explicit_owned_node():
     remote_helper.validate_workload(64, 100, True)
     with pytest.raises(ValueError, match="registered"):
         remote_helper.OllamaResearchClient(
-            base_url="http://192.168.0.61:11435",
+            base_url="http://10.0.0.1:11435",
             model_digest="a" * 64,
             dedicated_host=True,
             helper_duty_percent=100,
@@ -51,7 +169,7 @@ def test_full_duty_is_scoped_to_the_explicit_owned_node():
 def test_independent_nodes_can_hold_workload_leases_together(monkeypatch):
     monkeypatch.setattr(remote_helper, "helper_boot_id", lambda: "owned-test")
     legacy = remote_helper.OllamaResearchClient(
-        base_url="http://192.168.0.61:11435", model_digest="a" * 64
+        base_url="http://10.0.0.1:11435", model_digest="a" * 64
     )
     dedicated = remote_helper.OllamaResearchClient(
         base_url=remote_nodes.ENDPOINT,
@@ -83,7 +201,7 @@ def test_stale_or_changed_node_never_routes_a_job(tmp_path):
     atomic_json(folder / "status.json", {**state, "updated": time.time() - 100})
     assert remote_nodes.selected_node(tmp_path) is None
     atomic_json(folder / "status.json", state)
-    atomic_json(path, {"runtime": {"base_url": "http://192.168.0.10:11435"}})
+    atomic_json(path, {"runtime": {"base_url": "http://10.0.0.2:11435"}})
     with pytest.raises(ValueError, match="changed"):
         remote_nodes.selected_node(tmp_path)
 
@@ -91,8 +209,8 @@ def test_stale_or_changed_node_never_routes_a_job(tmp_path):
 def test_other_lan_peer_cannot_reach_service():
     handler = owned_node.Handler.__new__(owned_node.Handler)
     handler.connection = Mock()
-    handler.client_address = ("192.168.0.20", 1)
-    handler.server = SimpleNamespace(owner="192.168.0.68", server_address=("192.168.0.9", 11435))
+    handler.client_address = ("10.0.0.3", 1)
+    handler.server = SimpleNamespace(owner="10.0.0.4", server_address=("10.0.0.5", 11435))
     handler.send_error = Mock()
     handler.forward()
     handler.send_error.assert_called_once_with(403)
@@ -101,7 +219,7 @@ def test_other_lan_peer_cannot_reach_service():
 def test_http_exposes_only_fixed_paths_and_models():
     node = SimpleNamespace(state={"ready": True}, generating=False)
     server = ThreadingHTTPServer(("127.0.0.1", 0), owned_node.Handler)
-    server.owner, server.node, server.upstream_port = "192.168.0.68", node, 1
+    server.owner, server.node, server.upstream_port = "10.0.0.4", node, 1
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{server.server_port}"
@@ -226,6 +344,50 @@ def test_bridge_imports_only_hash_checked_artifacts_and_retains_local_validation
     ).read_bytes() == files["weights.safetensors"]
 
 
+def test_bridge_preserves_bounded_cuda_resource_failure_diagnostic(tmp_path, monkeypatch):
+    mailbox = tmp_path / "mailbox"
+    atomic_json(tmp_path / "research/compute-config.json", {"mailbox": str(mailbox)})
+    identity, nonce = "e" * 24, "f" * 32
+    value = job(identity)
+    value["device"] = "cuda"
+    atomic_json(mailbox / "jobs" / (identity + ".json"), value)
+    atomic_json(tmp_path / "research/compute-jobs" / identity / "job.json", value)
+    atomic_json(
+        mailbox / "claims" / identity / "lease.json",
+        {"worker": "debian-3060ti-gpu", "nonce": nonce, "job_id": identity},
+    )
+    diagnostic = {
+        "device": "cuda",
+        "reasons": ["worker-host-rss-budget"],
+        "gpu_ready": True,
+        "elapsed_seconds": 4.0,
+        "host_rss_bytes": 1536 * 2**20 + 1,
+        "host_available_bytes": 4 * 2**30,
+        "host_rss_limit_bytes": 1536 * 2**20,
+        "host_available_minimum_bytes": 2**30,
+        "elapsed_limit_seconds": 150,
+        "arbitrary_log": "discard this",
+    }
+    monkeypatch.setattr(
+        remote_nodes,
+        "request",
+        lambda *args, **kwargs: {
+            "state": "failed",
+            "detail": "Owned compute reserve stopped: worker-host-rss-budget",
+            "resource_failure": diagnostic,
+        },
+    )
+
+    remote_nodes.cpu_bridge(tmp_path, {"cpu_ready": True, "cpu_slots": 1})
+
+    receipt = json.loads(
+        (mailbox / "results" / (identity + "-" + nonce) / "receipt.json").read_text()
+    )
+    assert receipt["state"] == "failed"
+    assert receipt["resource_failure"]["reasons"] == ["worker-host-rss-budget"]
+    assert "arbitrary_log" not in receipt["resource_failure"]
+
+
 def test_cpu_work_does_not_wait_for_gpu_qualification(tmp_path, monkeypatch):
     from rlm.v100 import distributed_compute, goal_compute
 
@@ -327,8 +489,15 @@ def test_income_advisor_reuses_qualified_node_without_launching_master(tmp_path,
     monkeypatch.setattr(remote_nodes, "selected_node", lambda root: path)
     monkeypatch.setattr(mission_chat, "preferences", lambda root: {})
     monkeypatch.setattr(
-        income_work, "load_profile", lambda *args: {"resources": {"device": "remote"}}
+        income_work,
+        "load_profile",
+        lambda *args: {
+            "runtime": {"base_url": "http://helper.invalid:11435"},
+            "resources": {"device": "remote"},
+        },
     )
+    monkeypatch.setattr(income_work, "income_profile_enabled", lambda root, profile: True)
+    monkeypatch.setattr(mission_chat, "backend_preflight", lambda client: None)
     monkeypatch.setattr(competition, "helper_client", lambda *args: client)
     assert income_work.owned_advisor(tmp_path, "A", "training") is client
     assert client.activity_actor == "income-owned-advisor"
@@ -398,3 +567,33 @@ def test_cuda_lane_dispatched_independently_of_finance_model_qualification(tmp_p
     assert gpu["device"] == "cuda" and gpu["phase"] == "idle"
     assert gpu["gpu_enabled"]
     assert json.loads((mailbox / "workers/debian-3060ti-cpu.json").read_text())["device"] == "cpu"
+
+
+@pytest.mark.parametrize("active_count", [1, 20])
+def test_terminal_mailbox_prefix_cannot_starve_active_cuda_jobs(
+    tmp_path, monkeypatch, active_count
+):
+    mailbox = tmp_path / "mailbox"
+    atomic_json(tmp_path / "research/compute-config.json", {"mailbox": str(mailbox)})
+    for index in range(16 + active_count):
+        identity = f"{index:024x}"
+        task = {**job(identity), "device": "cuda"}
+        atomic_json(mailbox / "jobs" / (identity + ".json"), task)
+        folder = tmp_path / "research/compute-jobs" / identity
+        atomic_json(folder / "job.json", task)
+        atomic_json(folder / "state.json", {"state": "failed" if index < 16 else "queued"})
+        if index >= 16:
+            atomic_json(
+                mailbox / "claims" / identity / "lease.json",
+                {"worker": "debian-3060ti-gpu", "nonce": "b" * 32, "job_id": identity},
+            )
+    calls = []
+    monkeypatch.setattr(
+        remote_nodes,
+        "request",
+        lambda method, path: calls.append((method, path)) or {"state": "running"},
+    )
+    remote_nodes.cpu_bridge(tmp_path, {"cpu_ready": True, "cpu_slots": 1})
+    assert len(calls) == min(active_count, 16)
+    assert all(method == "GET" for method, _ in calls)
+    assert f"{16:024x}" in calls[0][1]

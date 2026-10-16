@@ -20,6 +20,63 @@ from pathlib import Path
 MODELS = {"gemma4:e2b-it-q4_K_M", "gemma4:e4b-it-q4_K_M"}
 CONTRACT = "synta-dedicated-linux-v1"
 CPU_RAM = 768 * 2**20
+CUDA_RAM = 1536 * 2**20
+
+
+def compute_reserve_failure(
+    *, cuda_job: bool, gpu_ready: bool, elapsed: float, rss: int, available: int
+) -> dict | None:
+    """Explain a fixed-kernel stop without exposing arbitrary logs or changing limits."""
+    rss_limit = CUDA_RAM if cuda_job else CPU_RAM
+    reasons = []
+    if cuda_job and not gpu_ready:
+        reasons.append("dedicated-gpu-not-ready")
+    if not math.isfinite(elapsed) or elapsed < 0 or elapsed > 150:
+        reasons.append("worker-time-budget")
+    if type(rss) is not int or rss < 0 or rss > rss_limit:
+        reasons.append("worker-host-rss-budget")
+    if type(available) is not int or available < 2**30:
+        reasons.append("host-ram-reserve")
+    if not reasons:
+        return None
+    return {
+        "reasons": reasons,
+        "device": "cuda" if cuda_job else "cpu",
+        "gpu_ready": bool(gpu_ready),
+        "elapsed_seconds": round(elapsed, 3) if math.isfinite(elapsed) else None,
+        "host_rss_bytes": rss if type(rss) is int else None,
+        "host_available_bytes": available if type(available) is int else None,
+        "host_rss_limit_bytes": rss_limit,
+        "host_available_minimum_bytes": 2**30,
+        "elapsed_limit_seconds": 150,
+    }
+
+
+def worker_failure(log: Path, code: int) -> str:
+    """Return known failure categories, never arbitrary worker output or secrets."""
+    try:
+        if log.is_symlink():
+            raise ValueError("Linked worker log")
+        with log.open("rb") as stream:
+            stream.seek(max(0, log.stat().st_size - 8192))
+            tail = stream.read(8192).decode("utf-8", errors="replace")
+        for marker, detail in (
+            ("No module named 'numpy'", "Missing NumPy required for checkpoint serialization"),
+            (
+                "Requested interactive experiment device is unavailable",
+                "CUDA training runtime unavailable",
+            ),
+            (
+                "Compute trial made no validated improvement",
+                "No validated improvement; weights not promoted",
+            ),
+            ("Nonfinite compute training loss", "Nonfinite training loss; candidate rejected"),
+        ):
+            if marker in tail:
+                return detail
+    except (OSError, ValueError):
+        pass
+    return f"Fixed compute kernel exited {code}; full worker.log retained on owned node"
 
 
 def atomic(path: Path, value: dict) -> None:
@@ -308,20 +365,27 @@ class Node:
                     while process.poll() is None:
                         if (folder / "cancel").exists():
                             raise RuntimeError("Cancelled by owning controller")
-                        if (
-                            (cuda_job and not self.state.get("ready"))
-                            or time.monotonic() - started > 150
-                            or psutil.Process(process.pid).memory_info().rss > CPU_RAM
-                            or psutil.virtual_memory().available < 2**30
-                        ):
-                            raise RuntimeError("Owned CPU time/RAM reserve exceeded")
+                        failure = compute_reserve_failure(
+                            cuda_job=cuda_job,
+                            gpu_ready=bool(self.state.get("ready")),
+                            elapsed=time.monotonic() - started,
+                            rss=psutil.Process(process.pid).memory_info().rss,
+                            available=psutil.virtual_memory().available,
+                        )
+                        if failure:
+                            status["resource_failure"] = failure
+                            raise RuntimeError(
+                                "Owned compute reserve stopped: " + ", ".join(failure["reasons"])
+                            )
                         atomic(
                             folder / "status.json",
                             {**status, "state": "running", "updated": time.time()},
                         )
                         time.sleep(1)
                     if process.returncode:
-                        raise RuntimeError("Fixed CPU kernel failed; inspect worker.log")
+                        raise RuntimeError(
+                            worker_failure(folder / "worker.log", process.returncode)
+                        )
                 finally:
                     if process.poll() is None:
                         process.kill()

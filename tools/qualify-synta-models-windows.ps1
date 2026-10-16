@@ -6,6 +6,10 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Revision -notmatch '^[0-9a-f]{40}$') { throw 'Exact published revision required.' }
 $root = Join-Path $env:USERPROFILE 'ai-v100-helper'
+$manualStopPath = Join-Path $root 'helper-manual-stop.flag'
+if (Test-Path -LiteralPath $manualStopPath) {
+    throw 'RTX helper operator manual-stop flag is present; model qualification refused before native GPU work.'
+}
 $python = Join-Path $env:USERPROFILE 'ai-owned-compute\venv\Scripts\python.exe'
 $runtime = Join-Path $root 'native-b10683-cuda124'
 $binary = @(Get-ChildItem -LiteralPath $runtime -Filter 'llama-server.exe' -Recurse)

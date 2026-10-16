@@ -1,14 +1,86 @@
 """Bind protected requests to a locally launched, versioned native server."""
 
+import hashlib
+import ipaddress
 import json
 import os
 import socket
+import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
 from rlm.v100.common import atomic_json
 from rlm.v100.protection import execution_hash, file_hash, file_identity
+
+
+class ServingLeaseUnavailable(TimeoutError):
+    """A coordinated candidate transition currently owns this local endpoint."""
+
+
+def local_endpoint(profile: dict) -> tuple[str, int] | None:
+    """Return a canonical loopback endpoint, or None for a remote backend."""
+    try:
+        origin = urlparse(profile["runtime"]["base_url"])
+        host = (origin.hostname or "").casefold().rstrip(".")
+        port = origin.port
+    except (KeyError, TypeError, ValueError):
+        return None
+    if port is None:
+        port = 443 if origin.scheme == "https" else 80
+    if host == "localhost":
+        return "loopback", port
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    return ("loopback", port) if address.is_loopback or address.is_unspecified else None
+
+
+@contextmanager
+def endpoint_lease(
+    root: Path,
+    profile: dict,
+    *,
+    exclusive: bool,
+    timeout: float | None = None,
+):
+    """Coordinate this checkout's local listener readers and candidate lifetimes.
+
+    The lease is cooperative and root-scoped. It cannot prevent an unrelated
+    program or another checkout from rebinding the same OS port.
+    """
+    endpoint = local_endpoint(profile)
+    if endpoint is None:
+        yield False
+        return
+    from rlm.v100.file_lock import LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN, flock
+
+    encoded = json.dumps(
+        [str(Path(root).resolve()), endpoint[0], endpoint[1]], separators=(",", ":")
+    ).encode("utf-8")
+    key = hashlib.sha256(encoded).hexdigest()
+    folder = Path(root) / "research/state/serving-leases"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (key + ".lock")
+    operation = LOCK_EX if exclusive else LOCK_SH
+    deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+    with path.open("a+b") as handle:
+        while True:
+            try:
+                flock(handle, operation | LOCK_NB)
+                break
+            except BlockingIOError as error:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise ServingLeaseUnavailable(
+                        f"Local chat endpoint {endpoint[0]}:{endpoint[1]} is in a coordinated serving transition"
+                    ) from error
+                time.sleep(0.05)
+        try:
+            yield True
+        finally:
+            flock(handle, LOCK_UN)
 
 
 def ensure_local_port_available(port: int) -> None:
@@ -26,7 +98,11 @@ def ensure_local_port_available(port: int) -> None:
 
 def process_identity(pid: int) -> str:
     # Linux start time prevents a reused PID being accepted as the protected server.
-    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError as error:
+        raise ProcessLookupError(f"Process {pid} no longer exists") from error
+    fields = stat.rsplit(")", 1)[1].split()
     if fields[0] in {"Z", "X", "x"}:
         raise ProcessLookupError(f"Process {pid} has exited")
     return fields[19]

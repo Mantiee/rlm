@@ -5,6 +5,7 @@ never claimed Gemma insight, trading signals, fees verification or profit.
 """
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -15,8 +16,40 @@ from rlm.v100.goals import load_goal
 PRODUCTS = ("BTC", "ETH", "LTC", "BCH", "ETC", "LINK", "SOL", "AVAX")
 
 
+def reference_products(root: Path) -> tuple[str, ...]:
+    """Use a predeclared source universe, never URL variants or outcome-selected splits.
+
+    Distinct product series are source groups, not proof of statistical independence.
+    This setting does not change existing immutable training/validation assignments.
+    """
+    path = root / "research/goal-learning/universe.json"
+    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Goal reference universe escaped its root")
+    if not path.exists():
+        return tuple(product + "-USD" for product in PRODUCTS)
+    with path.open("rb") as handle:
+        raw = handle.read(4097)
+    if len(raw) > 4096:
+        raise ValueError("Goal reference universe exceeds 4 KiB")
+    value = json.loads(raw)
+    if not isinstance(value, dict) or set(value) != {"products"}:
+        raise ValueError("Goal reference universe requires only products")
+    products = value["products"]
+    if (
+        not isinstance(products, list)
+        or not 1 <= len(products) <= 64
+        or any(
+            not isinstance(product, str) or re.fullmatch(r"[A-Z0-9]{2,16}-USD", product) is None
+            for product in products
+        )
+        or len(set(products)) != len(products)
+    ):
+        raise ValueError("Choose1..64 distinct Coinbase USD product IDs, not URLs")
+    return tuple(products)
+
+
 def tick(root: Path) -> dict:
-    from rlm.v100.goal_learning import database, observe, predict
+    from rlm.v100.goal_learning import database, digest, observe, predict
 
     goal = load_goal(root)
     if not goal:
@@ -43,9 +76,19 @@ def tick(root: Path) -> dict:
             "state": "blocked",
             "reason": "Reference market observations require a financial mission; other goals need their own measurable adapter",
         }
+    products = reference_products(root)
+    universe_sha256 = digest(list(products))
     path = root / "research/goal-observer/status.json"
     previous = json.loads(path.read_text()) if path.exists() else {}
-    index = previous.get("next_index", 0) if previous.get("goal_id") == goal["id"] else 0
+    same_universe = (
+        previous.get("universe_sha256", digest([product + "-USD" for product in PRODUCTS]))
+        == universe_sha256
+    )
+    index = (
+        previous.get("next_index", 0)
+        if previous.get("goal_id") == goal["id"] and same_universe
+        else 0
+    )
     now = time.time()
     with database(root) as db:
         pending = [
@@ -69,13 +112,14 @@ def tick(root: Path) -> dict:
 
     results = []
     for offset in range(2):
-        product = PRODUCTS[(index + offset) % len(PRODUCTS)]
+        product_id = products[(index + offset) % len(products)]
+        product = product_id.removesuffix("-USD")
         question = f"Controller reference: {product}-USD direction over 300 seconds"
         if question in recent:
             continue
         try:
             observation = observe(
-                root, f"https://api.coinbase.com/v2/prices/{product}-USD/spot", "data.amount"
+                root, f"https://api.coinbase.com/v2/prices/{product_id}/spot", "data.amount"
             )
             value = observation["value"]
             if value <= 0:
@@ -108,6 +152,7 @@ def tick(root: Path) -> dict:
                     "probabilities": learned["probabilities"],
                 },
             )
+            recent.add(question)
             results.append(
                 {
                     "product": product,
@@ -127,7 +172,9 @@ def tick(root: Path) -> dict:
         else "waiting or source unavailable",
         "goal_id": goal["id"],
         "updated": time.time(),
-        "next_index": (index + 2) % len(PRODUCTS),
+        "next_index": (index + 2) % len(products),
+        "universe": list(products),
+        "universe_sha256": universe_sha256,
         "results": results,
         "scope": "Forward-only controller reference labels, not model skill or profit; model hypotheses remain separate",
     }

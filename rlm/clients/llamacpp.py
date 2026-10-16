@@ -194,16 +194,43 @@ class LlamaCppClient(BaseLM):
         if endpoint == "/v1/chat/completions" and data is not None and self.streaming_enabled():
             from rlm.v100.streaming import local_reply
 
+            request_deadline = getattr(self, "request_deadline", None)
+            deadline = min(
+                time.monotonic() + self.timeout,
+                request_deadline if request_deadline is not None else float("inf"),
+            )
+
+            def check_deadline():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise requests.Timeout("Inference stream exceeded its total time budget")
+                return remaining
+
+            def bounded_frames(response):
+                frames = iter(response.iter_lines(chunk_size=128))
+                while True:
+                    check_deadline()
+                    try:
+                        raw = next(frames)
+                    except StopIteration:
+                        return
+                    # Heartbeats, comments and empty frames consume the same
+                    # absolute budget as output; activity cannot renew it.
+                    check_deadline()
+                    yield raw
+
             with requests.Session() as session:
                 session.trust_env = False
                 with session.post(
                     self.base_url + endpoint,
                     json={**data, "stream": True, "stream_options": {"include_usage": True}},
-                    timeout=self.remaining_timeout(),
+                    timeout=check_deadline(),
                     stream=True,
                 ) as response:
                     response.raise_for_status()
-                    return local_reply(response.iter_lines(chunk_size=128), self.stream_delta)
+                    result = local_reply(bounded_frames(response), self.stream_delta)
+                    check_deadline()
+                    return result
         with requests.Session() as session:
             session.trust_env = False
             response = (

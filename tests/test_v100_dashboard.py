@@ -24,7 +24,7 @@ def test_dashboard_rejects_unspecified_public_and_non_ipv4_binds(address):
 
 
 def test_dashboard_private_bind_and_readonly_http_routes(tmp_path):
-    assert dashboard.validate_bind("192.168.0.68") == "192.168.0.68"
+    assert dashboard.validate_bind("127.0.0.1") == "127.0.0.1"
     state = dashboard.DashboardState(tmp_path, lambda root: {})
     state.data = {"mission": {"running": True}}
     with dashboard.DashboardServer(("127.0.0.1", 0), state) as server:
@@ -172,7 +172,7 @@ def test_slow_report_does_not_block_live_snapshot_refresh(tmp_path, monkeypatch)
     [
         "<script>alert(1)</script>",
         '<div onclick="alert(1)">x</div>',
-        '<iframe src="http://192.168.0.1"></iframe>',
+        '<iframe src="https://example.invalid"></iframe>',
         '<style>@import "https://example.com/leak";</style>',
         "<style>body{background:u/**/rl(https://example.com)}</style>",
         '<meta http-equiv="refresh" content="0;url=https://example.com">',
@@ -199,7 +199,7 @@ def test_master_layout_preserves_data_components_and_fixed_renderer():
 
 def test_master_invalid_edit_keeps_previous_layout_and_survives_restart(tmp_path, monkeypatch):
     state = dashboard.DashboardState(tmp_path, lambda root: {})
-    changed = dashboard.BASE_TEMPLATE.replace("Synta - mission progress", "Mój pulpit V100")
+    changed = dashboard.BASE_TEMPLATE.replace("Synta — centrum na żywo", "Mój pulpit V100")
     monkeypatch.setattr(dashboard, "guest_layout", lambda root: changed)
     state.sync_layout()
     accepted = state.page
@@ -236,9 +236,9 @@ def test_guest_layout_seed_preserves_master_edits_and_bounds_transfer(tmp_path, 
 
     monkeypatch.setattr(desktop, "run", guest_run)
     assert dashboard.guest_layout(tmp_path) == dashboard.BASE_TEMPLATE
-    changed = dashboard.BASE_TEMPLATE.replace("Synta - mission progress", "Nowy wygląd")
+    changed = dashboard.BASE_TEMPLATE.replace("Synta — centrum na żywo", "Nowy wygląd")
     path.write_text(changed)
-    assert dashboard.guest_layout(tmp_path) == changed
+    assert dashboard.guest_layout(tmp_path).replace("\r\n", "\n") == changed.replace("\r\n", "\n")
     path.write_bytes(b"x" * 262145)
     with pytest.raises(ValueError, match="256 KiB"):
         dashboard.guest_layout(tmp_path)

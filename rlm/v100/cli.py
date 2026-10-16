@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import statistics
 import subprocess
 import time
@@ -122,6 +121,37 @@ def client_for(
     )
     client.tool_protocol = r.get("tool_protocol", "native")
     return client
+
+
+def wait_for_managed_server(profile: dict, root: Path, pause=time.sleep) -> None:
+    """Keep foreground `serve` alive until its exact receipt process exits."""
+    from rlm.v100.serving import process_identity, receipt_path
+
+    receipt = json.loads(receipt_path(profile, root).read_text(encoding="utf-8"))
+    pid, expected = receipt.get("pid"), receipt.get("process_start")
+    if type(pid) is not int or not isinstance(expected, str) or not expected:
+        raise ValueError("Managed listener receipt has no process identity")
+    while True:
+        try:
+            current = process_identity(pid)
+        except (FileNotFoundError, ProcessLookupError):
+            return
+        if current != expected:
+            return
+        pause(0.25)
+
+
+def serve_foreground(profile_path: Path, root: Path) -> None:
+    from rlm.v100.competition import managed_server
+
+    profile = load_profile(profile_path, root)
+    command = server_command(profile)
+    endpoint_port = urlparse(profile["runtime"]["base_url"]).port or 8088
+    log_path = root / "research/logs" / f"serve-{endpoint_port}.log"
+    print("Starting:", json.dumps(command), flush=True)
+    with managed_server(profile_path, root, log_path, lifecycle_role="accepted") as actual:
+        print("Server ready; press Ctrl+C to stop.", flush=True)
+        wait_for_managed_server(actual, root)
 
 
 def main() -> None:
@@ -831,20 +861,8 @@ def main() -> None:
         print("Context per slot:", profile["runtime"]["context_window"])
         return
     if args.command == "serve":
-        for key in ("binary", "model", "draft_model"):
-            value = profile["server"][key]
-            if value and not Path(value).is_file():
-                raise FileNotFoundError(value)
-        command = server_command(profile)
-        from rlm.v100.serving import write_receipt
-
-        write_receipt(profile, root)
-        if profile["server"].get("library_path"):
-            os.environ["LD_LIBRARY_PATH"] = (
-                profile["server"]["library_path"] + ":" + os.environ.get("LD_LIBRARY_PATH", "")
-            )
-        print("Starting:", json.dumps(command), flush=True)
-        os.execv(command[0], command)
+        serve_foreground(args.profile or root / "research/v100.toml", root)
+        return
     if args.command == "train":
         from rlm.v100.training import train_model
 

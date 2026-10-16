@@ -182,9 +182,11 @@ def test_progress_does_not_convert_hypotheses_or_failed_trials_to_profit(tmp_pat
 
 @pytest.mark.parametrize("exit_price,result", [("110", "profit"), ("90", "loss")])
 def test_realized_paper_results_join_training_and_reject_forged_labels(
-    tmp_path, exit_price, result
+    tmp_path, exit_price, result, monkeypatch
 ):
-    from tests.test_v100_paper import decide, quote, setup
+    from tests.test_v100_paper import allow_cost_math_only, decide, quote, setup
+
+    allow_cost_math_only(monkeypatch)
 
     book, clock, _ = setup(
         tmp_path, fee_changes={"entry_minimum_commission": "2", "exit_minimum_commission": "3"}

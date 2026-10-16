@@ -404,7 +404,18 @@ def wait_admission(seconds: int = 60) -> str | None:
         time.sleep(min(2, remaining))
 
 
-def run(profile: dict, output: Path, port: int = 8097) -> dict:
+def run(profile: dict, output: Path, port: int = 8097, *, root: Path | None = None) -> dict:
+    """Run isolated native variants while owning their loopback endpoint lease."""
+    from rlm.v100.serving import endpoint_lease
+
+    if root is None:
+        root = Path(os.environ.get("AI_V100_ROOT", Path.home() / "ai-v100"))
+    endpoint = {"runtime": {"base_url": f"http://127.0.0.1:{port}"}}
+    with endpoint_lease(root, endpoint, exclusive=True):
+        return _run_unleased(profile, output, port)
+
+
+def _run_unleased(profile: dict, output: Path, port: int) -> dict:
     if output.exists():
         raise FileExistsError("Use a new experiment directory")
     with socket.socket() as probe:
@@ -576,10 +587,18 @@ def main() -> None:
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8097)
+    parser.add_argument(
+        "--root", type=Path, default=Path(os.environ.get("AI_V100_ROOT", Path.home() / "ai-v100"))
+    )
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         raise ValueError("Use an unprivileged isolated port")
-    result = run(json.loads(args.profile.read_text(encoding="utf-8-sig")), args.output, args.port)
+    result = run(
+        json.loads(args.profile.read_text(encoding="utf-8-sig")),
+        args.output,
+        args.port,
+        root=args.root,
+    )
     print(json.dumps(result["selection"], indent=2))
 
 

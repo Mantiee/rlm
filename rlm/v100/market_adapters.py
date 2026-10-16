@@ -242,16 +242,27 @@ def normalize(
         if data.get("retCode") != 0:
             raise ValueError("Derivative source rejected the request")
         ticker = data["result"]["list"][0]
+        # `retrieved` is when our client received the response, not when the
+        # exchange last updated the ticker. Preserve Bybit's millisecond
+        # timestamp so downstream age/provenance displays cannot make stale
+        # market state look newly observed.
+        raw_updated = ticker.get("ts")
+        if isinstance(raw_updated, bool) or not re.fullmatch(r"\d{13}", str(raw_updated)):
+            raise ValueError("Derivative ticker lacks a valid exchange update timestamp")
+        available = datetime.fromtimestamp(int(raw_updated) / 1000, UTC).isoformat()
+        if timestamp(available) > timestamp(retrieved):
+            raise ValueError("Derivative ticker timestamp is in the future")
         return [
             {
                 **source,
                 "kind": "news",
                 "category": "research",
-                "available_at": retrieved,
+                "available_at": available,
                 "excerpt": json.dumps(
                     {
                         "contract": settings["contract"],
                         "ticker": ticker,
+                        "exchange_updated_at": available,
                         "scope": "Public derivative research. fundingRate is predicted, not settled funding. Ticker does not prove adverse interval marks; no leveraged fills enabled.",
                     }
                 )[:6000],

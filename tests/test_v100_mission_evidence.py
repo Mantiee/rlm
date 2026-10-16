@@ -38,6 +38,7 @@ def test_missing_training_evidence_is_unknown_not_zero(tmp_path, monkeypatch):
 def test_successful_optimizer_steps_differ_from_attempts_and_acceptance(tmp_path, monkeypatch):
     run = running(tmp_path, monkeypatch)
     health = {
+        "updated_at": 1234.5,
         "attempted_steps": 7,
         "optimizer_updates": 5,
         "amp_skipped_steps": 2,
@@ -62,9 +63,46 @@ def test_successful_optimizer_steps_differ_from_attempts_and_acceptance(tmp_path
     )
     value = mission_evidence.collect(tmp_path)
     assert value["optimizer_updates_observed"] == 5
+    assert value["optimizer_receipt_updated_at"] == 1234.5
     assert value["accepted_weight_updates_this_run"] == 1
     assert len(value["training_runs"]) == 1
     assert value["errors"][0]["detail"] == "quality regression"
+
+
+def test_checkpoint_receipt_requires_step_manifest_and_saved_state_files(tmp_path, monkeypatch):
+    run = running(tmp_path, monkeypatch)
+    training = run / "learning/update-0001/A/training"
+    training.mkdir(parents=True)
+    manifest = training / "manifest.json"
+    manifest.write_text('{"dataset":"frozen"}')
+    import hashlib
+
+    manifest_hash = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    checkpoint = training / "checkpoint-25"
+    checkpoint.mkdir()
+    for name in ("trainer_state.json", "optimizer.pt", "scheduler.pt", "rng_state.pth"):
+        (checkpoint / name).write_bytes(b"receipt")
+    atomic_json(
+        checkpoint / "complete.json",
+        {"step": 25, "manifest_sha256": manifest_hash},
+    )
+    atomic_json(
+        training / "training_health.json",
+        {
+            "attempted_steps": 25,
+            "updated_at": 1234.5,
+            "optimizer_updates": 25,
+            "amp_skipped_steps": 0,
+            "finite_gradient_steps": 25,
+        },
+    )
+
+    value = mission_evidence.collect(tmp_path)
+    assert value["training_runs"][0]["checkpoints"] == [{"step": 25, "path": str(checkpoint)}]
+
+    atomic_json(checkpoint / "complete.json", {"step": 24, "manifest_sha256": manifest_hash})
+    value = mission_evidence.collect(tmp_path)
+    assert value["training_runs"][0]["checkpoints"] == []
 
 
 @pytest.mark.parametrize("counter", [True, -1, 6, None])
@@ -145,8 +183,15 @@ def test_ordinary_chat_gets_host_evidence_before_model_can_guess(tmp_path, monke
     model = tmp_path / "model.gguf"
     model.write_bytes(b"test")
     monkeypatch.setattr(
-        mission_chat, "load_profile", lambda *args: {"runtime": {}, "server": {"model": str(model)}}
+        mission_chat,
+        "load_profile",
+        lambda *args: {
+            "runtime": {"base_url": "http://127.0.0.1:8088"},
+            "server": {"model": str(model)},
+        },
     )
+    # This test covers host-evidence injection, not the protected-server receipt gate.
+    monkeypatch.setattr(mission_chat, "assert_served_expert", lambda *args, **kwargs: None)
     seen = []
 
     def reply(endpoint, payload=None):

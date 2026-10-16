@@ -1,18 +1,28 @@
 from types import SimpleNamespace
 
+import pytest
+
 from rlm.v100 import managed_bootstrap, mission, mission_view, remote_nodes, trade_explorer
 from rlm.v100.common import atomic_json
 from tests.test_v100_dashboard import dashboard
 
 
-def test_current_evaluation_is_read_from_current_run_only(tmp_path):
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "development-quality.progress.json",
+        "fresh-audit/parent.progress.json",
+        "fresh-audit/candidate.progress.json",
+    ],
+)
+def test_current_evaluation_is_read_from_current_run_only(tmp_path, relative):
     run = tmp_path / "research/mission/run-current"
     old = tmp_path / "research/mission/run-old"
     atomic_json(
         old / "learning/update-0001/generation-01/A/quality.progress.json",
         {"schema": "v100-evaluation-progress-v1", "completed": 81},
     )
-    path = run / "learning/update-0001/generation-01/A/development-quality.progress.json"
+    path = run / "learning/update-0001/generation-01/A" / relative
     atomic_json(
         path,
         {

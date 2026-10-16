@@ -11,7 +11,7 @@ def atomic_json(path: Path, value: Any) -> None:
     descriptor, temporary = tempfile.mkstemp(prefix="." + path.name + "-", dir=path.parent)
     temp = Path(temporary)
     try:
-        with os.fdopen(descriptor, "w") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2, allow_nan=False)
             handle.write("\n")
             handle.flush()

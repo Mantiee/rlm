@@ -10,11 +10,14 @@ import time
 import uuid
 from pathlib import Path
 
+from rlm.v100 import file_lock
 from rlm.v100.activity import ActivityLog
 from rlm.v100.common import atomic_json
 from rlm.v100.compute_kernel import validate
 from rlm.v100.compute_worker import read_json
 from rlm.v100.protection import file_hash
+
+CUDA_RETRY_COOLDOWN_SECONDS = 15 * 60
 
 
 def record_state(root: Path, path: Path, state: dict) -> None:
@@ -96,6 +99,61 @@ def fresh_examples(domain: str, count: int = 64) -> tuple[list, list]:
     return ordered[16:], ordered[:16]
 
 
+def queue_capacity(root: Path) -> dict:
+    """An explicit host archive budget; historical evidence is never deleted to admit work."""
+    path = root / "research/compute-jobs/capacity.json"
+    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Compute capacity configuration escaped its root")
+    value = {"max_jobs": 128, "minimum_free_disk_gib": 2}
+    if path.exists():
+        configured = read_json(path, 4096)
+        if not isinstance(configured, dict) or set(configured) - set(value):
+            raise ValueError("Unknown compute capacity fields")
+        value.update(configured)
+    maximum, reserve = value["max_jobs"], value["minimum_free_disk_gib"]
+    if type(maximum) is not int or not 128 <= maximum <= 2048:
+        raise ValueError("Compute max_jobs must be an integer128..2048")
+    if type(reserve) not in (int, float) or not math.isfinite(reserve) or not 2 <= reserve <= 64:
+        raise ValueError("Compute minimum_free_disk_gib must be finite2..64")
+    return value
+
+
+def job_states(root: Path) -> list[tuple[Path, dict]]:
+    """Bound the retained archive, without hiding active jobs behind terminal history."""
+    folder = root / "research/compute-jobs"
+    if folder.is_symlink() or not folder.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Compute job archive escaped its root")
+    paths = sorted(folder.glob("*/state.json"))
+    if len(paths) > 2048:
+        raise ValueError("Compute job archive exceeds hard2048 retained-job bound")
+    result = []
+    for path in paths:
+        if (
+            path.parent.is_symlink()
+            or path.is_symlink()
+            or not path.resolve().is_relative_to(folder.resolve())
+        ):
+            raise ValueError("Linked compute state escaped its archive")
+        result.append((path, read_json(path)))
+    return result
+
+
+def require_queue_capacity(root: Path) -> None:
+    capacity = queue_capacity(root)
+    records = job_states(root)
+    if len(records) >= capacity["max_jobs"]:
+        raise ValueError(
+            f"Compute archive full: {len(records)}/{capacity['max_jobs']} retained jobs; preserve evidence and explicitly review archive capacity"
+        )
+    active = sum(state["state"] in ("queued", "running", "imported") for _, state in records)
+    if active >= 16:
+        raise ValueError("Compute queue full:16 active experiments; finish or cancel active work")
+    if shutil.disk_usage(root).free < capacity["minimum_free_disk_gib"] * 2**30:
+        raise ValueError(
+            f"Compute queue requires {capacity['minimum_free_disk_gib']} GiB free disk reserve"
+        )
+
+
 def propose(
     root: Path,
     branch: str,
@@ -106,16 +164,12 @@ def propose(
     width: int = 64,
     layers: int = 1,
     learning_rate: float = 0.001,
+    device: str = "cpu",
 ) -> dict:
     mailbox = mailbox_path(root)
     if branch not in ("A", "B") or not isinstance(purpose, str) or not 1 <= len(purpose) <= 600:
         raise ValueError("Choose A/B and a bounded compute experiment purpose")
-    records = list((root / "research/compute-jobs").glob("*/state.json"))
-    if (
-        len(records) >= 128
-        or sum(read_json(p)["state"] in ("queued", "running", "imported") for p in records) >= 16
-    ):
-        raise ValueError("Compute queue is full; finish or cancel existing experiments")
+    require_queue_capacity(root)
     train, validation = fresh_examples(domain)
     return queue_job(
         root,
@@ -130,6 +184,7 @@ def propose(
         width,
         layers,
         learning_rate,
+        device=device,
     )
 
 
@@ -152,62 +207,63 @@ def queue_job(
     """Publish a frozen dataset to the pinned tiny CPU/CUDA kernel."""
     if branch not in ("A", "B") or not isinstance(purpose, str) or not 1 <= len(purpose) <= 600:
         raise ValueError("Choose A/B and a bounded compute experiment purpose")
-    records = list((root / "research/compute-jobs").glob("*/state.json"))
-    if (
-        len(records) >= 128
-        or sum(read_json(p)["state"] in ("queued", "running", "imported") for p in records) >= 16
-    ):
-        raise ValueError("Compute queue is full; finish or cancel existing experiments")
-    identity = uuid.uuid4().hex[:24]
-    folder = root / "research/compute-jobs" / identity
-    folder.mkdir(parents=True)
-    kernel = Path(__file__).with_name("compute_kernel.py")
-    job = {
-        "schema": "v100-compute-job-v1",
-        "id": identity,
-        "branch": branch,
-        "architecture": architecture,
-        "steps": steps,
-        "purpose": purpose,
-        "domain": domain,
-        "kernel_sha256": file_hash(kernel),
-        "worker_sha256": file_hash(Path(__file__).with_name("compute_worker.py")),
-        "width": width,
-        "layers": layers,
-        "context": 256,
-        "device": device,
-        "threads": 2,
-        "seconds": 120,
-        "learning_rate": learning_rate,
-        "train": train,
-        "validation": validation,
-    }
-    validate(job)
-    if provenance is not None:
-        job["provenance"] = provenance
-    atomic_json(folder / "job.json", job)
-    shutil.copyfile(kernel, folder / "kernel.py")
-    (folder / "kernel.py").chmod(0o444)
-    record_state(
-        root,
-        folder / "state.json",
-        {
-            "state": "queued",
-            "attempts": 0,
+    allocation = root / "research/compute-jobs/allocation.lock"
+    if not allocation.resolve().is_relative_to(root.resolve()) or allocation.is_symlink():
+        raise ValueError("Compute allocation lock escaped its root")
+    allocation.parent.mkdir(parents=True, exist_ok=True)
+    with allocation.open("a") as lease:
+        file_lock.flock(lease, file_lock.LOCK_EX)
+        require_queue_capacity(root)
+        identity = uuid.uuid4().hex[:24]
+        folder = root / "research/compute-jobs" / identity
+        folder.mkdir(parents=True)
+        kernel = Path(__file__).with_name("compute_kernel.py")
+        job = {
+            "schema": "v100-compute-job-v1",
+            "id": identity,
             "branch": branch,
-            "job_sha256": file_hash(folder / "job.json"),
-        },
-    )
-    destination = mailbox / "jobs" / (identity + ".json")
-    temporary = destination.with_suffix(".download")
-    shutil.copyfile(folder / "job.json", temporary)
-    temporary.replace(destination)
-    return {
-        "id": identity,
-        "state": "queued",
-        "weights_changed": False,
-        "scope": "Tiny all-weight CPU model on frozen host-verified examples; not master weights or a proven goal improvement",
-    }
+            "architecture": architecture,
+            "steps": steps,
+            "purpose": purpose,
+            "domain": domain,
+            "kernel_sha256": file_hash(kernel),
+            "worker_sha256": file_hash(Path(__file__).with_name("compute_worker.py")),
+            "width": width,
+            "layers": layers,
+            "context": 256,
+            "device": device,
+            "threads": 2,
+            "seconds": 120,
+            "learning_rate": learning_rate,
+            "train": train,
+            "validation": validation,
+        }
+        validate(job)
+        if provenance is not None:
+            job["provenance"] = provenance
+        atomic_json(folder / "job.json", job)
+        shutil.copyfile(kernel, folder / "kernel.py")
+        (folder / "kernel.py").chmod(0o444)
+        record_state(
+            root,
+            folder / "state.json",
+            {
+                "state": "queued",
+                "attempts": 0,
+                "branch": branch,
+                "job_sha256": file_hash(folder / "job.json"),
+            },
+        )
+        destination = mailbox / "jobs" / (identity + ".json")
+        temporary = destination.with_suffix(".download")
+        shutil.copyfile(folder / "job.json", temporary)
+        temporary.replace(destination)
+        return {
+            "id": identity,
+            "state": "queued",
+            "weights_changed": False,
+            "scope": "Tiny all-weight CPU model on frozen host-verified examples; not master weights or a proven goal improvement",
+        }
 
 
 def inspect(root: Path) -> dict:
@@ -221,13 +277,26 @@ def inspect(root: Path) -> dict:
         if mailbox
         else []
     )
+    records = job_states(root)
+    active = [
+        (path, state)
+        for path, state in records
+        if state["state"] in ("queued", "running", "imported")
+    ]
+    historical = [
+        (path, state)
+        for path, state in records
+        if state["state"] not in ("queued", "running", "imported")
+    ]
+    historical.sort(key=lambda item: item[0].stat().st_mtime_ns, reverse=True)
+    displayed = (active + historical)[:128]
     return {
         "configured": bool(mailbox),
+        "archive_capacity": queue_capacity(root),
+        "retained_jobs": len(records),
+        "jobs_omitted": len(records) - len(displayed),
         "workers": workers,
-        "jobs": [
-            {"id": p.parent.name, **read_json(p)}
-            for p in sorted((root / "research/compute-jobs").glob("*/state.json"))[:128]
-        ],
+        "jobs": [{"id": path.parent.name, **state} for path, state in displayed],
         "scope": "Owned compute only; remote claims are untrusted until local validation",
     }
 
@@ -237,7 +306,7 @@ def cancel(root: Path, identity: str) -> dict:
         raise ValueError("Invalid compute job ID")
     path = root / "research/compute-jobs" / identity / "state.json"
     state = read_json(path)
-    state.update(state="cancelled")
+    state.update(state="cancelled", retry_not_before=None, cancelled_at=time.time())
     record_state(root, path, state)
     atomic_json(mailbox_path(root) / "closed" / (identity + ".json"), {"state": "cancelled"})
     return state
@@ -245,8 +314,13 @@ def cancel(root: Path, identity: str) -> dict:
 
 def tick(root: Path) -> None:
     mailbox = mailbox_path(root) if (root / "research/compute-config.json").exists() else None
-    for path in sorted((root / "research/compute-jobs").glob("*/state.json"))[:128]:
-        state, identity = read_json(path), path.parent.name
+    pending = [
+        (path, state)
+        for path, state in job_states(root)
+        if state["state"] in ("queued", "running", "imported")
+    ]
+    for path, state in pending[:128]:
+        identity = path.parent.name
         if state["state"] == "imported":
             from rlm.v100.drones import schedule
 
@@ -264,6 +338,7 @@ def tick(root: Path) -> None:
         lease_path = mailbox / "claims" / identity / "lease.json"
         if not lease_path.exists():
             continue
+        receipt = None
         try:
             lease = read_json(lease_path, 16384)
             if (
@@ -286,6 +361,21 @@ def tick(root: Path) -> None:
                 raise ValueError("Compute worker lease expired")
             if receipt.get("nonce") != lease["nonce"] or receipt.get("job_id") != identity:
                 raise ValueError("Stale or unrelated compute result")
+            if receipt.get("state") == "cancelled":
+                state.update(
+                    state="cancelled",
+                    retry_not_before=None,
+                    cancelled_at=time.time(),
+                    detail=str(receipt.get("detail", "Remote CUDA pilot cancelled"))[:400],
+                )
+                record_state(root, path, state)
+                atomic_json(mailbox / "closed" / (identity + ".json"), {"state": "cancelled"})
+                claim = mailbox / "claims" / identity
+                if claim.exists():
+                    claim.rename(
+                        mailbox / "claims" / ("retired-" + identity + "-" + uuid.uuid4().hex)
+                    )
+                continue
             if receipt.get("state") != "complete":
                 raise ValueError(receipt.get("detail", "Remote compute failed"))
             if receipt.get("job_sha256") != state["job_sha256"]:
@@ -319,13 +409,35 @@ def tick(root: Path) -> None:
             atomic_json(mailbox / "closed" / (identity + ".json"), {"state": "imported"})
         except (ValueError, KeyError, TypeError, OSError) as error:
             attempts = state["attempts"] + 1
-            state.update(
-                state="failed" if attempts >= 3 else "queued",
-                attempts=attempts,
-                detail=str(error)[:400],
-            )
+            detail = str(error)[:400]
+            job = read_json(path.parent / "job.json")
+            if job.get("device") == "cuda":
+                from rlm.v100.remote_nodes import cuda_resource_failure
+
+                diagnostic = cuda_resource_failure(
+                    receipt.get("resource_failure") if isinstance(receipt, dict) else None
+                )
+                retry = diagnostic is not None and attempts < 3
+                failure = {
+                    "state": receipt.get("state") if isinstance(receipt, dict) else None,
+                    "detail": detail,
+                    "resource_failure": diagnostic,
+                }
+                state.update(
+                    state="queued" if retry else "failed",
+                    attempts=attempts,
+                    detail=detail,
+                    last_failure=failure,
+                    retry_not_before=(time.time() + CUDA_RETRY_COOLDOWN_SECONDS if retry else None),
+                )
+            else:
+                state.update(
+                    state="failed" if attempts >= 3 else "queued",
+                    attempts=attempts,
+                    detail=detail,
+                )
             record_state(root, path, state)
-            if attempts >= 3:
+            if state["state"] == "failed":
                 atomic_json(mailbox / "closed" / (identity + ".json"), {"state": "failed"})
             claim = mailbox / "claims" / identity
             if claim.exists():

@@ -66,6 +66,19 @@ def work(root: Path, stop: threading.Event) -> None:
 
     accepted_cpu = AcceptedCPUChat(root, root / "research/gateway-chat", stop)
     try:
+        from rlm.v100.mission import status
+        from rlm.v100.mission_chat import _chat_lifecycle_profiles
+
+        try:
+            mission = status(root)
+            directory = Path(mission.get("run", root / "research/mission"))
+            accepted = _chat_lifecycle_profiles(root, directory)["accepted"]
+            if accepted is not None:
+                accepted_cpu.prewarm(accepted)
+        except (OSError, ValueError, RuntimeError) as failure:
+            ActivityLog(root, "controller", "chat").write(
+                "errors", "accepted-cpu-prewarm-unavailable", {"error": str(failure)[:300]}
+            )
         serve(root, stop, accepted_cpu)
     finally:
         accepted_cpu.close()

@@ -140,7 +140,16 @@ def test_income_work_can_use_pinned_windows_helper_when_v100_is_training(tmp_pat
     monkeypatch.setattr(remote_nodes, "selected_node", lambda root: None)
     monkeypatch.setattr(remote_helper, "selected_helper", lambda *a: path)
     monkeypatch.setattr(mission_chat, "preferences", lambda root: {})
-    monkeypatch.setattr(income_work, "load_profile", lambda *a: {"resources": {"device": "remote"}})
+    monkeypatch.setattr(
+        income_work,
+        "load_profile",
+        lambda *a: {
+            "runtime": {"base_url": "http://helper.invalid:11435"},
+            "resources": {"device": "remote"},
+        },
+    )
+    monkeypatch.setattr(mission_chat, "backend_preflight", lambda client: None)
+    monkeypatch.setattr(income_work, "income_profile_enabled", lambda root, profile: True)
     monkeypatch.setattr(competition, "helper_client", lambda *a: client)
     assert income_work.owned_advisor(tmp_path, "A", "V100 training") is client
     assert client.research_token_ceiling == 2048

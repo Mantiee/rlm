@@ -209,6 +209,7 @@ def prepare(root: Path, refresh: bool = False, pair_codes: list[str] | None = No
             "currency": state["currency"],
             "operator_verified": True,
             "valid_until": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            "execution_costs_verified": False,
             "entry_venue_fee_bps": taker,
             "exit_venue_fee_bps": taker,
             "slippage_bps": "10",

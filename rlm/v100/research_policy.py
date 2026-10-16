@@ -1,10 +1,10 @@
 """Model-selected R&D budgets; fixed quality evaluation never reads this policy."""
 
 import copy
-import fcntl
 import json
 from pathlib import Path
 
+from rlm.v100 import file_lock as fcntl
 from rlm.v100.common import atomic_json
 
 DEFAULTS = {

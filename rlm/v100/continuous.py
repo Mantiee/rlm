@@ -4,12 +4,13 @@ import copy
 import json
 import shutil
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 
-from rlm.v100.common import atomic_json
+from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import (
     evolve,
     helper_client,
@@ -17,10 +18,79 @@ from rlm.v100.competition import (
     require_idle_gpu,
     waiting_researcher,
 )
+from rlm.v100.cpu_pilots import schedule_cpu_pilots
 from rlm.v100.experiments import SharedLab, load_duel
 from rlm.v100.insights import extend_pool
 from rlm.v100.protection import assert_candidate_output, file_hash
 from rlm.v100.researchers import compact_result, research_task, review_research
+
+
+class _HeartbeatRefresher:
+    """Refresh loop liveness without implying optimizer progress."""
+
+    def __init__(self, path: Path, interval: int = 30):
+        if type(interval) is not int or interval < 1:
+            raise ValueError("Heartbeat refresh interval must be a positive integer")
+        self.path = path
+        self.interval = interval
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._state: dict | None = None
+        self._thread: threading.Thread | None = None
+
+    def record(self, state: dict) -> None:
+        """Record a newly entered stage and begin refreshing its liveness age."""
+        with self._lock:
+            self._state = {
+                **state,
+                "updated": time.time(),
+                "heartbeat_kind": "liveness",
+                "scope": "Liveness only; current loop stage, not optimizer progress or acceptance",
+            }
+            atomic_json(self.path, self._state)
+
+    def refresh(self) -> None:
+        """Refresh only the timestamp; stage details and counters remain untouched."""
+        with self._lock:
+            if self._state is None:
+                return
+            self._state = {**self._state, "updated": time.time()}
+            atomic_json(self.path, self._state)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            self.refresh()
+
+    def __enter__(self):
+        self._thread = threading.Thread(
+            target=self._run, name="synta-learning-heartbeat", daemon=True
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+        return False
+
+
+def training_researcher(root: Path, path: Path) -> Path | None:
+    """Disabled optional remote research must not abort local A/B training."""
+    from rlm.v100.mission_chat import preferences
+    from rlm.v100.remote_helper import origin_enabled, remote_profile
+
+    # Unknown/missing input retains the original downstream validation/error path;
+    # it must never be misclassified as an explicitly disabled optional helper.
+    if not path.is_file():
+        return path
+    helper = load_profile(path, root)
+    if remote_profile(helper) and (
+        preferences(root).get("remote_helper_enabled", True) is False
+        or not origin_enabled(root, helper["runtime"]["base_url"])
+    ):
+        return None
+    return path
 
 
 def learn_loop(
@@ -103,22 +173,34 @@ def learn_loop(
     if paper is not None:
         state["paper_settings_sha256"] = paper.settings_sha
     cycle = 0
+    paper_decision_interval = (
+        max(60, min(300, paper.settings["observer_interval"])) if paper is not None else None
+    )
+    next_paper_decision = 0.0
+
+    def maybe_run_paper_decisions():
+        nonlocal next_paper_decision
+        if paper is None or time.monotonic() < next_paper_decision:
+            return
+        # The main serving endpoint is already held by this mission. Keep model
+        # requests serialized with research and never start another GPU context.
+        paper.decision_round(current, cycle)
+        next_paper_decision = time.monotonic() + paper_decision_interval
+
+    heartbeat = _HeartbeatRefresher(output / "heartbeat.json")
 
     def stage(name: str, reason: str | None = None, next_check: float | None = None):
-        atomic_json(
-            output / "heartbeat.json",
+        heartbeat.record(
             {
                 "cycle_in_progress": cycle,
                 "stage": name,
-                "updated": time.time(),
                 "reason": reason,
                 "next_check": next_check,
                 "goal_id": (goal or {}).get("id"),
-                "scope": "Last entered loop stage, not a verified optimizer or acceptance counter",
-            },
+            }
         )
 
-    with ExitStack() as scopes:
+    with ExitStack() as scopes, heartbeat:
         if paper is not None:
             scopes.enter_context(paper)
         while cycles == 0 or cycle < cycles:
@@ -135,6 +217,10 @@ def learn_loop(
             stage("preparing-verified-inputs")
             prepare_inputs(root, current_pool, suite)
             atomic_json(live, current)
+            # Independent owned-CPU pilots can run while remote inference or
+            # financial observers are unavailable. Only validated worker results
+            # may become accepted compute evidence, never master weights.
+            state["cpu_pilots"] = schedule_cpu_pilots(root, output / "cpu-pilots")
             save_progress(root, output, state)
             if paper is not None:
                 paper.phase("serving-rnd", cycle, current)
@@ -153,7 +239,12 @@ def learn_loop(
                     branch_path = output / f"accepted-{branch}.json"
                     atomic_json(branch_path, parent)
                     atomic_json(output.parent / "serving-active.json", parent)
-                    with managed_server(branch_path, root, output / f"accepted-{branch}.log"):
+                    with managed_server(
+                        branch_path,
+                        root,
+                        output / f"accepted-{branch}.log",
+                        lifecycle_role="accepted",
+                    ):
                         with waiting_researcher(
                             researcher_path, root, output / "researcher.log", fallback=parent
                         ) as helper:
@@ -179,8 +270,9 @@ def learn_loop(
             atomic_json(output.parent / "serving-active.json", current)
             # Serve the current version during R&D/waiting. Only our own inference
             # process is stopped for the training phase; never another user's server.
-            with managed_server(live, root, output / "live-server.log"):
+            with managed_server(live, root, output / "live-server.log", lifecycle_role="accepted"):
                 stage("serving-research")
+                maybe_run_paper_decisions()
                 if (
                     current.get("resources", {}).get("public_benchmarks")
                     and not current["resources"].get("public_baseline")
@@ -331,6 +423,7 @@ def learn_loop(
                             while time.monotonic() < deadline:
                                 if paper is not None:
                                     paper.check()
+                                    maybe_run_paper_decisions()
                                 time.sleep(max(0, min(1, deadline - time.monotonic())))
                         continue
             # Avoid training indefinitely on a stale dataset. Its immutable prior
@@ -448,6 +541,17 @@ def learn_loop(
             if paper is not None:
                 paper.phase("candidate-planning-and-training-started", cycle, current)
             try:
+                optional_researcher = training_researcher(root, researcher_path)
+                if optional_researcher is None:
+                    atomic_json(
+                        output / f"optional-helper-deferred-{cycle:04d}.json",
+                        {
+                            "cycle": cycle,
+                            "profile": str(researcher_path),
+                            "reason": "Optional remote researcher disabled by operator or origin policy",
+                            "scope": "Accepted local planner and A/B training continue; no remote model loaded or origin re-enabled",
+                        },
+                    )
                 result = evolve(
                     current,
                     root,
@@ -455,7 +559,7 @@ def learn_loop(
                     trial,
                     suite,
                     gates,
-                    researcher_path,
+                    optional_researcher,
                     generations=1,
                     train_timeout=train_timeout,
                 )

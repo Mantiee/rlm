@@ -62,6 +62,11 @@ def test_recoverable_amp_overflow_is_not_counted_as_learning():
     assert health.report()["amp_skipped_steps"] == 1
 
 
+def test_training_health_receipt_has_writer_owned_timestamp():
+    report = TrainingHealth().report(now=1234.5)
+    assert report["updated_at"] == 1234.5
+
+
 @pytest.mark.parametrize(
     "skipped,field", [(False, "grad_norm"), (True, "loss"), (True, "eval_loss")]
 )
