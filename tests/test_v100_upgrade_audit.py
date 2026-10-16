@@ -493,7 +493,7 @@ def test_remote_outage_keeps_verified_current_master_available(tmp_path, monkeyp
 
     from rlm.v100 import competition, remote_helper
 
-    source = {"runtime": {"base_url": "remote"}}
+    source = {"runtime": {"base_url": "http://192.168.1.10:11435"}}
     monkeypatch.setattr(competition, "load_profile", lambda *args: source)
     monkeypatch.setattr(remote_helper, "remote_profile", lambda p: True)
 
