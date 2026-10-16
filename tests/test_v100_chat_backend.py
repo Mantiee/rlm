@@ -768,3 +768,68 @@ def test_lifecycle_omits_disabled_optional_planner(tmp_path, monkeypatch):
 
     assert snapshot["planner"] is None
     assert snapshot["profiles"] == [accepted]
+
+
+def test_cpu_prewarm_is_single_flight_and_requests_do_not_restart_hash(tmp_path, monkeypatch):
+    import time
+
+    accepted, _, _ = admitted(tmp_path, monkeypatch)
+    manager = chat_backend.AcceptedCPUChat(tmp_path, tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    original = chat_backend.file_hash
+
+    def slow(model, **kwargs):
+        calls.append(model)
+        entered.set()
+        release.wait(2)
+        return original(model, **kwargs)
+
+    monkeypatch.setattr(chat_backend, "file_hash", slow)
+    manager.prewarm(accepted)
+    assert entered.wait(1)
+    task = manager.verification
+    try:
+        for _ in range(3):
+            with pytest.raises(RuntimeError, match="warming"):
+                manager.verify_weights(Path(accepted["server"]["model"]), time.monotonic() + 90)
+        assert len(calls) == 1
+        assert manager.verification is task
+    finally:
+        release.set()
+    assert task["done"].wait(1)
+    digest = manager.verify_weights(Path(accepted["server"]["model"]), time.monotonic() + 1)
+    assert len(digest) == 64
+    assert manager.verification is task
+
+
+@pytest.mark.parametrize("cancel", ["close", "stop", "budget"])
+def test_cpu_prewarm_has_finite_budget_and_observes_cancellation(tmp_path, monkeypatch, cancel):
+    accepted, _, _ = admitted(tmp_path, monkeypatch)
+    manager = chat_backend.AcceptedCPUChat(tmp_path, tmp_path)
+    entered = threading.Event()
+
+    def checking(model, *, check, progress):
+        entered.set()
+        while True:
+            check()
+            threading.Event().wait(0.005)
+
+    monkeypatch.setattr(chat_backend, "file_hash", checking)
+    manager.prewarm(accepted, budget=0.05 if cancel == "budget" else 10)
+    assert entered.wait(1)
+    task = manager.verification
+    if cancel == "close":
+        manager.close()
+    elif cancel == "stop":
+        manager.stop.set()
+    assert task["done"].wait(1)
+    assert isinstance(task["failure"], TimeoutError if cancel == "budget" else RuntimeError)
+    assert manager.client is None
+
+
+@pytest.mark.parametrize("budget", [0, -1, 601, float("inf"), float("nan")])
+def test_prewarm_rejects_unbounded_budget(tmp_path, budget):
+    manager = chat_backend.AcceptedCPUChat(tmp_path, tmp_path / "chat")
+    with pytest.raises(ValueError, match="Prewarm budget"):
+        manager.prewarm({}, budget=budget)

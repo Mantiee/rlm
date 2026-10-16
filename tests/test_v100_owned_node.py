@@ -22,10 +22,10 @@ from rlm.v100.common import atomic_json
     [
         ({"gpu_ready": False}, ["dedicated-gpu-not-ready"]),
         ({"elapsed": 150.001}, ["worker-time-budget"]),
-        ({"rss": owned_node.CPU_RAM + 1}, ["worker-host-rss-budget"]),
+        ({"rss": owned_node.CUDA_RAM + 1}, ["worker-host-rss-budget"]),
         ({"available": 2**30 - 1}, ["host-ram-reserve"]),
         (
-            {"gpu_ready": False, "rss": owned_node.CPU_RAM + 1},
+            {"gpu_ready": False, "rss": owned_node.CUDA_RAM + 1},
             ["dedicated-gpu-not-ready", "worker-host-rss-budget"],
         ),
     ],
@@ -43,7 +43,7 @@ def test_compute_guard_distinguishes_gpu_host_rss_and_shared_ram(changes, reason
     assert failure["reasons"] == reasons
     assert failure["host_rss_bytes"] == measurements["rss"]
     assert failure["host_available_bytes"] == measurements["available"]
-    assert failure["host_rss_limit_bytes"] == 768 * 2**20
+    assert failure["host_rss_limit_bytes"] == 1536 * 2**20
     assert failure["elapsed_limit_seconds"] == 150
 
 
@@ -58,6 +58,38 @@ def test_compute_guard_keeps_exact_existing_resource_boundaries_and_cpu_independ
         )
         is None
     )
+
+
+@pytest.mark.parametrize("cuda_job,limit", [(False, 768 * 2**20), (True, 1536 * 2**20)])
+def test_compute_host_rss_budget_is_device_specific(cuda_job, limit):
+    measurements = dict(cuda_job=cuda_job, gpu_ready=True, elapsed=2.002, available=14 * 2**30)
+    assert owned_node.compute_reserve_failure(**measurements, rss=limit) is None
+    failure = owned_node.compute_reserve_failure(**measurements, rss=limit + 1)
+    assert failure["host_rss_limit_bytes"] == limit
+    assert failure["reasons"] == ["worker-host-rss-budget"]
+    measured = owned_node.compute_reserve_failure(**measurements, rss=911847424)
+    assert (measured is None) is cuda_job
+
+
+@pytest.mark.parametrize(
+    "limit,accepted", [(768 * 2**20, True), (1536 * 2**20, True), (2**31, False), (True, False)]
+)
+def test_cuda_receipt_accepts_only_exact_current_or_historical_budget(limit, accepted):
+    value = dict(
+        device="cuda",
+        reasons=["worker-time-budget"],
+        gpu_ready=True,
+        elapsed_seconds=151,
+        host_rss_bytes=911847424,
+        host_available_bytes=14 * 2**30,
+        host_rss_limit_bytes=limit,
+        host_available_minimum_bytes=2**30,
+        elapsed_limit_seconds=150,
+    )
+    result = remote_nodes.cuda_resource_failure(value)
+    assert (result is not None) is accepted
+    if accepted:
+        assert result["host_rss_limit_bytes"] == limit
 
 
 def test_cuda_worker_records_measured_host_rss_failure_and_releases_gpu(tmp_path, monkeypatch):
@@ -79,7 +111,7 @@ def test_cuda_worker_records_measured_host_rss_failure_and_releases_gpu(tmp_path
         psutil,
         "Process",
         lambda pid: SimpleNamespace(
-            memory_info=lambda: SimpleNamespace(rss=owned_node.CPU_RAM + 1)
+            memory_info=lambda: SimpleNamespace(rss=owned_node.CUDA_RAM + 1)
         ),
     )
     monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(available=4 * 2**30))
@@ -94,7 +126,7 @@ def test_cuda_worker_records_measured_host_rss_failure_and_releases_gpu(tmp_path
     status = json.loads((folder / "status.json").read_text())
     assert status["state"] == "failed"
     assert status["detail"] == "Owned compute reserve stopped: worker-host-rss-budget"
-    assert status["resource_failure"]["host_rss_bytes"] == 768 * 2**20 + 1
+    assert status["resource_failure"]["host_rss_bytes"] == 1536 * 2**20 + 1
     assert status["resource_failure"]["reasons"] == ["worker-host-rss-budget"]
     assert process.returncode == -9
     assert not node.gpu_lock.locked()
@@ -329,9 +361,9 @@ def test_bridge_preserves_bounded_cuda_resource_failure_diagnostic(tmp_path, mon
         "reasons": ["worker-host-rss-budget"],
         "gpu_ready": True,
         "elapsed_seconds": 4.0,
-        "host_rss_bytes": 768 * 2**20 + 1,
+        "host_rss_bytes": 1536 * 2**20 + 1,
         "host_available_bytes": 4 * 2**30,
-        "host_rss_limit_bytes": 768 * 2**20,
+        "host_rss_limit_bytes": 1536 * 2**20,
         "host_available_minimum_bytes": 2**30,
         "elapsed_limit_seconds": 150,
         "arbitrary_log": "discard this",

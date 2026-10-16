@@ -99,7 +99,7 @@ def test_cuda_terminal_failure_requires_valid_receipt_and_persisted_cooldown(tmp
     diagnostic = {
         "device": "cuda",
         "reasons": ["worker-time-budget"],
-        "host_rss_limit_bytes": 768 * 2**20,
+        "host_rss_limit_bytes": 1536 * 2**20,
         "host_available_minimum_bytes": 2**30,
         "elapsed_limit_seconds": 150,
         "gpu_ready": True,

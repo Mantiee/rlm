@@ -44,8 +44,12 @@ def cuda_resource_failure(value: object) -> dict | None:
         )
     ):
         return None
+    # Retain measured receipts from the previous dedicated CUDA budget during retries.
+    rss_limit = value.get("host_rss_limit_bytes")
+    if type(rss_limit) is not int or rss_limit not in (768 * 2**20, 1536 * 2**20):
+        return None
     expected = {
-        "host_rss_limit_bytes": 768 * 2**20,
+        "host_rss_limit_bytes": rss_limit,
         "host_available_minimum_bytes": 2**30,
         "elapsed_limit_seconds": 150,
     }

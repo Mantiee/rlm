@@ -20,18 +20,20 @@ from pathlib import Path
 MODELS = {"gemma4:e2b-it-q4_K_M", "gemma4:e4b-it-q4_K_M"}
 CONTRACT = "synta-dedicated-linux-v1"
 CPU_RAM = 768 * 2**20
+CUDA_RAM = 1536 * 2**20
 
 
 def compute_reserve_failure(
     *, cuda_job: bool, gpu_ready: bool, elapsed: float, rss: int, available: int
 ) -> dict | None:
     """Explain a fixed-kernel stop without exposing arbitrary logs or changing limits."""
+    rss_limit = CUDA_RAM if cuda_job else CPU_RAM
     reasons = []
     if cuda_job and not gpu_ready:
         reasons.append("dedicated-gpu-not-ready")
     if not math.isfinite(elapsed) or elapsed < 0 or elapsed > 150:
         reasons.append("worker-time-budget")
-    if type(rss) is not int or rss < 0 or rss > CPU_RAM:
+    if type(rss) is not int or rss < 0 or rss > rss_limit:
         reasons.append("worker-host-rss-budget")
     if type(available) is not int or available < 2**30:
         reasons.append("host-ram-reserve")
@@ -44,7 +46,7 @@ def compute_reserve_failure(
         "elapsed_seconds": round(elapsed, 3) if math.isfinite(elapsed) else None,
         "host_rss_bytes": rss if type(rss) is int else None,
         "host_available_bytes": available if type(available) is int else None,
-        "host_rss_limit_bytes": CPU_RAM,
+        "host_rss_limit_bytes": rss_limit,
         "host_available_minimum_bytes": 2**30,
         "elapsed_limit_seconds": 150,
     }

@@ -74,7 +74,7 @@ def test_lost_worker_lease_requeued_and_cancelled_job_not_reclaimed(tmp_path, mo
     assert compute_worker.claim(mailbox, "third") is None
 
 
-def failed_cuda_receipt(tmp_path, mailbox, identity, diagnostic=True):
+def failed_cuda_receipt(tmp_path, mailbox, identity, diagnostic=True, rss_limit=1536 * 2**20):
     job_path = tmp_path / "research/compute-jobs" / identity / "job.json"
     job = compute_worker.read_json(job_path)
     job["device"] = "cuda"
@@ -99,9 +99,9 @@ def failed_cuda_receipt(tmp_path, mailbox, identity, diagnostic=True):
             "reasons": ["worker-host-rss-budget"],
             "gpu_ready": True,
             "elapsed_seconds": 4.0,
-            "host_rss_bytes": 768 * 2**20 + 1,
+            "host_rss_bytes": rss_limit + 1,
             "host_available_bytes": 4 * 2**30,
-            "host_rss_limit_bytes": 768 * 2**20,
+            "host_rss_limit_bytes": rss_limit,
             "host_available_minimum_bytes": 2**30,
             "elapsed_limit_seconds": 150,
         }
@@ -109,9 +109,12 @@ def failed_cuda_receipt(tmp_path, mailbox, identity, diagnostic=True):
     atomic_json(destination / "receipt.json", result)
 
 
-def test_cuda_failure_persists_diagnostic_and_cooldown_before_retry(tmp_path, monkeypatch):
+@pytest.mark.parametrize("rss_limit", [768 * 2**20, 1536 * 2**20])
+def test_cuda_failure_persists_diagnostic_and_cooldown_before_retry(
+    tmp_path, monkeypatch, rss_limit
+):
     mailbox, identity = configured(tmp_path, monkeypatch)
-    failed_cuda_receipt(tmp_path, mailbox, identity)
+    failed_cuda_receipt(tmp_path, mailbox, identity, rss_limit=rss_limit)
     before = time.time()
 
     distributed_compute.tick(tmp_path)
@@ -139,6 +142,30 @@ def test_cuda_failure_persists_diagnostic_and_cooldown_before_retry(tmp_path, mo
         },
     )
     assert not (mailbox / "claims" / identity / "lease.json").exists()
+    # Historical budget receipts must remain retryable once their cooldown expires.
+    monkeypatch.setattr(remote_nodes.time, "time", lambda: state["retry_not_before"] + 1)
+    calls = []
+    monkeypatch.setattr(
+        remote_nodes, "request", lambda *args, **kwargs: calls.append(args) or {"state": "running"}
+    )
+    job = compute_worker.read_json(tmp_path / "research/compute-jobs" / identity / "job.json")
+    remote_nodes.cpu_bridge(
+        tmp_path,
+        {
+            "cpu_ready": True,
+            "cpu_slots": 1,
+            "cpu_active": 0,
+            "ready": True,
+            "free_vram_gib": 3.0,
+            "temperature_c": 40,
+            "generating": False,
+            "gpu_compute_claimed": False,
+            "kernel_sha256": job["kernel_sha256"],
+            "worker_sha256": job["worker_sha256"],
+        },
+    )
+    assert calls and calls[0][0] == "GET"
+    assert (mailbox / "claims" / identity / "lease.json").is_file()
 
 
 def test_cuda_failure_without_structured_diagnostic_is_terminal(tmp_path, monkeypatch):
