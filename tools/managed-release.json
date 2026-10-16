@@ -34,7 +34,7 @@
     "rlm/v100/file_lock.py": "0067967286d37a66bccaf5c3ab5c9db10b1e43cc69aa8677965e6fd55a97c2d7",
     "rlm/v100/financial_snapshot.py": "a07f748dda727d4f24f388667f401f925471dc3501d61f46c844a9a5a9b7b942",
     "rlm/v100/github_dashboard.py": "551ae6c214dc2a2fc94752e4ce1af14dddd9d26c828e03be2053b44628e375d6",
-    "rlm/v100/goal_learning.py": "87f36cc68a6f164d503bea6513204574f8cdf16112c7d792a5dc5abc4c0ffb87",
+    "rlm/v100/goal_learning.py": "94ba83874b1cc4765008e306e9138b5bb99d4003a4f58339e7038d45189ef134",
     "rlm/v100/income_work.py": "d516fe7def7b83f56377764bd9aa765f8dec438c5940e52e4cc9a0bdb39c102d",
     "rlm/v100/inference_benchmark.py": "33c1198120b98441d669cdac9e28c00e8f3cc88ed18d0edd3baa5d9b651a4345",
     "rlm/v100/knowledge_rag.py": "cf0d7d2cb207263761d2e252d30e0575c014e7ac6ebfd84cc08cbe1ef3587989",
@@ -124,7 +124,8 @@
     "tools/update-synta-v99.sh": "b78f2e702d60077cf71c609ec9c6eaf8d60c05b22a19918c1987e68ed764fb93",
     "tools/watch-rtx3090-helper.ps1": "4facd49900037702011206ef008c60bf38a3d112b9814dfd6e5f8b6e39fac9b1",
     "tools/windows-maintenance.ps1": "dc23007cead3f2813b311cf638c8a258211df0d7e485480dae14933c36f8db4c",
-    "rlm/v100/evaluation.py": "ee05bb31cdb7e2c8eebbef9edf3ee6cea5159907f1fca6482e068596a746724d"
+    "rlm/v100/evaluation.py": "ee05bb31cdb7e2c8eebbef9edf3ee6cea5159907f1fca6482e068596a746724d",
+    "rlm/v100/research_contract.py": "70629d6da3b5e7581879beccceba24ee0717e44f2f1255776634047d4ef416dd"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

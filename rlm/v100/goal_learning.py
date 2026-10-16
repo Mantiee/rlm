@@ -56,19 +56,47 @@ def database(root: Path):
         db.close()
 
 
+def evidence_capacity(root: Path) -> dict:
+    """Read an explicit bounded host budget; never expand or delete evidence implicitly."""
+    path = root / "research/goal-learning/capacity.json"
+    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Goal evidence capacity configuration escaped its root")
+    limits = {"max_observations": 8192, "minimum_free_disk_gib": 2}
+    if path.exists():
+        with path.open("rb") as handle:
+            raw = handle.read(4097)
+        if len(raw) > 4096:
+            raise ValueError("Goal evidence capacity configuration exceeds 4 KiB")
+        configured = json.loads(raw)
+        if not isinstance(configured, dict) or set(configured) - set(limits):
+            raise ValueError("Unknown goal evidence capacity configuration fields")
+        limits.update(configured)
+    maximum = limits["max_observations"]
+    reserve = limits["minimum_free_disk_gib"]
+    if type(maximum) is not int or not 8192 <= maximum <= 131072:
+        raise ValueError("Goal evidence max_observations must be an integer 8192..131072")
+    if type(reserve) not in (int, float) or not math.isfinite(reserve) or not 2 <= reserve <= 64:
+        raise ValueError("Goal evidence minimum_free_disk_gib must be finite 2..64")
+    return limits
+
+
 def observe(root: Path, url: str, field: str = "") -> dict:
     """Archive publicly fetched evidence, optionally selecting a JSON numeric metric."""
     from rlm.v100.research_tools import TextOnly, download_page
 
     if not isinstance(field, str) or len(field) > 200:
         raise ValueError("JSON field path exceeds budget")
+    capacity = evidence_capacity(root)
     with database(root) as db:
-        if db.execute("SELECT count(*) FROM observations").fetchone()[0] >= 8192:
-            raise ValueError(
-                "Goal evidence archive budget exhausted; retain snapshots and review capacity"
-            )
-    if shutil.disk_usage(root).free < 2 * 2**30:
-        raise ValueError("Goal evidence requires 2 GiB of free disk headroom")
+        count = db.execute("SELECT count(*) FROM observations").fetchone()[0]
+    if count >= capacity["max_observations"]:
+        raise ValueError(
+            f"Goal evidence archive budget exhausted: {count}/{capacity['max_observations']} observations; retain snapshots and review capacity"
+        )
+    if shutil.disk_usage(root).free < capacity["minimum_free_disk_gib"] * 2**30:
+        raise ValueError(
+            f"Goal evidence requires {capacity['minimum_free_disk_gib']} GiB of free disk headroom"
+        )
     resolved, body = download_page(url, max_bytes=256 * 1024)
     acquired = time.time()
     value = None
@@ -104,8 +132,14 @@ def observe(root: Path, url: str, field: str = "") -> dict:
     retrieval = record(root, resolved, row["body_sha256"])
     identity = digest(row)
     archive = root / "research/goal-learning/sources" / (identity + ".json")
-    atomic_json(archive, {"observation": row, "body": body})
     with database(root) as db:
+        db.execute("BEGIN IMMEDIATE")
+        count = db.execute("SELECT count(*) FROM observations").fetchone()[0]
+        if count >= capacity["max_observations"]:
+            raise ValueError(
+                f"Goal evidence archive budget exhausted: {count}/{capacity['max_observations']} observations; retain snapshots and review capacity"
+            )
+        atomic_json(archive, {"observation": row, "body": body})
         db.execute(
             "INSERT OR IGNORE INTO observations VALUES (?, ?, ?)",
             (identity, acquired, json.dumps(row)),
@@ -425,11 +459,13 @@ def status(root: Path) -> dict:
     admission = root / "research/goal-learning/admission.json"
     path = root / "research/goal-learning/ledger.sqlite3"
     items, all_items = [], []
+    observation_count = 0
     if path.exists():
         db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
         db.row_factory = sqlite3.Row
         try:
             db.execute("BEGIN")
+            observation_count = db.execute("SELECT count(*) FROM observations").fetchone()[0]
             items = list(
                 db.execute(
                     "SELECT id, due, data, outcome FROM forecasts ORDER BY due DESC LIMIT 16"
@@ -471,8 +507,19 @@ def status(root: Path) -> dict:
     shadow = json.loads(policy_path.read_text()) if policy_path.exists() else None
     if shadow and shadow.get("goal_id") != (goal or {}).get("id"):
         shadow = None
+    capacity = evidence_capacity(root)
     return {
         "goal_id": goal["id"] if goal else None,
+        "evidence_capacity": {
+            **capacity,
+            "observations": observation_count,
+            "remaining": max(0, capacity["max_observations"] - observation_count),
+            "state": "exhausted"
+            if observation_count >= capacity["max_observations"]
+            else "near limit"
+            if observation_count >= capacity["max_observations"] * 0.9
+            else "available",
+        },
         "cpu_shadow_policy": shadow,
         "resolved_total": sum(item["outcome"] is not None for item in active_items),
         "pending_total": sum(
