@@ -303,3 +303,28 @@ def test_source_fact_after_navigation_reaches_prompt_with_4000_character_cap(wor
     assert "may be incomplete" in prompts[0]["content"]
     assert "fetch(source URL)" in prompts[0]["content"]
     assert "no extra request is made automatically" in prompts[0]["content"]
+
+
+def test_model_contract_distinguishes_relative_artifact_names_from_code_write_paths(
+    world, monkeypatch
+):
+    root, _, evidence, proposal, _ = world
+    prompts = []
+
+    def model(client, messages, **kwargs):
+        prompts.extend(messages)
+        schema = kwargs["response_format"]["schema"]
+        assert "Relative output path" in schema["properties"]["artifacts"]["items"]["description"]
+        assert "report.json" in schema["properties"]["code"]["description"]
+        return {"content": json.dumps(proposal)}
+
+    monkeypatch.setattr(lab, "native_turn", model)
+    receipt = lab.propose_and_run(root, "A", object(), [evidence["id"]])
+    assert receipt["state"] == "executed-unvalidated"
+    system = prompts[0]["content"]
+    assert "artifacts array MUST contain relative paths" in system
+    assert "never /work/report.json" in system
+    assert "code can write /work/report.json, but list only report.json" in system
+    assert receipt["proposal"]["artifacts"] == ["result.json"]
+    with pytest.raises(ValueError, match="inside /work"):
+        lab.validate_specification({**proposal, "artifacts": ["/work/result.json"]})

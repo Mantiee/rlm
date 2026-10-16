@@ -23,6 +23,10 @@ def specification_schema() -> dict:
             ("failure_condition", 1200),
         )
     }
+    properties["code"]["description"] = (
+        "Write declared output files inside /work, e.g. /work/report.json; "
+        "the artifacts array must instead name the relative path report.json"
+    )
     properties.update(
         seconds={"type": "integer", "minimum": 1, "maximum": 60},
         artifacts={
@@ -30,7 +34,11 @@ def specification_schema() -> dict:
             "minItems": 1,
             "maxItems": 8,
             "uniqueItems": True,
-            "items": {"type": "string", "maxLength": 128},
+            "items": {
+                "type": "string",
+                "maxLength": 128,
+                "description": "Relative output path inside /work, e.g. report.json; never /work/report.json or another absolute path",
+            },
         },
     )
     return {
@@ -284,7 +292,9 @@ def propose_and_run(root: Path, branch: str, client, evidence_ids: list[str]) ->
                 "sandbox: /work files, stdlib, fetch(url) for bounded public GETs only; no credentials, "
                 "paid services, orders, submissions or external messages. Write declared nonempty output "
                 "artifacts: the code MUST write every declared file under /work; stdout alone is not "
-                "a declared artifact. Use actual archived source facts or UNKNOWN. Do not invent "
+                "a declared artifact. The artifacts array MUST contain relative paths such as "
+                "report.json, never /work/report.json or any absolute path. The code can write "
+                "/work/report.json, but list only report.json in artifacts. Use actual archived source facts or UNKNOWN. Do not invent "
                 "example companies, mock bounty programs, rewards, payout probabilities, competition "
                 "scores or financial tables. Do not treat previous generated output as evidence. "
                 "Choose a source-grounded useful local artifact instead. No banner-only fake "

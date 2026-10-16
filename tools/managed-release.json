@@ -127,7 +127,7 @@
     "rlm/v100/evaluation.py": "ee05bb31cdb7e2c8eebbef9edf3ee6cea5159907f1fca6482e068596a746724d",
     "rlm/v100/research_contract.py": "70629d6da3b5e7581879beccceba24ee0717e44f2f1255776634047d4ef416dd",
     "rlm/v100/goal_observer.py": "b8ffd1e47a8b0cbc51c51084f3ee80999f8cd1560ee8a22fb463b7964156face",
-    "rlm/v100/income_experiment.py": "6725b77f58bc9d567ce2abdbff0bf3ef5189262327173aa7aa55fdd4ccb87177",
+    "rlm/v100/income_experiment.py": "6e4e493d5f62165fb63d3389cb4f5b3353bc469f362689e026be3e13f3929b01",
     "rlm/v100/goal_compute.py": "cd7637f5f2332cee771e28d7f82b6c9176c2055b6f5f540a4d2c62c2d9b787ba"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
