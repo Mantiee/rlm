@@ -17,6 +17,7 @@ from rlm.v100.competition import (
     require_idle_gpu,
 )
 from rlm.v100.evaluation import evaluate_suite
+from rlm.v100.evaluation import resume_baseline as resume_development_baseline
 from rlm.v100.goals import load_goal, set_goal
 from rlm.v100.inference import generation_conditions
 from rlm.v100.protection import compare_reports, execution_hash, file_hash
@@ -348,6 +349,11 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     )
                     print("Reused complete matching baseline:", original_report, flush=True)
                 else:
+                    resumed = resume_development_baseline(
+                        root, serving, suite, directory / f"baseline-{context}.json"
+                    )
+                    if resumed:
+                        print("Resumed exact matching development baseline:", resumed, flush=True)
                     baseline = evaluate_suite(
                         client, serving, suite, directory / f"baseline-{context}.json"
                     )

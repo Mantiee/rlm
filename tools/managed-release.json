@@ -43,7 +43,7 @@
     "rlm/v100/managed_native.py": "02edcbfe842037816de65fe426ad5940bf3d180404da07034ebb5ee247d62376",
     "rlm/v100/managed_prepare.py": "68603387f6b2b8acf34cc1abc9126b31d241b710e5cc71c220e3d865eb560be5",
     "rlm/v100/market_adapters.py": "182d27a02f818c085ffc4bf09063b8ff5bd8d3af1e9d84f03d00f817213ab212",
-    "rlm/v100/mission.py": "a9b0694ac2c51e0f5edc595ec030dde9daca68930d8f8e0177020eef2bb6d68d",
+    "rlm/v100/mission.py": "5ab8ea1d369a496eb3d20c760115ad5e69f5653cc61675a01764f1d7a090fe00",
     "rlm/v100/mission_chat.py": "2a9c37178fdb00c4f95741b714e853a69c93e426603d619ef8999df341c6d439",
     "rlm/v100/mission_evidence.py": "633e1b30e0d7290aa5e89581a6399341473de2c988f6ead0857b5084eff89f51",
     "rlm/v100/mission_view.py": "b3e22d61a954e7dff6fec08e0ab709c9b717413904f39f038ce57ffc3a9a484d",
@@ -123,7 +123,8 @@
     "tools/update-synta-v98.sh": "671162e9fd27382b9449ea68661e1468b37537f62c1bfb906a97578f1fa5203f",
     "tools/update-synta-v99.sh": "b78f2e702d60077cf71c609ec9c6eaf8d60c05b22a19918c1987e68ed764fb93",
     "tools/watch-rtx3090-helper.ps1": "4facd49900037702011206ef008c60bf38a3d112b9814dfd6e5f8b6e39fac9b1",
-    "tools/windows-maintenance.ps1": "dc23007cead3f2813b311cf638c8a258211df0d7e485480dae14933c36f8db4c"
+    "tools/windows-maintenance.ps1": "dc23007cead3f2813b311cf638c8a258211df0d7e485480dae14933c36f8db4c",
+    "rlm/v100/evaluation.py": "ee05bb31cdb7e2c8eebbef9edf3ee6cea5159907f1fca6482e068596a746724d"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

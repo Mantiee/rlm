@@ -40,8 +40,9 @@ endpoint allowlist before credentials/network, absent credentials, timeout bound
 body deadline, HTTP 429 without retries, sanitized transport failures, CLI environment
 credentials, hidden prompts with restoration, and CLI sanitized error/exit status.
 Targeted Ruff lint and format checks passed; `git diff --check` reported no errors.
-Only mocked transport was exercised. These files remain local and undeployed;
-no release manifest or other production module was changed by this subtask.
+Only mocked transport was exercised during development. Deployment and account
+connection status are tracked separately in the project progress file; passing these
+tests does not establish an authenticated account connection.
 
 ## Private one-shot CLI
 
