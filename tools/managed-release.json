@@ -125,7 +125,8 @@
     "tools/watch-rtx3090-helper.ps1": "4facd49900037702011206ef008c60bf38a3d112b9814dfd6e5f8b6e39fac9b1",
     "tools/windows-maintenance.ps1": "dc23007cead3f2813b311cf638c8a258211df0d7e485480dae14933c36f8db4c",
     "rlm/v100/evaluation.py": "ee05bb31cdb7e2c8eebbef9edf3ee6cea5159907f1fca6482e068596a746724d",
-    "rlm/v100/research_contract.py": "70629d6da3b5e7581879beccceba24ee0717e44f2f1255776634047d4ef416dd"
+    "rlm/v100/research_contract.py": "70629d6da3b5e7581879beccceba24ee0717e44f2f1255776634047d4ef416dd",
+    "rlm/v100/goal_observer.py": "b8ffd1e47a8b0cbc51c51084f3ee80999f8cd1560ee8a22fb463b7964156face"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }
