@@ -1,4 +1,5 @@
 import copy
+import json
 
 import pytest
 
@@ -17,6 +18,18 @@ def population():
             for i in range(20)
         ],
     ]
+    for index, row in enumerate(train + validation):
+        source = "https://example.test/" + row["group"]
+        content = {
+            "horizon_seconds": 60,
+            "threshold": 1,
+            "target_at_prediction": {"source": source, "acquired": index, "value": 100},
+            "evidence_at_prediction": [{"source": source, "acquired": index, "value": 100}],
+        }
+        row["messages"] = [
+            {"role": "user", "content": json.dumps(content)},
+            {"role": "assistant", "content": "up"},
+        ]
     return train, validation
 
 

@@ -197,3 +197,109 @@ def test_tampered_source_archive_cannot_commission_code(world):
     with pytest.raises(ValueError, match="archive changed"):
         lab.execute_proposal(root, "A", goal["id"], proposal, [evidence["id"]])
     assert not calls
+
+
+def test_planning_receives_artifact_failure_and_real_sources_but_not_mock_payout_output(
+    world, monkeypatch
+):
+    root, goal, evidence, proposal, _ = world
+    folder = root / "research/income-work/local-commissions"
+    atomic_json(
+        folder / ("a" * 64 + ".json"),
+        {
+            "goal_id": goal["id"],
+            "state": "blocked or failed",
+            "experiment": {
+                "state": "blocked or failed",
+                "proposal": {"hypothesis": "Prepare a source checklist"},
+                "error": "Declared output artifact missing, empty, linked or oversized",
+                "result": {"output": "MOCK_PAYOUT_TABLE Example_Corp reward999999 probability0.99"},
+            },
+        },
+    )
+    messages_seen = []
+
+    def model(client, messages, **kwargs):
+        messages_seen.extend(messages)
+        return {"content": json.dumps(proposal)}
+
+    monkeypatch.setattr(lab, "native_turn", model)
+    lab.propose_and_run(root, "A", object(), [evidence["id"]])
+    system = messages_seen[0]["content"]
+    context = json.loads(messages_seen[1]["content"])
+    feedback = context["recent_execution_feedback"][0]
+    assert feedback["failure_class"] == "missing-declared-artifact"
+    assert feedback["prior_unverified_hypothesis"] == "Prepare a source checklist"
+    assert "actual archived source facts or UNKNOWN" in system
+    assert "MUST write every declared file" in system
+    assert "payout probabilities" in system and "mock bounty programs" in system
+    assert context["evidence"][0]["body_sha256"] == evidence["body_sha256"]
+    assert context["evidence"][0]["excerpt"] == evidence["excerpt"][:500]
+    encoded = json.dumps(messages_seen)
+    assert "MOCK_PAYOUT_TABLE" not in encoded and "Example_Corp" not in encoded
+    assert "reward999999" not in encoded and "probability0.99" not in encoded
+
+
+def test_feedback_is_three_recent_terminal_current_goal_attempts_only(world):
+    import os
+
+    root, goal, _, _, _ = world
+    folder = root / "research/income-work/local-commissions"
+    for index in range(5):
+        path = folder / f"{index:064x}.json"
+        atomic_json(
+            path,
+            {
+                "goal_id": goal["id"],
+                "state": "blocked or failed",
+                "experiment": {
+                    "proposal": {"hypothesis": f"hypothesis{index}"},
+                    "error": "Declared output artifact missing",
+                },
+            },
+        )
+        os.utime(path, (1000 + index, 1000 + index))
+    atomic_json(
+        folder / ("b" * 64 + ".json"), {"goal_id": "old-goal", "state": "blocked or failed"}
+    )
+    atomic_json(folder / ("c" * 64 + ".json"), {"goal_id": goal["id"], "state": "running"})
+    feedback = lab.recent_execution_feedback(root, goal["id"])
+    assert [row["prior_unverified_hypothesis"] for row in feedback] == [
+        "hypothesis4",
+        "hypothesis3",
+        "hypothesis2",
+    ]
+
+
+def test_feedback_checkpoint_size_is_bounded(world):
+    root, goal, _, _, _ = world
+    folder = root / "research/income-work/local-commissions"
+    folder.mkdir(parents=True)
+    (folder / ("a" * 64 + ".json")).write_bytes(b" " * (128 * 1024 + 1))
+    with pytest.raises(ValueError, match="128KiB"):
+        lab.recent_execution_feedback(root, goal["id"])
+
+
+def test_source_fact_after_navigation_reaches_prompt_with_4000_character_cap(world, monkeypatch):
+    root, _, _, proposal, _ = world
+    fact = "Official source: eligibility requires a reviewed submission."
+    body = "N" * 700 + fact + "Z" * 5000 + "OUTSIDE_ARCHIVED_EXCERPT"
+    monkeypatch.setattr(research_tools, "download_page", lambda url, max_bytes: (url, body))
+    source = goal_learning.observe(root, "https://example.org/long-official-terms")
+    prompts = []
+
+    def model(client, messages, **kwargs):
+        prompts.extend(messages)
+        return {"content": json.dumps(proposal)}
+
+    monkeypatch.setattr(lab, "native_turn", model)
+    monkeypatch.setattr(lab, "execute_proposal", lambda *a, **k: {"state": "prompt-test-only"})
+    lab.propose_and_run(root, "A", object(), [source["id"]])
+    context = json.loads(prompts[1]["content"])
+    excerpt = context["evidence"][0]["excerpt"]
+    assert fact in excerpt and len(excerpt) == 4000
+    assert excerpt == source["excerpt"][:4000]
+    assert "OUTSIDE_ARCHIVED_EXCERPT" not in excerpt
+    assert "may be incomplete" in prompts[0]["content"]
+    assert "fetch(source URL)" in prompts[0]["content"]
+    assert "no extra request is made automatically" in prompts[0]["content"]

@@ -27,7 +27,7 @@
     "rlm/v100/dashboard_redirect.py": "16ad41fba3760eae584c9963a48d223a1bb740d828057618b23e8b35c6ee757c",
     "rlm/v100/dashboard_snapshot.py": "ed41dbb9c0a79b82816f8e416d7f8b19983882d622235da17ef4372bae5fc4c5",
     "rlm/v100/decision_memory.py": "03af73225f358b6c7b0bd60318ea372dc2cd51c7537f1bab5de4dbc51cabb72b",
-    "rlm/v100/distributed_compute.py": "149b24461df0e6d4c3ace1528e921a3a702d29e79c77d90e164c263300c5af18",
+    "rlm/v100/distributed_compute.py": "26e43c9a4a310ae82940aceee49cda81958cf642c709bcdba607ea9862dbdce1",
     "rlm/v100/drones.py": "65d9232475e379770b8dceb84410dbb410c7b6ea41a86f272d1768a0f15685f9",
     "rlm/v100/execution_cost_gate.py": "b6822d271bd69f1953e4eb012d6bc7264e1c60dfdbff218d785eb40d65bae699",
     "rlm/v100/execution_costs.py": "b3d732e4fda0f9e9137e039205a915858486fa8d92afaf243824512a48e0eb99",
@@ -127,8 +127,8 @@
     "rlm/v100/evaluation.py": "ee05bb31cdb7e2c8eebbef9edf3ee6cea5159907f1fca6482e068596a746724d",
     "rlm/v100/research_contract.py": "70629d6da3b5e7581879beccceba24ee0717e44f2f1255776634047d4ef416dd",
     "rlm/v100/goal_observer.py": "b8ffd1e47a8b0cbc51c51084f3ee80999f8cd1560ee8a22fb463b7964156face",
-    "rlm/v100/income_experiment.py": "e16e4da49fe8d904cff74c7c0083eb0590cf4ca18c859edce8567594ea74dcb5",
-    "rlm/v100/goal_compute.py": "00e520fe0088cfe94895f816a102b888fe9a52cb37d69c9d5812fe98892e142b"
+    "rlm/v100/income_experiment.py": "6725b77f58bc9d567ce2abdbff0bf3ef5189262327173aa7aa55fdd4ccb87177",
+    "rlm/v100/goal_compute.py": "cd7637f5f2332cee771e28d7f82b6c9176c2055b6f5f540a4d2c62c2d9b787ba"
   },
   "node3060_installer": "tools/bootstrap-synta-3060.sh"
 }

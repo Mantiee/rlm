@@ -7,6 +7,7 @@ full-evidence training. Labels and source splits are validated on the host.
 import fcntl
 import json
 import time
+from decimal import Decimal
 from pathlib import Path
 
 from rlm.v100.activity import ActivityLog
@@ -14,7 +15,93 @@ from rlm.v100.common import atomic_json
 from rlm.v100.goal_learning import digest
 from rlm.v100.protection import file_hash
 
-SELECTION = "latest-with-two-validation-groups-v1"
+LEGACY_SELECTION = "latest-with-two-validation-groups-v1"
+CONFLICT_REJECTING_SELECTION = "latest-two-groups-unique-economic-episodes-v2"
+SELECTION = "latest-two-groups-unambiguous-economic-episodes-v3"
+
+
+def episode_number(value):
+    if value is None:
+        return None
+    if type(value) not in (int, float) or not Decimal(str(value)).is_finite():
+        raise ValueError("Invalid pre-outcome episode numeric feature")
+    return str(Decimal(str(value)).normalize())
+
+
+def deduplicated_records(
+    rows: list[dict], statistics: dict | None = None, reject_ambiguous: bool = False
+) -> list[dict]:
+    """Retain consistent episode representatives; exclude every ambiguous receipt."""
+    seen = {}
+    for row in rows:
+        value = json.loads(row["messages"][-2]["content"])
+        target = value["target_at_prediction"]
+        if (
+            not isinstance(row["group"], str)
+            or not row["group"]
+            or not isinstance(target["source"], str)
+            or not target["source"]
+            or any(
+                item is None
+                for item in (
+                    target["acquired"],
+                    target["value"],
+                    value["horizon_seconds"],
+                    value["threshold"],
+                )
+            )
+            or any(
+                not isinstance(item["source"], str)
+                or not item["source"]
+                or item["acquired"] is None
+                for item in value["evidence_at_prediction"]
+            )
+        ):
+            raise ValueError("Invalid pre-outcome episode provenance")
+        identity = json.dumps(
+            {
+                "target_series": row["group"],
+                "target": [
+                    target["source"],
+                    episode_number(target["acquired"]),
+                    episode_number(target["value"]),
+                ],
+                "horizon": episode_number(value["horizon_seconds"]),
+                "threshold": episode_number(value["threshold"]),
+                "evidence": [
+                    [
+                        item.get("id"),
+                        item["source"],
+                        episode_number(item["acquired"]),
+                        episode_number(item["value"]),
+                    ]
+                    for item in value["evidence_at_prediction"]
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        answer = row["messages"][-1]["content"]
+        if answer not in ("down", "flat", "up"):
+            raise ValueError("Invalid goal episode directional label")
+        if identity in seen:
+            seen[identity]["records"] += 1
+            if seen[identity]["answer"] != answer:
+                if reject_ambiguous:
+                    raise ValueError("Contradictory verified labels for the same economic episode")
+                seen[identity]["ambiguous"] = True
+            continue
+        seen[identity] = {"answer": answer, "row": row, "records": 1, "ambiguous": False}
+    selected = [item["row"] for item in seen.values() if not item["ambiguous"]]
+    if statistics is not None:
+        statistics.update(
+            raw_records=len(rows),
+            unique_consistent_episodes=len(selected),
+            ambiguous_episodes=sum(item["ambiguous"] for item in seen.values()),
+            ambiguous_records=sum(item["records"] for item in seen.values() if item["ambiguous"]),
+        )
+    return selected
 
 
 def selected_validation(rows: list[dict], limit: int = 16) -> list[dict]:
@@ -100,12 +187,22 @@ def propose(root: Path, branch: str = "A", device: str = "cpu") -> dict:
     if not dataset.exists():
         dataset.write_text(raw)
     train, validation = load_records(dataset, root / "research/state/splits.sqlite3")
+    raw_train, raw_validation = len(train), len(validation)
+    training_counts, validation_counts = {}, {}
+    train, validation = (
+        deduplicated_records(train, training_counts),
+        deduplicated_records(validation, validation_counts),
+    )
+    deduplication_counts = {"train": training_counts, "validation": validation_counts}
     if len(train) < 8 or len(validation) < 4 or len({r["group"] for r in validation}) < 2:
         return {
             "state": "blocked",
-            "reason": "Need 8 training and 4 source-disjoint validation outcomes across 2 validation groups",
+            "reason": "Need 8 unique training and 4 unique source-disjoint validation economic episodes across 2 validation groups",
             "train": len(train),
             "validation": len(validation),
+            "raw_training_receipts": raw_train,
+            "raw_validation_receipts": raw_validation,
+            "deduplication_counts": deduplication_counts,
             "training_groups": len({r["group"] for r in train}),
             "validation_groups": len({r["group"] for r in validation}),
             "next_evidence": "Collect genuinely independent outcome series; repeated observations do not create held-out source groups. Do not weaken the split to start a job.",
@@ -122,6 +219,10 @@ def propose(root: Path, branch: str = "A", device: str = "cpu") -> dict:
         "dataset_sha256": file_hash(dataset),
         "record_ids": [row["id"] for row in selected_train + selected_held_out],
         "selection": SELECTION,
+        "deduplication": "Exclude every receipt of conflicting-label episodes, otherwise first archived receipt per pre-outcome target series/source/acquired/value, horizon, threshold and ordered evidence identity/source/acquired/value; independently within immutable roles",
+        "deduplication_counts": deduplication_counts,
+        "unique_training_episodes": len(train),
+        "unique_validation_episodes": len(validation),
         "projection": "compact-v1: horizon, threshold, initial target and signal values/excerpts",
         "scope": "Small observational baseline; no causal, profit or master acceptance claim",
     }
@@ -231,11 +332,26 @@ def verify_job(root: Path, job: dict) -> None:
         raise ValueError("Goal compute dataset changed")
     train, validation = load_records(dataset, root / "research/state/splits.sqlite3")
     selection = provenance.get("selection")
-    if selection not in (None, SELECTION):
+    if selection not in (None, LEGACY_SELECTION, CONFLICT_REJECTING_SELECTION, SELECTION):
         raise ValueError("Unknown goal compute record selection")
+    if selection in (CONFLICT_REJECTING_SELECTION, SELECTION):
+        training_counts, validation_counts = {}, {}
+        train = deduplicated_records(
+            train, training_counts, selection == CONFLICT_REJECTING_SELECTION
+        )
+        validation = deduplicated_records(
+            validation, validation_counts, selection == CONFLICT_REJECTING_SELECTION
+        )
+        if selection == SELECTION and provenance.get("deduplication_counts") != {
+            "train": training_counts,
+            "validation": validation_counts,
+        }:
+            raise ValueError("Goal compute episode exclusion counts changed")
     selected_train = train[-48:]
     selected_held_out = (
-        selected_validation(validation) if selection == SELECTION else validation[-16:]
+        selected_validation(validation)
+        if selection in (LEGACY_SELECTION, CONFLICT_REJECTING_SELECTION, SELECTION)
+        else validation[-16:]
     )
     validate_selection(selected_train, selected_held_out)
     expected = selected_train + selected_held_out
