@@ -389,7 +389,7 @@ def waiting_researcher(
     profile_path: Path, root: Path, log_path: Path, fallback: dict | None = None
 ):
     """Retry only remote entry transport failures, never repeat work after yield."""
-    from rlm.v100.remote_helper import remote_profile
+    from rlm.v100.remote_helper import origin_enabled, remote_profile
 
     profile = load_profile(profile_path, root)
     if not remote_profile(profile):
@@ -398,10 +398,12 @@ def waiting_researcher(
         return
     from rlm.v100.mission_chat import preferences
 
-    if preferences(root).get("remote_helper_enabled", True) is False:
+    if preferences(root).get("remote_helper_enabled", True) is False or not origin_enabled(
+        root, profile["runtime"]["base_url"]
+    ):
         if fallback is None:
             raise RuntimeError(
-                "Remote GPU disabled by operator; no accepted serving master supplied"
+                "Remote GPU disabled by operator or origin policy; no accepted serving master supplied"
             )
         yield fallback
         return

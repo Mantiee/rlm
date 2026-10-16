@@ -1,5 +1,6 @@
 """Forward-only paper portfolios. No broker credentials or real order endpoints."""
 
+import copy
 import hashlib
 import json
 import re
@@ -136,6 +137,7 @@ def winning_payout(profile: dict, effective: Decimal, odds: Decimal) -> Decimal:
 class PaperBook:
     def __init__(self, root: Path, clock=utcnow, *, read_only: bool = False):
         self.root, self.clock = root, clock
+        self.decision_snapshots: dict[tuple[str, int], dict] = {}
         directory = root / "research/paper"
         path = directory / "ledger.sqlite3"
         if read_only:
@@ -446,6 +448,48 @@ class PaperBook:
         if budget + reserved > number(state["branches"][branch]["cash"]):
             raise ValueError("Insufficient unreserved paper cash")
 
+    def decision_snapshot(self, state: dict, branch: str, asof_sequence: int, symbol: str) -> dict:
+        """Only host-captured input can outlive unrelated append-only ledger events."""
+        if type(asof_sequence) is not int:
+            raise ValueError("Invalid paper decision sequence")
+        latest = self.sequence()
+        row = self.db.execute(
+            "SELECT time FROM events WHERE sequence=?", (asof_sequence,)
+        ).fetchone()
+        if row is None or asof_sequence > latest or timestamp(row["time"]) > self.clock():
+            raise ValueError("Invalid or future paper decision sequence")
+        snapshot = self.decision_snapshots.get((branch, asof_sequence))
+        if snapshot is None:
+            if asof_sequence != latest:
+                raise ValueError("Decision context changed; no host-captured input snapshot")
+            snapshot = self.context_snapshot(branch)
+
+        def portfolio(value):
+            # Quote-only high-water marks may advance; pause/cash/positions must not.
+            return {key: item for key, item in value.items() if key != "peak"}
+
+        instrument = snapshot["instruments"].get(symbol)
+        fee_id = (instrument or {}).get("fee_profile")
+        if (
+            portfolio(snapshot["portfolio"]) != portfolio(state["branches"][branch])
+            or snapshot["pending"] != [o for o in state["orders"] if o["branch"] == branch]
+            or snapshot["risk"] != state["risk"]
+            or snapshot["currency"] != state["currency"]
+            or snapshot["goal"] != state["goal"]
+            or instrument != state["instruments"].get(symbol)
+            or snapshot["fee_profiles"].get(fee_id) != state["fee_profiles"].get(fee_id)
+            or symbol in state["outcomes"]
+        ):
+            raise ValueError("Decision portfolio, instrument or cost policy changed; recompute")
+        quote = snapshot["quotes"].get(symbol)
+        if quote:
+            if any(
+                timestamp(quote[key]) > timestamp(row["time"])
+                for key in ("available_at", "observed_at")
+            ):
+                raise ValueError("Future quote cannot enter paper decision inputs")
+        return snapshot
+
     def decide(self, branch: str, proposal: dict, asof_sequence: int) -> dict:
         if branch not in ("A", "B"):
             raise ValueError("Unknown paper branch")
@@ -458,8 +502,9 @@ class PaperBook:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             state = self.state()
-            if asof_sequence != self.sequence():
-                raise ValueError("Decision context changed; recompute instead of using future data")
+            snapshot = self.decision_snapshot(
+                state, branch, asof_sequence, proposal.get("symbol", "")
+            )
             order = {
                 **proposal,
                 "id": uuid.uuid4().hex,
@@ -492,9 +537,35 @@ class PaperBook:
                 profile = state["fee_profiles"][instrument["fee_profile"]]
                 if timestamp(profile["valid_until"]) <= self.clock():
                     raise ValueError("Fee evidence expired; new decisions cannot assume zero costs")
+                input_quote = snapshot["quotes"].get(symbol)
+                if input_quote is None:
+                    raise ValueError("No quote was available in the model decision input")
+                age = (self.clock() - timestamp(input_quote["observed_at"])).total_seconds()
+                if not 0 <= age <= state["risk"]["quote_age_seconds"]:
+                    raise ValueError("Model input quote is stale or future; recompute")
+                input_cost_blocker = execution_cost_blocker(profile, input_quote)
+                if input_cost_blocker:
+                    raise ValueError(input_cost_blocker)
                 cost_blocker = execution_cost_blocker(profile, state["quotes"][symbol])
                 if cost_blocker:
                     raise ValueError(cost_blocker)
+                side = (
+                    state["branches"][branch]["positions"].get(symbol, {}).get("side")
+                    if proposal["action"] == "close"
+                    else proposal.get("side", "long")
+                )
+                buying = (proposal["action"] == "open") == (side == "long")
+                price_field = "ask" if buying else "bid"
+                reference = number(input_quote[price_field], positive=True)
+                current = number(state["quotes"][symbol][price_field], positive=True)
+                adverse = (current - reference) if buying else (reference - current)
+                if adverse > reference * number(profile["slippage_bps"]) / 10000:
+                    raise ValueError("Quote moved beyond modeled slippage; recompute")
+                if asof_sequence != self.sequence():
+                    # A slow model's quote cannot silently become a fresh execution reference.
+                    order["decision_reference_price"] = str(reference)
+                    order["decision_price_field"] = price_field
+                    order["decision_slippage_bps"] = profile["slippage_bps"]
                 if proposal["action"] == "open":
                     if (
                         self.clock() - timestamp(state["quotes"][symbol]["observed_at"])
@@ -530,7 +601,9 @@ class PaperBook:
                 state["orders"].append(order)
             instrument = state["instruments"].get(proposal.get("symbol"), {})
             decision_inputs = {
-                "quote": state["quotes"].get(proposal.get("symbol")),
+                "quote": snapshot["quotes"].get(proposal.get("symbol")),
+                "latest_quote_at_acceptance": state["quotes"].get(proposal.get("symbol")),
+                "asof_sequence": asof_sequence,
                 "instrument": instrument,
                 "fee_profile": state["fee_profiles"].get(instrument.get("fee_profile")),
                 "risk": state["risk"],
@@ -953,6 +1026,22 @@ class PaperBook:
                     }
                 )
                 continue
+            if "decision_reference_price" in order:
+                reference = number(order["decision_reference_price"], positive=True)
+                field = order["decision_price_field"]
+                current = number(quote[field], positive=True)
+                adverse = (current - reference) if field == "ask" else (reference - current)
+                if adverse > reference * number(order["decision_slippage_bps"]) / 10000:
+                    result.append(
+                        {
+                            "branch": branch,
+                            "symbol": symbol,
+                            "action": "cancel",
+                            "reason": "decision-price-slippage-exceeded",
+                            "order_id": order["id"],
+                        }
+                    )
+                    continue
             if order["action"] == "close":
                 position = state["branches"][branch]["positions"][symbol]
                 available = number(
@@ -1261,7 +1350,7 @@ class PaperBook:
 
     def context_snapshot(self, branch: str) -> dict:
         state = self.state()
-        return {
+        context = {
             "goal": state["goal"],
             "sequence": self.sequence(),
             "currency": state["currency"],
@@ -1275,3 +1364,7 @@ class PaperBook:
             "fee_profiles": state["fee_profiles"],
             "pending": [order for order in state["orders"] if order["branch"] == branch],
         }
+        self.decision_snapshots[(branch, context["sequence"])] = copy.deepcopy(context)
+        while len(self.decision_snapshots) > 16:
+            del self.decision_snapshots[next(iter(self.decision_snapshots))]
+        return context

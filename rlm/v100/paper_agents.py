@@ -492,6 +492,9 @@ def paper_decision_round(book: PaperBook, parent_profile: dict) -> list[dict]:
                     "accepted_research": [],
                     "proposal_source": "model-proposal",
                     "model_action_blocked": proposal.get("action"),
+                    "model_proposal": proposal,
+                    "gate_reason": str(error)[:400],
+                    "host_action": "hold",
                 },
                 book.sequence(),
             )

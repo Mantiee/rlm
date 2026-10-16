@@ -4,13 +4,14 @@ import fcntl
 import json
 import time
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from rlm.v100.common import atomic_json
 from rlm.v100.experiments import SharedLab
 from rlm.v100.paper import PaperBook
-from rlm.v100.paper_reports import summarize
+from rlm.v100.paper_reports import summarize_snapshot
 from rlm.v100.researchers import compact_result
 
 
@@ -42,6 +43,69 @@ def snapshot(root: Path) -> dict:
     return value
 
 
+class ReportPaperSnapshot(PaperBook):
+    """One report-local read transaction; never reuse verified events across reports."""
+
+    def __init__(self, root: Path):
+        self.verified_events = None
+        super().__init__(root, read_only=True)
+        self.db.execute("BEGIN")
+
+    def events(self) -> list[dict]:
+        if self.verified_events is None:
+            self.verified_events = super().events()
+        return self.verified_events
+
+
+def audited_outcome_count(events: list[dict]) -> int:
+    """Apply the paper training-label accounting checks without allocating messages."""
+    decisions, count = {}, 0
+    for event in events:
+        if event["kind"] == "decision":
+            decision = event["payload"]["proposal"]
+            decisions[decision["id"]] = event
+        if event["kind"] != "observation":
+            continue
+        for trade in event["payload"].get("trades", []):
+            if trade["action"] not in ("close", "liquidation", "settle"):
+                continue
+            origin = decisions.get(trade["order_id"])
+            if origin is None or origin["sequence"] >= event["sequence"]:
+                raise ValueError("Paper outcome has no preceding decision")
+            if Decimal(trade["payout"]) - Decimal(trade["allocation"]) != Decimal(trade["net_pnl"]):
+                raise ValueError("Paper outcome disagrees with payout minus allocation")
+            count += 1
+    return count
+
+
+def paper_snapshot(root: Path) -> tuple[dict, dict, int, bool]:
+    """Verify the whole chain once and derive state, summary and outcome count together."""
+    empty_state = {"instruments": {}, "fee_profiles": {}, "quotes": {}}
+    empty_paper = {
+        "currency": "unknown",
+        "branches": {},
+        "trades": [],
+        "stale_symbols": [],
+        "expired_fee_profiles": [],
+        "personal_income_tax": "unknown",
+    }
+    if not (root / "research/paper/ledger.sqlite3").exists():
+        return empty_state, empty_paper, 0, False
+    book = ReportPaperSnapshot(root)
+    try:
+        try:
+            state = book.state()
+        except ValueError as error:
+            if str(error) != "Initialize the paper lab first":
+                raise
+            return empty_state, empty_paper, 0, False
+        paper = summarize_snapshot(book, "all")
+        count = audited_outcome_count(book.events())
+        return state, paper, count, True
+    finally:
+        book.close()
+
+
 def report(root: Path) -> dict:
     from rlm.v100.mission import status
 
@@ -52,9 +116,7 @@ def report(root: Path) -> dict:
         json.loads(learning_path.read_text()) if learning_path and learning_path.exists() else {}
     )
     cycles = learning.get("cycles", [])
-    from rlm.v100.paper_outcomes import records as outcome_records
-
-    outcomes = outcome_records(root)
+    state, paper, outcome_count, initialized = paper_snapshot(root)
     backtest_paths = sorted(
         (root / "research/backtests").glob("run-*/report.json"),
         key=lambda path: path.stat().st_mtime_ns,
@@ -99,26 +161,6 @@ def report(root: Path) -> dict:
                     handle.readline()
                 rows = [json.loads(line) for line in handle if line.endswith(b"\n")]
             metrics[str(path)] = rows[-1] if rows else None
-    book = PaperBook(root, read_only=(root / "research/paper/ledger.sqlite3").exists())
-    initialized = True
-    try:
-        state = book.state()
-        paper = summarize(book)
-    except ValueError as error:
-        if str(error) != "Initialize the paper lab first":
-            raise
-        initialized = False
-        state = {"instruments": {}, "fee_profiles": {}, "quotes": {}}
-        paper = {
-            "currency": "unknown",
-            "branches": {},
-            "trades": [],
-            "stale_symbols": [],
-            "expired_fee_profiles": [],
-            "personal_income_tax": "unknown",
-        }
-    finally:
-        book.close()
     shared_path = root / "research/state/competition.sqlite3"
     shared = SharedLab(shared_path, read_only=shared_path.exists())
     try:
@@ -150,7 +192,7 @@ def report(root: Path) -> dict:
         "evaluation": mission.get("evaluation"),
         "context_window": mission.get("state", {}).get("context_window"),
         "completed_learning_cycles": len(cycles),
-        "available_audited_paper_outcomes": len(outcomes),
+        "available_audited_paper_outcomes": outcome_count,
         "accepted_weight_updates_this_run": sum(
             row.get("status", "").startswith("selected for next serving") for row in cycles
         ),
@@ -235,7 +277,7 @@ def report(root: Path) -> dict:
         "Successful optimizer updates observed in this run: "
         + str(value["mission_evidence"]["optimizer_updates_observed"])
         + " (None means no verified counters; not proof of zero)",
-        f"Audited paper outcomes available for training: {len(outcomes)} (including losses; availability is not proof that an adapter used them)",
+        f"Audited paper outcomes available for training: {outcome_count} (including losses; availability is not proof that an adapter used them)",
         f"Fixed baseline: {value['fixed_suite_baseline']['passed']}/{value['fixed_suite_baseline']['total']}",
         "Accepted independent branches: "
         + (", ".join(value["accepted_branch_versions"]) or "none yet; seeded from the same base"),
