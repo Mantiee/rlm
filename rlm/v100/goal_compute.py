@@ -14,6 +14,31 @@ from rlm.v100.common import atomic_json
 from rlm.v100.goal_learning import digest
 from rlm.v100.protection import file_hash
 
+SELECTION = "latest-with-two-validation-groups-v1"
+
+
+def selected_validation(rows: list[dict], limit: int = 16) -> list[dict]:
+    """Keep latest split-assigned rows, retaining a second held-out source group."""
+    if limit < 2:
+        raise ValueError("Validation selection needs room for two groups")
+    selected = rows[-limit:]
+    groups = {row["group"] for row in selected}
+    if len(groups) == 1:
+        # Source-group coverage only: never inspect answers, scores, or hashes.
+        other = next((row for row in reversed(rows[:-limit]) if row["group"] not in groups), None)
+        if other is not None:
+            selected = [other, *selected[1:]]
+    return selected
+
+
+def validate_selection(train: list[dict], validation: list[dict]) -> None:
+    if len(train) < 8 or len(validation) < 4 or len({row["group"] for row in validation}) < 2:
+        raise ValueError(
+            "Selected goal compute subset needs 8 train and 4 validation across 2 groups"
+        )
+    if {row["group"] for row in train} & {row["group"] for row in validation}:
+        raise ValueError("Selected goal compute source groups overlap")
+
 
 def compact(row: dict) -> dict:
     value = json.loads(row["messages"][-2]["content"])
@@ -60,7 +85,9 @@ def propose(root: Path, branch: str = "A", device: str = "cpu") -> dict:
             "reason": "Need at least 12 verified active-goal outcomes",
             "available": len(rows),
         }
-    key = digest({"goal_id": goal["id"], "records": rows, "projection": "compact-v1"})
+    key = digest(
+        {"goal_id": goal["id"], "records": rows, "projection": "compact-v1", "selection": SELECTION}
+    )
     folder = root / "research/goal-compute" / key
     folder.mkdir(parents=True, exist_ok=True)
     receipt_path = folder / (branch + ".json")
@@ -86,13 +113,15 @@ def propose(root: Path, branch: str = "A", device: str = "cpu") -> dict:
     # Never shorten a full master example. This independent tiny baseline consumes
     # a documented compact projection and can be rejected by host evaluation.
     selected_train = train[-48:]
-    selected_validation = validation[-16:]
+    selected_held_out = selected_validation(validation)
+    validate_selection(selected_train, selected_held_out)
     provenance = {
         "kind": "goal_observation",
         "goal_id": goal["id"],
         "dataset": str(dataset),
         "dataset_sha256": file_hash(dataset),
-        "record_ids": [row["id"] for row in selected_train + selected_validation],
+        "record_ids": [row["id"] for row in selected_train + selected_held_out],
+        "selection": SELECTION,
         "projection": "compact-v1: horizon, threshold, initial target and signal values/excerpts",
         "scope": "Small observational baseline; no causal, profit or master acceptance claim",
     }
@@ -105,7 +134,7 @@ def propose(root: Path, branch: str = "A", device: str = "cpu") -> dict:
         "Test compact source-disjoint patterns for the current operator goal",
         "goal_observation",
         [compact(r) for r in selected_train],
-        [compact(r) for r in selected_validation],
+        [compact(r) for r in selected_held_out],
         provenance=provenance,
         device=device,
     )
@@ -201,12 +230,20 @@ def verify_job(root: Path, job: dict) -> None:
     if file_hash(dataset) != provenance["dataset_sha256"]:
         raise ValueError("Goal compute dataset changed")
     train, validation = load_records(dataset, root / "research/state/splits.sqlite3")
-    expected = train[-48:] + validation[-16:]
+    selection = provenance.get("selection")
+    if selection not in (None, SELECTION):
+        raise ValueError("Unknown goal compute record selection")
+    selected_train = train[-48:]
+    selected_held_out = (
+        selected_validation(validation) if selection == SELECTION else validation[-16:]
+    )
+    validate_selection(selected_train, selected_held_out)
+    expected = selected_train + selected_held_out
     if provenance["record_ids"] != [row["id"] for row in expected]:
         raise ValueError("Goal compute record selection changed")
     if any(row["verification"]["goal_id"] != provenance["goal_id"] for row in expected):
         raise ValueError("Goal compute contains a different goal's outcomes")
-    if job["train"] != [compact(row) for row in train[-48:]] or job["validation"] != [
-        compact(row) for row in validation[-16:]
+    if job["train"] != [compact(row) for row in selected_train] or job["validation"] != [
+        compact(row) for row in selected_held_out
     ]:
         raise ValueError("Goal compute projection or labels changed")

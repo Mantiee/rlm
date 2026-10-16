@@ -508,6 +508,107 @@ def execute(root: Path, job: dict) -> dict:
     return value
 
 
+def dossier_evidence(root: Path, goal_id: str) -> list[str]:
+    """Use verified current income terms, never unrelated market-price labels."""
+    from rlm.v100.goal_learning import observation
+
+    folder = root / "research/income-work/dossiers"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Income dossier folder escaped its root")
+    candidates = sorted(
+        folder.glob("*.json"), key=lambda path: path.stat().st_mtime_ns, reverse=True
+    )[:8]
+    identities = []
+    for path in candidates:
+        if path.is_symlink() or not path.resolve().is_relative_to(folder.resolve()):
+            raise ValueError("Linked income dossier refused")
+        with path.open("rb") as handle:
+            raw = handle.read(2 * 2**20 + 1)
+        if len(raw) > 2 * 2**20:
+            raise ValueError("Income dossier exceeds read budget")
+        saved = json.loads(raw)
+        if saved.get("goal_id") != goal_id:
+            continue
+        identity = saved.get("source", {}).get("id")
+        if not isinstance(identity, str):
+            continue
+        source = observation(root, identity)
+        if (
+            source["field"] != ""
+            or source["value"] is not None
+            or not 0 <= time.time() - source["acquired"] <= 86400
+        ):
+            continue
+        if identity not in identities:
+            identities.append(identity)
+        if len(identities) == 3:
+            break
+    return identities
+
+
+def typed_income_work(
+    root: Path, branch: str, client, goal_id: str, evidence_ids: list[str]
+) -> dict:
+    """Commission once per archived evidence content, retaining invalid model attempts."""
+    from rlm.v100.goal_learning import digest, observation
+    from rlm.v100.income_experiment import propose_and_run
+
+    inputs = sorted(
+        [
+            {key: source[key] for key in ("url", "field", "body_sha256")}
+            for source in (observation(root, identity) for identity in evidence_ids)
+        ],
+        key=lambda source: (source["url"], source["field"], source["body_sha256"]),
+    )
+    identity = digest({"goal_id": goal_id, "inputs": inputs})
+    folder = root / "research/income-work/local-commissions"
+    if not folder.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Income commission archive escaped its root")
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (identity + ".json")
+    from rlm.v100 import file_lock
+
+    lock = path.with_suffix(".lock")
+    if path.is_symlink() or lock.is_symlink():
+        raise ValueError("Linked income commission refused")
+    with lock.open("a") as lease:
+        file_lock.flock(lease, file_lock.LOCK_EX | file_lock.LOCK_NB)
+        if path.exists():
+            with path.open("rb") as handle:
+                raw = handle.read(128 * 1024 + 1)
+            if len(raw) > 128 * 1024:
+                raise ValueError("Income commission exceeds128KiB")
+            saved = json.loads(raw)
+            if saved.get("id") != identity or saved.get("goal_id") != goal_id:
+                raise ValueError("Income commission identity changed")
+            return {**saved, "reused": True}
+        record = {
+            "id": identity,
+            "goal_id": goal_id,
+            "inputs": inputs,
+            "evidence_ids": evidence_ids,
+            "state": "planning",
+            "updated": time.time(),
+            "actual_income_pln": None,
+            "checkpoint_path": str(path),
+        }
+        atomic_json(path, record)
+        try:
+            result = propose_and_run(root, branch, client, evidence_ids)
+            record.update(state=result["state"], experiment=result)
+        except (OSError, ValueError, SyntaxError, RuntimeError, requests.RequestException) as error:
+            record.update(state="typed local experiment blocked", error=str(error)[:400])
+        record.update(
+            updated=time.time(),
+            checkpoint_path=str(path),
+            scope="Model-selected local experiment; repeated unchanged inputs do not rerun. Process output is not usefulness, task validation or income.",
+        )
+        atomic_json(path, record)
+        return record
+
+
 def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict:
     """After commissioning sources, let the accepted model select and execute work."""
     from rlm.v100.income_policy import read as income_policy
@@ -535,12 +636,16 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
     previous_evidence = {}
     if previous.get("result_path"):
         saved_path = Path(previous["result_path"]).resolve()
-        if not saved_path.is_relative_to((root / "research/income-work/experiments").resolve()):
+        archives = (
+            root / "research/income-work/experiments",
+            root / "research/income-work/local-commissions",
+        )
+        if not any(saved_path.is_relative_to(archive.resolve()) for archive in archives):
             raise ValueError("Previous work receipt escaped its experiment archive")
         if saved_path.is_file() and saved_path.stat().st_size <= 2 * 2**20:
             saved = json.loads(saved_path.read_text())
             if saved.get("goal_id") == goal["id"]:
-                result = saved["result"]
+                result = saved.get("result", {})
                 previous_evidence = {
                     key: result.get(key)
                     for key in ("hypothesis", "suggested_test", "status", "research_quality")
@@ -576,6 +681,47 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
         client.research_token_ceiling = 2048
         client.sampling_args = dict(client.sampling_args) | {"max_tokens": 2048}
         client.research_tool_steps = 6
+        evidence_ids = dossier_evidence(root, goal["id"])
+        if evidence_ids:
+            typed = typed_income_work(root, job["branch"], client, goal["id"], evidence_ids)
+            experiment = typed.get("experiment", {})
+            if typed.get("reused"):
+                previous_evidence["typed_local_checkpoint"] = {
+                    "id": typed["id"],
+                    "state": typed["state"],
+                    "checkpoint_path": typed.get("checkpoint_path"),
+                    "experiment_id": experiment.get("id"),
+                    "artifacts": experiment.get("artifacts", [])[:8],
+                    "measurement": experiment.get("proposal", {}).get("measurement"),
+                    "failure_condition": experiment.get("proposal", {}).get("failure_condition"),
+                    "error": typed.get("error") or experiment.get("error"),
+                    "scope": "Do not repeat this plan/execution on unchanged inputs; seek genuinely new evidence or a different supported hypothesis. Pending work is not complete.",
+                }
+                value["typed_local_experiment"] = typed
+            else:
+                value.update(
+                    mode="model-selected local experiment",
+                    state=typed["state"],
+                    typed_local_experiment=typed,
+                    result_path=typed.get("checkpoint_path"),
+                    executed_work_receipts=int(
+                        experiment.get("state") == "executed-unvalidated"
+                        and not typed.get("reused", False)
+                    ),
+                    execution_checkpoint={
+                        "result_path": typed.get("checkpoint_path"),
+                        "phase": typed["state"],
+                        "scope": typed.get("scope"),
+                    },
+                    updated=time.time(),
+                )
+                if typed.get("error"):
+                    value["error"] = typed["error"]
+                atomic_json(path, value)
+                ActivityLog(root, job["branch"], "income-research").write(
+                    "steps", "typed-local-work-result", value
+                )
+                return value
         # Available named tools retain their own resource, network and data gates.
         # The model selects a source, domain and experiment, not a fixed URL rotation.
         client.research_tool_names = None
