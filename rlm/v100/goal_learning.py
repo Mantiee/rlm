@@ -316,11 +316,23 @@ def tick(root: Path) -> None:
                 (time.time(), time.time() - 300),
             )
         )
+    fetched, fetch_errors = {}, {}
     for item in pending:
         prediction = json.loads(item["data"])
         target = observation(root, prediction["specification"]["target"])
+        source = (target["url"], target["field"])
         try:
-            acquired = observe(root, target["url"], target["field"])
+            if source in fetch_errors:
+                raise fetch_errors[source]
+            if source not in fetched:
+                try:
+                    fetched[source] = observe(root, *source)
+                except Exception as error:
+                    fetch_errors[source] = error
+                    raise
+            acquired = fetched[source]
+            # Shared fetch does not share eligibility: each commitment retains its
+            # own due..due+300 provenance check inside settle().
             result = settle(root, item["id"], acquired["id"])
             ActivityLog(root, prediction["branch"], "goal-learning").write(
                 "metrics", "forecast-resolved", {"id": item["id"], **result}

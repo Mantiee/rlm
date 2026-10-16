@@ -463,6 +463,93 @@ def schema(allow_long_goal: bool = False) -> dict:
     }
 
 
+def verified_plan_response(root: Path, client, responder: dict) -> dict:
+    """One model-selected read and concise generated answer under existing admission."""
+    from rlm.v100.agent import native_turn, tool_schema
+    from rlm.v100.research_tools import ResearchTools
+
+    bounded = copy.copy(client)
+    bounded.sampling_args = dict(client.sampling_args) | {"max_tokens": 48}
+    bounded.research_token_ceiling = 48
+    bounded.enable_thinking = False
+    bounded.request_deadline = min(
+        getattr(client, "request_deadline", float("inf")), time.monotonic() + 60
+    )
+    if bounded.request_deadline <= time.monotonic():
+        raise TimeoutError("Read-only plan verification deadline exhausted")
+    bounded.timeout = min(client.timeout, bounded.request_deadline - time.monotonic())
+    selected = native_turn(
+        bounded,
+        [{"role": "user", "content": "Call get_plan once."}],
+        tools=[tool_schema("get_plan", "Read recorded goal.", {})],
+    )
+    calls = selected.get("tool_calls") or []
+    if len(calls) != 1 or selected.get("actions") or selected.get("applied"):
+        raise ValueError("Verification requires exactly one model-selected read tool")
+    call = calls[0]
+    function = call.get("function", {})
+    if function.get("name") != "get_plan" or json.loads(function.get("arguments", "null")) != {}:
+        raise ValueError("Verification accepts only get_plan with empty arguments")
+    if time.monotonic() >= bounded.request_deadline:
+        raise TimeoutError("Read-only plan verification expired before tool execution")
+    journal = ActivityLog(root, "A", "chat-plan-verification")
+    step = journal.write(
+        "tools", "tool-start", {"tool": "get_plan", "arguments": {}}, tool_call_id=call.get("id")
+    )
+    tools = ResearchTools(root, {}, "A")
+    tools.allowed_tool_names = {"get_plan"}
+    receipt = {"tool": "get_plan", "arguments": {}, "result": tools.execute("get_plan", {})}
+    journal.write("tools", "tool-result", receipt, step_id=step)
+    if receipt_failed(receipt):
+        raise ValueError("Read-only plan tool failed; no generated success accepted")
+    goal = receipt["result"].get("long") or {}
+    excerpt = str(goal.get("text", "No recorded goal"))[:120]
+    if time.monotonic() >= bounded.request_deadline:
+        raise TimeoutError("Read-only plan verification expired after recorded tool receipt")
+    bounded.timeout = min(client.timeout, bounded.request_deadline - time.monotonic())
+    answer = native_turn(
+        bounded,
+        [
+            {
+                "role": "user",
+                "content": "Report this recorded goal excerpt briefly: "
+                + json.dumps(excerpt, ensure_ascii=False),
+            }
+        ],
+        response_format={
+            "type": "json_object",
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["answer"],
+                "properties": {"answer": {"type": "string", "maxLength": 160}},
+            },
+        },
+    )
+    result = json.loads(answer.get("content", "null"))
+    if (
+        answer.get("tool_calls")
+        or answer.get("actions")
+        or answer.get("applied")
+        or not isinstance(result, dict)
+        or set(result) != {"answer"}
+        or not isinstance(result["answer"], str)
+        or len(result["answer"]) > 160
+        or not answer_complete(result["answer"])
+    ):
+        raise ValueError("Invalid generated read-only plan answer; no extra actions accepted")
+    if time.monotonic() >= bounded.request_deadline:
+        raise TimeoutError("Read-only plan verification answer arrived after deadline")
+    return {
+        "answer": result["answer"],
+        "actions": [],
+        "applied": [],
+        "tool_receipts": [receipt],
+        "responder": responder,
+        "scope": "Model-selected get_plan read and generated goal excerpt; no plan changes or additional tools",
+    }
+
+
 def explicit_no_tools(message: str) -> bool:
     """Current user restrictions only reduce permissions, never grant new ones."""
     return bool(
@@ -1076,6 +1163,17 @@ def respond(
 
     resource_request = None if no_tools else chat_resources.instruction(message)
     question_only = no_tools or (quick_question and not resource_request)
+    if command_verification:
+        return verified_plan_response(
+            root,
+            client,
+            {
+                "model": client.model_name,
+                "delegated_while_master_busy": delegated,
+                "accepted_master_on_cpu": cpu_master,
+                "accepted_model_sha256": accepted_cpu.sha256 if cpu_master else None,
+            },
+        )
     if no_tools:
         return no_tools_response(
             client,
