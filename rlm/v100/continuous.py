@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 
-from rlm.v100.common import atomic_json
+from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import (
     evolve,
     helper_client,
@@ -73,6 +73,24 @@ class _HeartbeatRefresher:
         if self._thread is not None:
             self._thread.join()
         return False
+
+
+def training_researcher(root: Path, path: Path) -> Path | None:
+    """Disabled optional remote research must not abort local A/B training."""
+    from rlm.v100.mission_chat import preferences
+    from rlm.v100.remote_helper import origin_enabled, remote_profile
+
+    # Unknown/missing input retains the original downstream validation/error path;
+    # it must never be misclassified as an explicitly disabled optional helper.
+    if not path.is_file():
+        return path
+    helper = load_profile(path, root)
+    if remote_profile(helper) and (
+        preferences(root).get("remote_helper_enabled", True) is False
+        or not origin_enabled(root, helper["runtime"]["base_url"])
+    ):
+        return None
+    return path
 
 
 def learn_loop(
@@ -523,6 +541,17 @@ def learn_loop(
             if paper is not None:
                 paper.phase("candidate-planning-and-training-started", cycle, current)
             try:
+                optional_researcher = training_researcher(root, researcher_path)
+                if optional_researcher is None:
+                    atomic_json(
+                        output / f"optional-helper-deferred-{cycle:04d}.json",
+                        {
+                            "cycle": cycle,
+                            "profile": str(researcher_path),
+                            "reason": "Optional remote researcher disabled by operator or origin policy",
+                            "scope": "Accepted local planner and A/B training continue; no remote model loaded or origin re-enabled",
+                        },
+                    )
                 result = evolve(
                     current,
                     root,
@@ -530,7 +559,7 @@ def learn_loop(
                     trial,
                     suite,
                     gates,
-                    researcher_path,
+                    optional_researcher,
                     generations=1,
                     train_timeout=train_timeout,
                 )
