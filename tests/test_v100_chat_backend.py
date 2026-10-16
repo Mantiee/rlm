@@ -833,3 +833,103 @@ def test_prewarm_rejects_unbounded_budget(tmp_path, budget):
     manager = chat_backend.AcceptedCPUChat(tmp_path, tmp_path / "chat")
     with pytest.raises(ValueError, match="Prewarm budget"):
         manager.prewarm({}, budget=budget)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Calculate 31 times 7. Do not use tools.",
+        "Wyjaśnij krótko inflację, bez narzędzi.",
+        "Change the main goal to test. No tools.",
+    ],
+)
+def test_explicit_no_tools_uses_model_minimal_prompt(tmp_path, monkeypatch, message):
+    accepted = profile(tmp_path)
+    accepted["resources"] = {"interactive_lab": True}
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    monkeypatch.setattr(mission_chat, "load_profile", lambda *a: accepted)
+    monkeypatch.setattr(
+        mission, "status", lambda *a: {"running": True, "learning": {"huge": "x" * 10000}}
+    )
+    monkeypatch.setattr(mission_chat, "assert_served_expert", lambda *a: None)
+    calls = []
+    client = SimpleNamespace(
+        model_name="accepted",
+        timeout=120,
+        sampling_args={},
+        activity_context={},
+        template_args=lambda: {},
+    )
+
+    def request(endpoint, payload):
+        calls.append(payload)
+        return {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": '{"answer":"Model reply.","actions":[]}'},
+                }
+            ]
+        }
+
+    client.request = request
+    monkeypatch.setattr(competition, "helper_client", lambda *a: client)
+    monkeypatch.setattr(research_tools, "research_turn", lambda *a: pytest.fail("No tool calls"))
+    from rlm.v100 import mission_evidence, planning
+
+    monkeypatch.setattr(
+        mission_evidence, "collect", lambda *a: pytest.fail("No full evidence collection")
+    )
+    monkeypatch.setattr(planning, "update", lambda *a: pytest.fail("No goal mutation"))
+    result = mission_chat.respond(tmp_path, tmp_path, {"message": message})
+    assert result["answer"] == "Model reply."
+    assert result["actions"] == result["applied"] == result["tool_receipts"] == []
+    assert len(calls) == 1
+    payload = calls[0]
+    assert payload["messages"][1]["content"] == message
+    assert "tools" not in payload
+    assert len(json.dumps(payload)) < 3000
+    assert "mission_evidence" not in json.dumps(payload)
+    assert payload["response_format"]["schema"]["properties"]["actions"]["maxItems"] == 0
+
+
+@pytest.mark.parametrize("actions", [[{"kind": "sandbox"}], None])
+def test_explicit_no_tools_refuses_model_actions(actions):
+    client = SimpleNamespace(
+        model_name="accepted",
+        template_args=lambda: {},
+        request=lambda *a: {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": json.dumps({"answer": "reply", "actions": actions})},
+                }
+            ]
+        },
+    )
+    with pytest.raises(ValueError, match="no actions accepted"):
+        mission_chat.no_tools_response(client, "No tools, please", {}, {})
+
+
+def test_explicit_no_tools_recorded_plans_bounded():
+    calls = []
+    client = SimpleNamespace(
+        model_name="accepted",
+        template_args=lambda: {},
+        request=lambda endpoint, payload: (
+            calls.append(payload)
+            or {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": '{"answer":"Recorded goal.","actions":[]}'},
+                    }
+                ]
+            }
+        ),
+    )
+    mission_chat.no_tools_response(
+        client, "Report recorded goal, no tools", {"long": {"text": "z" * 10000}}, {}
+    )
+    assert "z" * 500 in calls[0]["messages"][0]["content"]
+    assert "z" * 501 not in calls[0]["messages"][0]["content"]

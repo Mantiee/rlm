@@ -463,6 +463,81 @@ def schema(allow_long_goal: bool = False) -> dict:
     }
 
 
+def explicit_no_tools(message: str) -> bool:
+    """Current user restrictions only reduce permissions, never grant new ones."""
+    return bool(
+        re.search(
+            r"\b(?:no tools|without tools|do not use tools|don't use tools|"
+            r"bez narzędzi|bez narzedzi|nie używaj narzędzi|nie uzywaj narzedzi)\b",
+            message.casefold(),
+        )
+    )
+
+
+def recorded_context_requested(message: str) -> bool:
+    return bool(re.search(r"\b(?:goal|plan|cel|plany|planu|celu)\b", message.casefold()))
+
+
+def no_tools_response(client, message: str, plans: dict, responder: dict) -> dict:
+    """One real generation with strict empty actions and no tool/research context."""
+    prompt = (
+        "Answer the current user message directly in its language. Return JSON with answer "
+        "and actions: []. No tools or changes are allowed. Do not claim execution or income."
+    )
+    if plans:
+        prompt += " Recorded plans: " + json.dumps(
+            {
+                horizon: str((plans.get(horizon) or {}).get("text", "No recorded plan"))[:500]
+                for horizon in ("long", "mid", "short")
+            },
+            ensure_ascii=False,
+        )
+    reply = client.request(
+        "/v1/chat/completions",
+        {
+            "model": client.model_name,
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message},
+            ],
+            "max_tokens": 256,
+            "temperature": 0.0,
+            "stream": False,
+            "response_format": {
+                "type": "json_object",
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["answer", "actions"],
+                    "properties": {
+                        "answer": {"type": "string", "maxLength": 2000},
+                        "actions": {"type": "array", "maxItems": 0, "items": {}},
+                    },
+                },
+            },
+            **client.template_args(),
+        },
+    )
+    choice = reply["choices"][0]
+    result = json.loads(choice["message"]["content"])
+    if (
+        choice.get("finish_reason") not in ("stop", "eos")
+        or not isinstance(result, dict)
+        or set(result) != {"answer", "actions"}
+        or result["actions"] != []
+        or not isinstance(result["answer"], str)
+        or not answer_complete(result["answer"])
+    ):
+        raise ValueError("Invalid explicit no-tools response; no actions accepted")
+    return {
+        **result,
+        "applied": [],
+        "tool_receipts": [],
+        "responder": responder,
+        "scope": "Explicit no-tools question; model answer only, no execution",
+    }
+
+
 def conversation_question(message: str) -> bool:
     """Read-only questions take one generation; explicit work retains tools."""
     from rlm.v100.chat_goals import normalized
@@ -672,189 +747,199 @@ def respond(
     message = request["message"].strip()
     from rlm.v100 import chat_plan
 
-    if chat_plan.requested(message):
-        return chat_plan.respond(root)
-    command_verification = bool(
-        re.fullmatch(
-            r"Execute a read-only check: use get_plan once, then report the recorded goal\. Do not change plans, files, preferences, models or schedule work\. Command verification ID: [a-f0-9]{40}",
-            message,
-        )
-    )
-    if message.startswith("/approve-web "):
-        from rlm.v100.web_operations import approve
-
-        receipt = approve(root, message.removeprefix("/approve-web ").strip())
-        return {
-            "answer": json.dumps(receipt, ensure_ascii=False),
-            "actions": [],
-            "applied": [receipt],
-            "responder": {"model": "controller-web-approval"},
-        }
-    from rlm.v100 import resource_optimization
-
-    resource_context = resource_optimization.context(root, request)
-    if resource_context is not None:
-        return resource_optimization.apply(root, message, resource_context)
-    from rlm.v100 import chat_progress
-
-    if chat_progress.requested(message):
-        return chat_progress.respond(root, message)
-    if trade_visualization_requested(message):
-        return trade_visualization_reply(root)
-    from rlm.v100 import chat_facts, income_policy, market_research
-    from rlm.v100.chat_goals import authorizes_long
-
-    if re.search(
-        r"backtest|drawdown|odchyl|obsuni|glitch", income_policy.normalized(message)
-    ) and re.search(r"audit|sprawdz|zbadaj|check", income_policy.normalized(message)):
-        return chat_facts.audit_response(root, message)
-    if (
-        not authorizes_long(message)
-        and not message.startswith(("/goal ", "/cel "))
-        and income_policy.setting(message) is not None
-    ):
-        receipt = income_policy.update(root, message)
-        return {
-            "answer": (
-                "Zapisano badanie wzrostu hipotetycznego kapitału w paper. Zlecono porównanie strategii; wynik i koszty muszą być zmierzone."
-                if chat_facts.language(message) == "Polish"
-                else "Hypothetical-capital research saved. Strategy comparison commissioned; returns and costs must be measured."
-            ),
-            "actions": [],
-            "applied": [receipt],
-            "responder": {"model": "controller-research-policy"},
-        }
-    if market_research.requested(message):
-        return chat_facts.test_response(root, message)
-    if conversation_question(message) and chat_facts.requested(message):
-        return chat_facts.response(root, message)
-    quick_question = conversation_question(message) or message.casefold() in (
-        "hej",
-        "cześć",
-        "czesc",
-        "hello",
-        "hi",
-        "odpowiedz",
-    )
-    if re.search(
-        r"\b(?:co potrafisz|co umiesz|twoje możliwości|twoje mozliwosci|what can you do)\b",
-        message.casefold(),
-    ):
-        return {
-            "answer": "\n".join(
-                [
-                    "- Badam publiczne źródła i zapisuję dowody pod aktualny cel.",
-                    "- Zlecam ograniczone zadania CPU/RTX i sprawdzam ich wyniki; dostępność zasobów nie oznacza wykonania zadania.",
-                    "- Uruchamiam kod w izolowanej VM oraz edytuję i waliduję dashboard.",
-                    "- Rejestruję prognozy przed wynikiem i weryfikuję późniejsze etykiety do ML.",
-                    "- Trenuję kandydatów z zabezpieczeniami pamięci; nowe wagi wymagają niezależnych testów.",
-                    "- Pokazuję akcje, plany, wyniki, blokady i zmierzone tokeny w dashboardzie.",
-                    "- Zmieniam cel na wyraźne polecenie operatora. Nie składam realnych zleceń ani nie gwarantuję zysku.",
-                    "- Aktualny postęp odczytasz przez /status lub pytanie o postęp; brak danych pokazuję jako nieznany.",
-                ]
-            ),
-            "actions": [],
-            "applied": [],
-            "responder": {"model": "controller-capabilities"},
-            "scope": "Implemented mechanisms; not proof of current execution or accepted improvement",
-        }
-    from rlm.v100 import chat_progress
-
-    if chat_progress.requested(message) or chat_progress.continue_requested(message):
-        result = chat_progress.respond(root, message)
-        if chat_progress.continue_requested(message):
-            result["answer"] = (
-                "Kontynuacja dotychczasowego celu. Nie zmieniam planu na edycję dashboardu. "
-                "Działająca misja kontynuuje swoją kolejkę; trening wymaga zweryfikowanych danych i bramek jakości. "
-                "Ta odpowiedź nie uruchamia zatrzymanej misji ani nie potwierdza nowych wag.\n"
-                + result["answer"]
+    no_tools = explicit_no_tools(message)
+    quick_question = no_tools
+    allow_long_goal = False
+    command_verification = False
+    if not no_tools:
+        if chat_plan.requested(message):
+            return chat_plan.respond(root)
+        command_verification = bool(
+            re.fullmatch(
+                r"Execute a read-only check: use get_plan once, then report the recorded goal\. Do not change plans, files, preferences, models or schedule work\. Command verification ID: [a-f0-9]{40}",
+                message,
             )
-        return result
-    if message.strip() == "/reset-dashboard" or re.fullmatch(
-        r"(?:reset|restore|przywroc|przywróć) (?:the )?(?:default|domyslny|domyślny) (?:dashboard|raport html)[.! ]*",
-        message.strip(),
-        re.I,
-    ):
-        from rlm.v100.dashboard_editor import status as layout_status
-        from rlm.v100.dashboard_editor import write as layout_write
-        from rlm.v100.dashboard_layout import BASE_TEMPLATE
+        )
+        if message.startswith("/approve-web "):
+            from rlm.v100.web_operations import approve
 
-        written = layout_write(root, BASE_TEMPLATE)
-        publication = layout_status(root)
-        return {
-            "answer": (
-                "Zapisano zweryfikowany widok statusu, agentów, zasobów, raportów i dowodów. "
-                "Poprzedni HTML zachowano w kopii. Dane odświeża renderer hosta. "
-                + (
-                    "Publikacja potwierdzona."
-                    if publication.get("published")
-                    else "Host nie potwierdził jeszcze publikacji; sprawdź dashboard_status."
+            receipt = approve(root, message.removeprefix("/approve-web ").strip())
+            return {
+                "answer": json.dumps(receipt, ensure_ascii=False),
+                "actions": [],
+                "applied": [receipt],
+                "responder": {"model": "controller-web-approval"},
+            }
+        from rlm.v100 import resource_optimization
+
+        resource_context = resource_optimization.context(root, request)
+        if resource_context is not None:
+            return resource_optimization.apply(root, message, resource_context)
+        from rlm.v100 import chat_progress
+
+        if chat_progress.requested(message):
+            return chat_progress.respond(root, message)
+        if trade_visualization_requested(message):
+            return trade_visualization_reply(root)
+        from rlm.v100 import chat_facts, income_policy, market_research
+        from rlm.v100.chat_goals import authorizes_long
+
+        if re.search(
+            r"backtest|drawdown|odchyl|obsuni|glitch", income_policy.normalized(message)
+        ) and re.search(r"audit|sprawdz|zbadaj|check", income_policy.normalized(message)):
+            return chat_facts.audit_response(root, message)
+        if (
+            not authorizes_long(message)
+            and not message.startswith(("/goal ", "/cel "))
+            and income_policy.setting(message) is not None
+        ):
+            receipt = income_policy.update(root, message)
+            return {
+                "answer": (
+                    "Zapisano badanie wzrostu hipotetycznego kapitału w paper. Zlecono porównanie strategii; wynik i koszty muszą być zmierzone."
+                    if chat_facts.language(message) == "Polish"
+                    else "Hypothetical-capital research saved. Strategy comparison commissioned; returns and costs must be measured."
+                ),
+                "actions": [],
+                "applied": [receipt],
+                "responder": {"model": "controller-research-policy"},
+            }
+        if market_research.requested(message):
+            return chat_facts.test_response(root, message)
+        if conversation_question(message) and chat_facts.requested(message):
+            return chat_facts.response(root, message)
+        quick_question = conversation_question(message) or message.casefold() in (
+            "hej",
+            "cześć",
+            "czesc",
+            "hello",
+            "hi",
+            "odpowiedz",
+        )
+        if re.search(
+            r"\b(?:co potrafisz|co umiesz|twoje możliwości|twoje mozliwosci|what can you do)\b",
+            message.casefold(),
+        ):
+            return {
+                "answer": "\n".join(
+                    [
+                        "- Badam publiczne źródła i zapisuję dowody pod aktualny cel.",
+                        "- Zlecam ograniczone zadania CPU/RTX i sprawdzam ich wyniki; dostępność zasobów nie oznacza wykonania zadania.",
+                        "- Uruchamiam kod w izolowanej VM oraz edytuję i waliduję dashboard.",
+                        "- Rejestruję prognozy przed wynikiem i weryfikuję późniejsze etykiety do ML.",
+                        "- Trenuję kandydatów z zabezpieczeniami pamięci; nowe wagi wymagają niezależnych testów.",
+                        "- Pokazuję akcje, plany, wyniki, blokady i zmierzone tokeny w dashboardzie.",
+                        "- Zmieniam cel na wyraźne polecenie operatora. Nie składam realnych zleceń ani nie gwarantuję zysku.",
+                        "- Aktualny postęp odczytasz przez /status lub pytanie o postęp; brak danych pokazuję jako nieznany.",
+                    ]
+                ),
+                "actions": [],
+                "applied": [],
+                "responder": {"model": "controller-capabilities"},
+                "scope": "Implemented mechanisms; not proof of current execution or accepted improvement",
+            }
+        from rlm.v100 import chat_progress
+
+        if chat_progress.requested(message) or chat_progress.continue_requested(message):
+            result = chat_progress.respond(root, message)
+            if chat_progress.continue_requested(message):
+                result["answer"] = (
+                    "Kontynuacja dotychczasowego celu. Nie zmieniam planu na edycję dashboardu. "
+                    "Działająca misja kontynuuje swoją kolejkę; trening wymaga zweryfikowanych danych i bramek jakości. "
+                    "Ta odpowiedź nie uruchamia zatrzymanej misji ani nie potwierdza nowych wag.\n"
+                    + result["answer"]
                 )
-            ),
-            "actions": [],
-            "applied": [written],
-            "dashboard": publication,
-            "responder": {"model": "controller-dashboard", "delegated_while_master_busy": False},
-        }
-    if re.fullmatch(
-        r"(?:hej|czesc|cześć|hello|hi|witaj)(?:\s+(?:synta|master|v100))?[!.,\s]*", message, re.I
-    ):
-        return {
-            "answer": "Cześć! Jestem dostępny. Co mam sprawdzić lub wykonać?"
-            if chat_facts.language(message) == "Polish"
-            else "Hello. What should I inspect or execute?",
-            "actions": [],
-            "applied": [],
-            "responder": {"model": "controller-chat", "delegated_while_master_busy": False},
-        }
-    if message.startswith(("/goal ", "/cel ")):
-        receipt = update_plan(root, "long", message.split(" ", 1)[1], "user")
-        return {
-            "answer": "Zmieniono cel długoterminowy. Następna runda przeplanuje zadania.",
-            "actions": [],
-            "applied": [receipt],
-        }
+            return result
+        if message.strip() == "/reset-dashboard" or re.fullmatch(
+            r"(?:reset|restore|przywroc|przywróć) (?:the )?(?:default|domyslny|domyślny) (?:dashboard|raport html)[.! ]*",
+            message.strip(),
+            re.I,
+        ):
+            from rlm.v100.dashboard_editor import status as layout_status
+            from rlm.v100.dashboard_editor import write as layout_write
+            from rlm.v100.dashboard_layout import BASE_TEMPLATE
 
-    from rlm.v100.chat_goals import authorizes_long, direct_plan
-
-    direct = direct_plan(message)
-    if direct is not None:
-        horizon, objective = direct
-        receipt = update_plan(root, horizon, objective, "user")
-        return {
-            "answer": "Zapisano cel/plan: " + objective + ". Następna runda uwzględni zmianę.",
-            "actions": [],
-            "applied": [receipt],
-            "responder": {"model": "controller-goals", "delegated_while_master_busy": False},
-        }
-    allow_long_goal = authorizes_long(message)
-
-    if message == "/status":
-        from rlm.v100.progress import report
-
-        value = report(root)
-        return {
-            "answer": json.dumps(
-                {
-                    key: value[key]
-                    for key in (
-                        "running",
-                        "phase",
-                        "completed_learning_cycles",
-                        "accepted_weight_updates_this_run",
-                        "last_learning_cycle",
-                        "drones",
-                        "desktop",
-                        "official_benchmark",
+            written = layout_write(root, BASE_TEMPLATE)
+            publication = layout_status(root)
+            return {
+                "answer": (
+                    "Zapisano zweryfikowany widok statusu, agentów, zasobów, raportów i dowodów. "
+                    "Poprzedni HTML zachowano w kopii. Dane odświeża renderer hosta. "
+                    + (
+                        "Publikacja potwierdzona."
+                        if publication.get("published")
+                        else "Host nie potwierdził jeszcze publikacji; sprawdź dashboard_status."
                     )
+                ),
+                "actions": [],
+                "applied": [written],
+                "dashboard": publication,
+                "responder": {
+                    "model": "controller-dashboard",
+                    "delegated_while_master_busy": False,
                 },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            "actions": [],
-            "applied": [],
-            "responder": {"model": "controller-status", "delegated_while_master_busy": False},
-        }
+            }
+        if re.fullmatch(
+            r"(?:hej|czesc|cześć|hello|hi|witaj)(?:\s+(?:synta|master|v100))?[!.,\s]*",
+            message,
+            re.I,
+        ):
+            return {
+                "answer": "Cześć! Jestem dostępny. Co mam sprawdzić lub wykonać?"
+                if chat_facts.language(message) == "Polish"
+                else "Hello. What should I inspect or execute?",
+                "actions": [],
+                "applied": [],
+                "responder": {"model": "controller-chat", "delegated_while_master_busy": False},
+            }
+        if message.startswith(("/goal ", "/cel ")):
+            receipt = update_plan(root, "long", message.split(" ", 1)[1], "user")
+            return {
+                "answer": "Zmieniono cel długoterminowy. Następna runda przeplanuje zadania.",
+                "actions": [],
+                "applied": [receipt],
+            }
+
+        from rlm.v100.chat_goals import authorizes_long, direct_plan
+
+        direct = direct_plan(message)
+        if direct is not None:
+            horizon, objective = direct
+            receipt = update_plan(root, horizon, objective, "user")
+            return {
+                "answer": "Zapisano cel/plan: " + objective + ". Następna runda uwzględni zmianę.",
+                "actions": [],
+                "applied": [receipt],
+                "responder": {"model": "controller-goals", "delegated_while_master_busy": False},
+            }
+        allow_long_goal = authorizes_long(message)
+
+        if message == "/status":
+            from rlm.v100.progress import report
+
+            value = report(root)
+            return {
+                "answer": json.dumps(
+                    {
+                        key: value[key]
+                        for key in (
+                            "running",
+                            "phase",
+                            "completed_learning_cycles",
+                            "accepted_weight_updates_this_run",
+                            "last_learning_cycle",
+                            "drones",
+                            "desktop",
+                            "official_benchmark",
+                        )
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                "actions": [],
+                "applied": [],
+                "responder": {"model": "controller-status", "delegated_while_master_busy": False},
+            }
 
     mission = status(root)
     if lifecycle_snapshot is not None:
@@ -989,8 +1074,20 @@ def respond(
     client.activity_context = {**client.activity_context, "chat_request_id": request.get("id")}
     from rlm.v100 import chat_resources
 
-    resource_request = chat_resources.instruction(message)
-    question_only = quick_question and not resource_request
+    resource_request = None if no_tools else chat_resources.instruction(message)
+    question_only = no_tools or (quick_question and not resource_request)
+    if no_tools:
+        return no_tools_response(
+            client,
+            message,
+            read_plans(root) if recorded_context_requested(message) else {},
+            {
+                "model": client.model_name,
+                "delegated_while_master_busy": delegated,
+                "accepted_master_on_cpu": cpu_master,
+                "accepted_model_sha256": accepted_cpu.sha256 if cpu_master else None,
+            },
+        )
     if question_only:
         return conversational_response(
             root,
