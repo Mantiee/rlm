@@ -54,7 +54,7 @@
     "rlm/v100/managed_prepare.py": "68603387f6b2b8acf34cc1abc9126b31d241b710e5cc71c220e3d865eb560be5",
     "rlm/v100/model_roles.py": "aea05da751fa2eefcb2cc7c5728987dcb0f63126ad43fe75042c1db5495cad70",
     "tools/update-synta-v97.sh": "c6b8837bec771b6476fcb1545b31780f998283505e432e975cccdc14216c8389",
-    "rlm/v100/mission_chat.py": "8290f8b6b4e91bad786963c2a5e9389ae4c4a607b090c35eb107ccd87b0a94ea",
+    "rlm/v100/mission_chat.py": "2a9c37178fdb00c4f95741b714e853a69c93e426603d619ef8999df341c6d439",
     "rlm/v100/chat_progress.py": "bf2d572b13ecd573bc5d52252fa2f1cee2f2856cbc8498510d83b823137b3ecf",
     "rlm/v100/research_tools.py": "86d94cb745cddd5c26b4b9e061136d1553666a3c13df8dfbed89ee5f3c76eabd",
     "rlm/v100/decision_memory.py": "03af73225f358b6c7b0bd60318ea372dc2cd51c7537f1bab5de4dbc51cabb72b",

@@ -323,7 +323,7 @@ def test_wrong_cpu_endpoint_is_not_reused(tmp_path, monkeypatch):
     assert events[-1] == ("stop",)
 
 
-@pytest.mark.parametrize("rejected_planner", [False, True])
+@pytest.mark.parametrize("rejected_planner", [False, True, "disabled-origin"])
 def test_chat_selects_same_accepted_master_during_gpu_training(
     tmp_path, monkeypatch, rejected_planner
 ):
@@ -338,7 +338,12 @@ def test_chat_selects_same_accepted_master_during_gpu_training(
         lambda r: {"running": True, "state": {"phase": "training"}, "learning": {}},
     )
     planner = tmp_path / "planner.json"
-    from rlm.v100 import model_roles
+    disabled = copy.deepcopy(accepted)
+    disabled["resources"]["device"] = "remote"
+    disabled["runtime"]["base_url"] = "http://10.0.0.61:11435"
+    from rlm.v100 import model_roles, remote_helper
+
+    monkeypatch.setattr(remote_helper, "origin_enabled", lambda *a: False)
 
     monkeypatch.setattr(
         model_roles, "selected_profile", lambda *a: planner if rejected_planner else None
@@ -346,11 +351,16 @@ def test_chat_selects_same_accepted_master_during_gpu_training(
     monkeypatch.setattr(
         mission_chat,
         "load_profile",
-        lambda path, *a: {"rejected": True} if path == planner else accepted,
+        lambda path, *a: (disabled if rejected_planner == "disabled-origin" else {"rejected": True})
+        if path == planner
+        else accepted,
     )
     gpu = SimpleNamespace(request=lambda *a: {"model_path": "/candidate.gguf"}, model_name="v100")
 
     def factory(settings, *args):
+        assert settings.get("resources", {}).get("device") != "remote", (
+            "Disabled optional planner must never construct a remote client"
+        )
         if settings.get("rejected"):
             raise ValueError("Remote model metadata or template changed")
         return gpu
@@ -573,6 +583,7 @@ def test_selected_planner_does_not_replace_operator_tool_policy(
     planner_path = tmp_path / "planner.json"
     planner = copy.deepcopy(accepted)
     planner["runtime"]["backend"] = "ollama-research"
+    planner["runtime"]["base_url"] = "http://10.0.0.9:11435"
     planner["resources"] = {"device": "remote", "interactive_lab": not operator_tools}
     monkeypatch.setattr(model_roles, "selected_profile", lambda *a: planner_path)
     monkeypatch.setattr(
@@ -737,3 +748,23 @@ def test_cpu_question_has_bounded_sixty_second_generation_window(tmp_path, monke
         assert cpu.timeout == 60 and not result["actions"]
     finally:
         manager.close()
+
+
+def test_lifecycle_omits_disabled_optional_planner(tmp_path, monkeypatch):
+    from rlm.v100 import model_roles, remote_helper
+
+    accepted = profile(tmp_path)
+    atomic_json(tmp_path / "serving-active.json", accepted)
+    planner = copy.deepcopy(accepted)
+    planner.setdefault("resources", {})["device"] = "remote"
+    planner["runtime"]["base_url"] = "http://10.0.0.61:11435"
+    planner_path = tmp_path / "planner.json"
+    atomic_json(planner_path, planner)
+    monkeypatch.setattr(model_roles, "selected_profile", lambda *a: planner_path)
+    monkeypatch.setattr(mission, "status", lambda *a: {"state": {}})
+    monkeypatch.setattr(remote_helper, "origin_enabled", lambda *a: False)
+
+    snapshot = mission_chat._chat_lifecycle_profiles(tmp_path, tmp_path)
+
+    assert snapshot["planner"] is None
+    assert snapshot["profiles"] == [accepted]

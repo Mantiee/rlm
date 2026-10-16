@@ -886,6 +886,8 @@ def respond(
                 if lifecycle_snapshot is not None
                 else load_profile(planner, root)
             )
+            if not chat_profile_origin_enabled(root, chosen):
+                raise BackendNotReady("Optional planner origin disabled by Synta preferences")
             if skip_local:
                 from rlm.v100.remote_helper import remote_profile
 
@@ -895,7 +897,7 @@ def respond(
             probe.timeout = min(probe.timeout, 5)
             backend_preflight(probe)
             profile = copy.deepcopy(chosen)
-        except (OSError, ValueError, requests.RequestException) as error:
+        except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
             # No generation/tool execution has started; retain accepted local master.
             ActivityLog(root, "controller", "chat").write(
                 "errors",
@@ -960,7 +962,7 @@ def respond(
             for candidate in dict.fromkeys(p for p in candidates if p is not None):
                 try:
                     helper = load_profile(candidate, root)
-                    if not remote_profile(helper):
+                    if not remote_profile(helper) or not chat_profile_origin_enabled(root, helper):
                         continue
                     available = helper_client(helper, root)
                     available.request_deadline = request.get("deadline", time.monotonic() + 180)
@@ -969,7 +971,7 @@ def respond(
                     backend_preflight(available)
                     client = available
                     break
-                except (OSError, ValueError, requests.RequestException) as error:
+                except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
                     errors.append(str(error)[:240])
             else:
                 raise BackendNotReady(
@@ -1325,6 +1327,13 @@ def reopen_unavailable_questions(root: Path) -> dict:
     return result
 
 
+def chat_profile_origin_enabled(root: Path, profile: dict) -> bool:
+    """Skip disabled optional hosts before constructing clients or acquiring leases."""
+    from rlm.v100.remote_helper import origin_enabled, remote_profile
+
+    return not remote_profile(profile) or origin_enabled(root, profile["runtime"]["base_url"])
+
+
 def _chat_lifecycle_profiles(root: Path, directory: Path, accepted_cpu=None) -> dict:
     """Resolve immutable profile snapshots and every local endpoint for a turn."""
     from rlm.v100.mission import status
@@ -1349,8 +1358,10 @@ def _chat_lifecycle_profiles(root: Path, directory: Path, accepted_cpu=None) -> 
         planner = selected_profile(root, "planner")
         if planner is not None:
             try:
-                planner_profile = load_profile(planner, root)
-                profiles.append(planner_profile)
+                chosen = load_profile(planner, root)
+                if chat_profile_origin_enabled(root, chosen):
+                    planner_profile = chosen
+                    profiles.append(planner_profile)
             except (OSError, ValueError):
                 # respond() records and ignores an unusable optional planner.
                 pass
