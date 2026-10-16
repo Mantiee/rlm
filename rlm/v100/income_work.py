@@ -601,7 +601,14 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                     },
                     "previous_work": {
                         key: previous.get(key)
-                        for key in ("state", "error", "result_path", "candidate_id", "dossier")
+                        for key in (
+                            "state",
+                            "error",
+                            "result_path",
+                            "candidate_id",
+                            "dossier",
+                            "execution_checkpoint",
+                        )
                     },
                     "previous_experiment_evidence": previous_evidence,
                     "archive_contract": "Archived proposals are hypotheses, not completed tests or income. Prefer legal automatable deliverables. Human research/usability participation requires the actual human: record the specific operator step once, then choose other useful work instead of repeating age/residency/account summaries or impersonating a participant.",
@@ -654,10 +661,45 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
         identity = str(time.time_ns())
         result_path = root / "research/income-work/experiments" / (identity + ".json")
         atomic_json(result_path, {"goal_id": goal["id"], "result": result, "scope": value["scope"]})
+        quality = result.get("research_quality")
+        phases = {
+            "rejected test",
+            "repeated advisory",
+            "executed research receipt",
+            "forecast committed - outcome pending",
+            "process executed - task validation missing",
+            "proposal registered - no executed test",
+            "advisory only - no executed test",
+        }
+        classified = (
+            isinstance(quality, dict)
+            and quality.get("state") in phases
+            and all(
+                isinstance(quality.get(key), list)
+                for key in ("work_receipts", "process_receipts", "forecast_commitments")
+            )
+        )
+        phase = (
+            quality["state"]
+            if classified
+            else "advisory only; execution classification unavailable"
+        )
         value.update(
-            state="model-selected tool work recorded"
-            if successful
-            else "advisory only; no successful tool receipt",
+            state=phase,
+            research_quality=quality if isinstance(quality, dict) else None,
+            executed_work_receipts=(
+                len(quality["work_receipts"]) + len(quality["process_receipts"])
+                if classified
+                else 0
+            ),
+            forecast_commitments=quality["forecast_commitments"] if classified else [],
+            execution_checkpoint={
+                "result_path": str(result_path),
+                "quality_id": quality.get("id") if isinstance(quality, dict) else None,
+                "phase": phase,
+                "scope": "Resume from archived full trace and host receipt classification; process exit and forecasts are not task validation or income",
+            },
+            successful_tool_receipts_scope="Tool activity only; reads and proposals are not executed experiments",
             result_path=str(result_path),
             tool_receipts=len(trace),
             successful_tool_receipts=len(successful),
