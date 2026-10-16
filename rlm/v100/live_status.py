@@ -375,7 +375,7 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
     from rlm.v100.competition import helper_client
     from rlm.v100.mission_chat import preferences
     from rlm.v100.model_roles import selected_profile
-    from rlm.v100.remote_helper import remote_profile
+    from rlm.v100.remote_helper import origin_enabled, remote_profile
 
     enabled = preferences(root).get("remote_helper_enabled", True) is not False
     if not enabled:
@@ -395,6 +395,15 @@ def snapshot(root: Path, mission: dict, report: dict, gpu: dict) -> dict:
         )
         if not remote_profile(profile):
             raise ValueError("Remote helper is not configured")
+        if not origin_enabled(root, profile["runtime"]["base_url"]):
+            enabled = False
+            rtx.update(
+                state="disabled",
+                stale=False,
+                jobs=[],
+                detail="Selected helper origin is disabled by Synta resource policy; no remote probes or inference requests are sent.",
+            )
+            raise RuntimeError("Resource policy disabled helper probes")
         import copy
 
         profile = copy.deepcopy(profile)

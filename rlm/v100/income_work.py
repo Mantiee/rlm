@@ -5,6 +5,7 @@ Human participation and security programs are never automated or submitted.
 """
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -551,9 +552,9 @@ def dossier_evidence(root: Path, goal_id: str) -> list[str]:
 def typed_income_work(
     root: Path, branch: str, client, goal_id: str, evidence_ids: list[str]
 ) -> dict:
-    """Commission once per archived evidence content, retaining invalid model attempts."""
+    """Commission once per evidence content and planner contract, retaining prior attempts."""
     from rlm.v100.goal_learning import digest, observation
-    from rlm.v100.income_experiment import propose_and_run
+    from rlm.v100.income_experiment import planner_contract_sha256, propose_and_run
 
     inputs = sorted(
         [
@@ -562,7 +563,9 @@ def typed_income_work(
         ],
         key=lambda source: (source["url"], source["field"], source["body_sha256"]),
     )
-    identity = digest({"goal_id": goal_id, "inputs": inputs})
+    legacy_identity = digest({"goal_id": goal_id, "inputs": inputs})
+    contract = planner_contract_sha256()
+    identity = digest({"goal_id": goal_id, "inputs": inputs, "planner_contract_sha256": contract})
     folder = root / "research/income-work/local-commissions"
     if not folder.resolve().is_relative_to(root.resolve()):
         raise ValueError("Income commission archive escaped its root")
@@ -570,8 +573,9 @@ def typed_income_work(
     path = folder / (identity + ".json")
     from rlm.v100 import file_lock
 
-    lock = path.with_suffix(".lock")
-    if path.is_symlink() or lock.is_symlink():
+    family = folder / (legacy_identity + ".family")
+    lock = folder / (legacy_identity + ".lock")
+    if path.is_symlink() or lock.is_symlink() or family.is_symlink():
         raise ValueError("Linked income commission refused")
     with lock.open("a") as lease:
         file_lock.flock(lease, file_lock.LOCK_EX | file_lock.LOCK_NB)
@@ -584,10 +588,26 @@ def typed_income_work(
             if saved.get("id") != identity or saved.get("goal_id") != goal_id:
                 raise ValueError("Income commission identity changed")
             return {**saved, "reused": True}
+        prior_id = legacy_identity if (folder / (legacy_identity + ".json")).is_file() else None
+        if family.exists():
+            with family.open("rb") as handle:
+                family_raw = handle.read(4097)
+            if len(family_raw) > 4096:
+                raise ValueError("Income commission family exceeds4KiB")
+            previous_family = json.loads(family_raw)
+            prior_id = previous_family.get("latest_commission_id")
+            if (
+                previous_family.get("family_id") != legacy_identity
+                or not isinstance(prior_id, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", prior_id)
+            ):
+                raise ValueError("Income commission family identity changed")
         record = {
             "id": identity,
             "goal_id": goal_id,
             "inputs": inputs,
+            "planner_contract_sha256": contract,
+            "prior_commission_id": prior_id,
             "evidence_ids": evidence_ids,
             "state": "planning",
             "updated": time.time(),
@@ -595,6 +615,7 @@ def typed_income_work(
             "checkpoint_path": str(path),
         }
         atomic_json(path, record)
+        atomic_json(family, {"family_id": legacy_identity, "latest_commission_id": identity})
         try:
             result = propose_and_run(root, branch, client, evidence_ids)
             record.update(state=result["state"], experiment=result)

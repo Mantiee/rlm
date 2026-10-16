@@ -130,6 +130,49 @@ def test_invalid_model_proposal_recorded_once_then_broad_path_seeks_new_work(con
     assert second["typed_local_experiment"]["reused"]
 
 
+def test_repaired_contract_commissions_once_without_reexecuting_same_code(context, monkeypatch):
+    root, goal, source, _, turns, runs, _ = context
+    first = income_work.typed_income_work(root, "A", object(), goal["id"], [source["id"]])
+    original_prompt = income_experiment.planner_prompt()
+    monkeypatch.setattr(income_experiment, "planner_prompt", lambda: original_prompt + " Repair.")
+    second = income_work.typed_income_work(root, "A", object(), goal["id"], [source["id"]])
+    third = income_work.typed_income_work(root, "B", object(), goal["id"], [source["id"]])
+    assert second["id"] != first["id"] and second["prior_commission_id"] == first["id"]
+    assert second["planner_contract_sha256"] != first["planner_contract_sha256"]
+    assert third["reused"] and third["id"] == second["id"]
+    assert len(turns) == 2 and len(runs) == 1
+    assert second["experiment"]["reused"]
+    assert Path(first["checkpoint_path"]).exists()
+
+
+def test_commission_contract_order_time_and_legacy_preservation(context, monkeypatch):
+    root, goal, source, proposal, turns, runs, _ = context
+    other = goal_learning.observe(root, "https://example.org/second-terms")
+    ids = [source["id"], other["id"]]
+    inputs = sorted(
+        [
+            {
+                key: goal_learning.observation(root, item)[key]
+                for key in ("url", "field", "body_sha256")
+            }
+            for item in ids
+        ],
+        key=lambda row: (row["url"], row["field"], row["body_sha256"]),
+    )
+    legacy = goal_learning.digest({"goal_id": goal["id"], "inputs": inputs})
+    legacy_path = root / "research/income-work/local-commissions" / (legacy + ".json")
+    atomic_json(legacy_path, {"id": legacy, "state": "typed local experiment blocked"})
+    original = legacy_path.read_bytes()
+    proposal.pop("code")
+    first = income_work.typed_income_work(root, "A", object(), goal["id"], ids)
+    monkeypatch.setattr(income_work.time, "time", lambda: 2000000000)
+    repeated = income_work.typed_income_work(root, "A", object(), goal["id"], ids[::-1])
+    changed_goal = income_work.typed_income_work(root, "A", object(), "different-goal", ids)
+    assert first["prior_commission_id"] == legacy and legacy_path.read_bytes() == original
+    assert repeated["id"] == first["id"] and repeated["reused"]
+    assert changed_goal["id"] != first["id"] and len(turns) == 2 and not runs
+
+
 def test_no_income_dossier_preserves_original_broad_tool_path(context):
     root, _, source, _, turns, runs, broad = context
     (root / "research/income-work/dossiers" / (source["id"] + ".json")).unlink()

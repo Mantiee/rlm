@@ -13,6 +13,17 @@ from rlm.v100.common import atomic_json
 from tests.test_v100_recovery import financial_world
 
 
+def test_planner_contract_fingerprint_tracks_schema_not_dict_order(monkeypatch):
+    original = lab.specification_schema()
+    before = lab.planner_contract_sha256()
+    monkeypatch.setattr(lab, "specification_schema", lambda: dict(reversed(list(original.items()))))
+    assert lab.planner_contract_sha256() == before
+    monkeypatch.setattr(
+        lab, "specification_schema", lambda: {**original, "description": "New contract"}
+    )
+    assert lab.planner_contract_sha256() != before
+
+
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     goal, _ = financial_world(tmp_path)
