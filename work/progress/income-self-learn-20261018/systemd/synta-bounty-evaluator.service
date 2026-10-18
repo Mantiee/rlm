@@ -1,0 +1,23 @@
+[Unit]
+Description=Synta Bounty Evaluator — autonomous bounty/gig task scanner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/synta/income-self-learn-20261018/income
+ExecStart=/opt/synta/.venv/bin/python bounty_evaluator.py
+Restart=always
+RestartSec=60
+Environment=SYNTA_BOUNTY_POLL_INTERVAL=1800
+Environment=SYNTA_BOUNTY_MIN_USD=5.0
+Environment=SYNTA_BOUNTY_MAX_HOURS=4.0
+Environment=SYNTA_EARNINGS_LOG=/opt/synta/income-self-learn-20261018/income/earnings_log.json
+Environment=SYNTA_BOUNTY_STATE=/opt/synta/income-self-learn-20261018/income/bounty_evaluator_state.json
+EnvironmentFile=-/opt/synta/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=synta-bounty-evaluator
+
+[Install]
+WantedBy=default.target
