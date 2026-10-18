@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synta Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg2: #161b22;
+  --bg3: #1c2128;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text2: #8b949e;
+  --green: #3fb950;
+  --red: #f85149;
+  --blue: #58a6ff;
+  --yellow: #d29922;
+  --purple: #bc8cff;
+  --orange: #ffa657;
+  --radius: 8px;
+  --font: 'Segoe UI', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 24px; border-bottom: 1px solid var(--border);
+  background: var(--bg2); position: sticky; top: 0; z-index: 100;
+}
+header h1 { font-size: 18px; font-weight: 600; color: var(--blue); }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot-red { background: var(--red); }
+.dot-yellow { background: var(--yellow); }
+#last-update { color: var(--text2); font-size: 12px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; padding: 20px 24px; }
+.card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; transition: border-color 0.2s;
+}
+.card:hover { border-color: var(--blue); }
+.card-label { color: var(--text2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.card-value { font-size: 22px; font-weight: 700; }
+.card-sub { font-size: 12px; color: var(--text2); margin-top: 4px; }
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+.neutral { color: var(--text); }
+
+section { margin: 0 24px 16px; }
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; padding: 12px 16px; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  user-select: none;
+}
+.section-header:hover { border-color: var(--blue); }
+.section-title { font-weight: 600; font-size: 14px; }
+.chevron { transition: transform 0.2s; font-size: 12px; color: var(--text2); }
+.chevron.open { transform: rotate(90deg); }
+.section-body {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-top: none; border-radius: 0 0 var(--radius) var(--radius);
+  padding: 16px; display: none;
+}
+.section-body.open { display: block; }
+
+/* Chart */
+.chart-container { position: relative; height: 200px; margin: 8px 0; }
+canvas { width: 100% !important; }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.tab {
+  padding: 6px 14px; border-radius: 20px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--text2);
+  transition: all 0.15s;
+}
+.tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+/* Table */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { color: var(--text2); font-weight: 500; padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+td { padding: 8px; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--bg2); }
+
+/* Positions */
+.pos-bar { height: 4px; border-radius: 2px; background: var(--green); margin-top: 4px; min-width: 4px; }
+
+/* Strategy list */
+.strategy-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.strategy-row:last-child { border-bottom: none; }
+.strategy-name { flex: 1; font-weight: 500; }
+.badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600;
+}
+.badge-green { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge-red { background: rgba(248,81,73,0.15); color: var(--red); }
+.badge-blue { background: rgba(88,166,255,0.15); color: var(--blue); }
+.badge-yellow { background: rgba(210,153,34,0.15); color: var(--yellow); }
+
+/* Model status */
+.model-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.model-name { flex: 1; }
+
+/* Drone feed */
+.drone-entry { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.5; }
+.drone-entry:last-child { border-bottom: none; }
+.drone-ts { color: var(--text2); font-size: 11px; }
+
+/* Scrollable */
+.scroll-box { max-height: 300px; overflow-y: auto; }
+.scroll-box::-webkit-scrollbar { width: 4px; }
+.scroll-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Earnings chart */
+.earnings-chart-container { position: relative; height: 280px; margin: 8px 0; }
+.earnings-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; }
+.earnings-legend-item { display: flex; align-items: center; gap: 6px; }
+.earnings-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+footer { text-align: center; padding: 20px; color: var(--text2); font-size: 12px; border-top: 1px solid var(--border); }
+
+@media (max-width: 600px) {
+  .grid { grid-template-columns: 1fr 1fr; padding: 12px; }
+  section { margin: 0 12px 12px; }
+  header { padding: 12px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ Synta</h1>
+  <div class="header-right">
+    <span class="status-dot dot-green" id="conn-dot" title="połączenie"></span>
+    <span id="last-update">—</span>
+    <span id="market-status" style="font-size:12px; color: var(--text2)">rynek zamknięty</span>
+  </div>
+</header>
+
+<!-- KPI cards -->
+<div class="grid" id="kpi-grid">
+  <div class="card">
+    <div class="card-label">Kapitał (paper)</div>
+    <div class="card-value" id="equity">—</div>
+    <div class="card-sub" id="equity-sub">ładowanie...</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Niezrealizowany P&amp;L</div>
+    <div class="card-value" id="unrealized-pl">—</div>
+    <div class="card-sub" id="pos-count">0 pozycji</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Zrealizowany dzisiaj</div>
+    <div class="card-value" id="realized-pl">—</div>
+    <div class="card-sub">od startu dnia</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Siła nabywcza</div>
+    <div class="card-value" id="buying-power">—</div>
+    <div class="card-sub" id="cash-sub">gotówka: —</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Strategie aktywne</div>
+    <div class="card-value" id="strategies-active">—</div>
+    <div class="card-sub" id="strategies-sub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Modele online</div>
+    <div class="card-value" id="models-online">—</div>
+    <div class="card-sub" id="models-sub">—</div>
+  </div>
+</div>
+
+<!-- Portfolio chart -->
+<section>
+  <div class="section-header" onclick="toggleSection('chart-section')">
+    <span class="section-title">📈 Portfolio P&amp;L</span>
+    <span class="chevron open" id="chevron-chart-section">▶</span>
+  </div>
+  <div class="section-body open" id="chart-section">
+    <div class="tabs" id="chart-tabs">
+      <button class="tab active" onclick="setChartPeriod('1H')">1h</button>
+      <button class="tab" onclick="setChartPeriod('6H')">6h</button>
+      <button class="tab" onclick="setChartPeriod('1D')">24h</button>
+      <button class="tab" onclick="setChartPeriod('1W')">7d</button>
+    </div>
+    <div class="chart-container">
+      <canvas id="portfolio-chart"></canvas>
+    </div>
+    <div id="chart-tooltip" style="font-size:12px; color:var(--text2); text-align:right; margin-top:4px;"></div>
+  </div>
+</section>
+
+<!-- Earnings chart -->
+<section>
+  <div class="section-header" onclick="toggleSection('earnings-section')">
+    <span class="section-title">💰 Zarobki w czasie</span>
+    <span class="chevron open" id="chevron-earnings-section">▶</span>
+  </div>
+  <div class="section-body open" id="earnings-section">
+    <div class="tabs" id="earnings-tabs">
+      <button class="tab active" onclick="setEarningsPeriod(7)">7d</button>
+      <button class="tab" onclick="setEarningsPeriod(30)">30d</button>
+      <button class="tab" onclick="setEarningsPeriod(90)">90d</button>
+    </div>
+    <div class="earnings-chart-container">
+      <canvas id="earningsChartCanvas"></canvas>
+    </div>
+    <div id="earnings-summary" style="font-size:12px;color:var(--text2);margin-top:8px;">
+      ładowanie zarobków...
+    </div>
+  </div>
+</section>
+
+<!-- Open positions -->
+<section>
+  <div class="section-header" onclick="toggleSection('positions-section')">
+    <span class="section-title">💼 Otwarte pozycje</span>
+    <span class="chevron" id="chevron-positions-section">▶</span>
+  </div>
+  <div class="section-body" id="positions-section">
+    <div id="positions-table-wrap">
+      <table>
+        <thead><tr><th>Symbol</th><th>Ilość</th><th>Wartość</th><th>P&amp;L</th><th>%</th></tr></thead>
+        <tbody id="positions-body"><tr><td colspan="5" style="color:var(--text2)">ładowanie...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- Strategies -->
+<section>
+  <div class="section-header" onclick="toggleSection('strategies-section')">
+    <span class="section-title">🧠 Strategie</span>
+    <span class="chevron" id="chevron-strategies-section">▶</span>
+  </div>
+  <div class="section-body" id="strategies-section">
+    <div id="strategies-list" class="scroll-box">
+      <div style="color:var(--text2)">ładowanie...</div>
+    </div>
+  </div>
+</section>
+
+<!-- Drone feed -->
+<section>
+  <div class="section-header" onclick="toggleSection('drones-section')">
+    <span class="section-title">🛰 Dane drona (news/earnings/social)</span>
+    <span class="chevron" id="chevron-drones-section">▶</span>
+  </div>
+  <div class="section-body" id="drones-section">
+    <div id="drones-feed" class="scroll-box">
+      <div style="color:var(--text2)">ładowanie...</div>
+    </div>
+  </div>
+</section>
+
+<!-- Model status -->
+<section>
+  <div class="section-header" onclick="toggleSection('models-section')">
+    <span class="section-title">⚙️ Modele</span>
+    <span class="chevron" id="chevron-models-section">▶</span>
+  </div>
+  <div class="section-body" id="models-section">
+    <div id="models-list">ładowanie...</div>
+  </div>
+</section>
+
+<!-- Models Debug -->
+<section>
+  <div class="section-header" onclick="toggleSection('models-debug-section')">
+    <span class="section-title">🔬 Models Debug</span>
+    <span class="chevron open" id="chevron-models-debug-section">▶</span>
+  </div>
+  <div class="section-body open" id="models-debug-section">
+    <div id="models-debug-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">
+      <!-- filled by JS -->
+    </div>
+  </div>
+</section>
+
+<!-- Recent orders -->
+<section>
+  <div class="section-header" onclick="toggleSection('orders-section')">
+    <span class="section-title">📋 Ostatnie zlecenia (paper)</span>
+    <span class="chevron" id="chevron-orders-section">▶</span>
+  </div>
+  <div class="section-body" id="orders-section">
+    <div class="scroll-box">
+      <table>
+        <thead><tr><th>Czas</th><th>Symbol</th><th>Akcja</th><th>Ilość</th><th>Status</th></tr></thead>
+        <tbody id="orders-body"><tr><td colspan="5" style="color:var(--text2)">ładowanie...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>Synta v2 · paper trading only · brak real orders</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// ── Earnings Chart (Chart.js) ───────────────────────────────────────────────
+let _earningsChart = null;
+let _earningsDays = 7;
+
+function setEarningsPeriod(days) {
+  _earningsDays = days;
+  document.querySelectorAll('#earnings-tabs .tab').forEach((t, i) => {
+    t.classList.toggle('active', [7,30,90][i] === days);
+  });
+  loadEarningsChart();
+}
+
+function _mockEarningsData(days) {
+  const now = Date.now();
+  const labels = [], paperPnl = [], gigIncome = [];
+  let pnl = 0, gig = 0;
+  for (let i = 0; i < days; i++) {
+    const d = new Date(now - (days - 1 - i) * 86400000);
+    labels.push(d.toLocaleDateString('pl-PL', {day:'2-digit',month:'2-digit'}));
+    pnl += (Math.random() - 0.48) * 2.5;
+    gig += Math.random() < 0.15 ? Math.random() * 8 : 0;
+    paperPnl.push(parseFloat(pnl.toFixed(2)));
+    gigIncome.push(parseFloat(gig.toFixed(2)));
+  }
+  return { labels, paperPnl, gigIncome, is_mock: true };
+}
+
+function _buildEarningsDatasets(data) {
+  const totals = data.paperPnl.map((v, i) => parseFloat((v + data.gigIncome[i]).toFixed(2)));
+  return [
+    {
+      label: 'Paper Trading P&L',
+      data: data.paperPnl,
+      borderColor: '#4ade80',
+      backgroundColor: 'rgba(74,222,128,0.12)',
+      fill: true, tension: 0.35, pointRadius: 2, borderWidth: 2,
+    },
+    {
+      label: 'Gig Income',
+      data: data.gigIncome,
+      borderColor: '#60a5fa',
+      backgroundColor: 'rgba(96,165,250,0.10)',
+      fill: true, tension: 0.35, pointRadius: 2, borderWidth: 2,
+    },
+    {
+      label: 'Łącznie',
+      data: totals,
+      borderColor: '#f59e0b',
+      backgroundColor: 'transparent',
+      fill: false, tension: 0.35, pointRadius: 2, borderWidth: 2.5,
+      borderDash: [6, 3],
+    },
+  ];
+}
+
+async function loadEarningsChart() {
+  let data;
+  try {
+    const resp = await fetch('/api/earnings_history?days=' + _earningsDays, {signal: AbortSignal.timeout(4000)});
+    if (!resp.ok) throw new Error('no data');
+    const raw = await resp.json();
+    data = {
+      labels: (raw.timestamps || []).map(ts => {
+        try { return new Date(ts).toLocaleDateString('pl-PL',{day:'2-digit',month:'2-digit'}); } catch { return ts; }
+      }),
+      paperPnl: (raw.sources || {}).paper_pnl || [],
+      gigIncome: (raw.sources || {}).gig_income || [],
+      is_mock: false,
+    };
+  } catch {
+    data = _mockEarningsData(_earningsDays);
+  }
+  const datasets = _buildEarningsDatasets(data);
+  const cfg = {
+    type: 'line',
+    data: { labels: data.labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { color: '#e6edf3', font: { size: 12 }, boxWidth: 12 }},
+        tooltip: {
+          mode: 'index', intersect: false,
+          callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + (ctx.parsed.y >= 0 ? '+' : '') + ctx.parsed.y.toFixed(2) + ' PLN' },
+        },
+        title: {
+          display: data.is_mock,
+          text: '⚠ Dane demo — uruchom gig_worker.py i paper trading',
+          color: '#f59e0b', font: { size: 11 },
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#8b949e', maxRotation: 45 }, grid: { color: '#21262d' }},
+        y: {
+          ticks: { color: '#8b949e', callback: v => (v >= 0 ? '+' : '') + v.toFixed(2) + ' PLN' },
+          grid: { color: '#21262d' },
+        },
+      },
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+    },
+  };
+  const canvas = document.getElementById('earningsChartCanvas');
+  if (_earningsChart) {
+    _earningsChart.data = cfg.data; _earningsChart.options = cfg.options; _earningsChart.update('active');
+  } else {
+    _earningsChart = new Chart(canvas, cfg);
+  }
+  const latestPnl = data.paperPnl[data.paperPnl.length - 1] || 0;
+  const latestGig = data.gigIncome[data.gigIncome.length - 1] || 0;
+  const total = latestPnl + latestGig;
+  const pnlColor = latestPnl >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('earnings-summary').innerHTML =
+    '<b>Łącznie (skumulowane):</b> <span style="color:' + (total>=0?'var(--green)':'var(--red)') + ';">' + (total>=0?'+':'') + total.toFixed(2) + ' PLN</span>' +
+    ' &nbsp;|&nbsp; Paper P&L: <span style="color:' + pnlColor + ';">' + (latestPnl>=0?'+':'') + latestPnl.toFixed(2) + ' PLN</span>' +
+    ' &nbsp;|&nbsp; Gig: <span style="color:var(--blue);">+' + latestGig.toFixed(2) + ' PLN</span>' +
+    (data.is_mock ? ' <span style="color:var(--yellow);">[demo]</span>' : '');
+}
+
+// ── Simple canvas chart ─────────────────────────────────────────────────────
+let chartPeriod = '1H';
+let chartData = [];
+
+function setChartPeriod(p) {
+  chartPeriod = p;
+  document.querySelectorAll('#chart-tabs .tab').forEach((t, i) => {
+    t.classList.toggle('active', ['1H','6H','1D','1W'][i] === p);
+  });
+  loadPortfolioHistory();
+}
+
+function drawChart(points, color = '#58a6ff') {
+  const canvas = document.getElementById('portfolio-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.parentElement.offsetWidth;
+  const H = 200;
+  canvas.width = W; canvas.height = H;
+  ctx.clearRect(0, 0, W, H);
+
+  if (!points || points.length < 2) {
+    ctx.fillStyle = '#8b949e'; ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('brak danych', W/2, H/2);
+    return;
+  }
+
+  const vals = points.map(p => p.y);
+  const times = points.map(p => p.x);
+  const minV = Math.min(...vals), maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+
+  const pad = { t: 10, b: 30, l: 60, r: 16 };
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+
+  const toX = i => pad.l + (i / (points.length - 1)) * cw;
+  const toY = v => pad.t + (1 - (v - minV) / range) * ch;
+
+  // Grid
+  ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (i / 4) * ch;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
+    const v = maxV - (i / 4) * range;
+    ctx.fillStyle = '#8b949e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText('$' + v.toFixed(0), pad.l - 6, y + 4);
+  }
+
+  // Fill
+  const isPos = vals[vals.length - 1] >= vals[0];
+  const fillColor = isPos ? 'rgba(63,185,80,0.12)' : 'rgba(248,81,73,0.12)';
+  const lineColor = isPos ? '#3fb950' : '#f85149';
+  ctx.beginPath();
+  ctx.moveTo(toX(0), toY(vals[0]));
+  for (let i = 1; i < points.length; i++) ctx.lineTo(toX(i), toY(vals[i]));
+  ctx.lineTo(toX(points.length - 1), pad.t + ch);
+  ctx.lineTo(toX(0), pad.t + ch);
+  ctx.closePath();
+  ctx.fillStyle = fillColor; ctx.fill();
+
+  // Line
+  ctx.beginPath(); ctx.strokeStyle = lineColor; ctx.lineWidth = 1.5;
+  ctx.moveTo(toX(0), toY(vals[0]));
+  for (let i = 1; i < points.length; i++) ctx.lineTo(toX(i), toY(vals[i]));
+  ctx.stroke();
+
+  // X-axis labels
+  ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(points.length / 6));
+  for (let i = 0; i < points.length; i += step) {
+    const t = new Date(times[i] * 1000);
+    const label = t.getHours().toString().padStart(2,'0') + ':' + t.getMinutes().toString().padStart(2,'0');
+    ctx.fillText(label, toX(i), H - 8);
+  }
+
+  // Tooltip on hover
+  canvas.onmousemove = e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const idx = Math.round(((mx - pad.l) / cw) * (points.length - 1));
+    if (idx >= 0 && idx < points.length) {
+      const v = vals[idx];
+      const t = new Date(times[idx] * 1000).toLocaleTimeString('pl');
+      const diff = v - vals[0];
+      const sign = diff >= 0 ? '+' : '';
+      document.getElementById('chart-tooltip').textContent =
+        `${t} · $${v.toFixed(2)} (${sign}$${diff.toFixed(2)})`;
+    }
+  };
+  canvas.onmouseleave = () => { document.getElementById('chart-tooltip').textContent = ''; };
+}
+
+// ── Toggle sections ─────────────────────────────────────────────────────────
+function toggleSection(id) {
+  const body = document.getElementById(id);
+  const ch = document.getElementById('chevron-' + id);
+  const open = body.classList.toggle('open');
+  ch.classList.toggle('open', open);
+}
+
+// ── Formatters ───────────────────────────────────────────────────────────────
+function fmtUSD(v) {
+  if (v === undefined || v === null) return '—';
+  const n = parseFloat(v);
+  return '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function plClass(v) { return parseFloat(v) >= 0 ? 'pos' : 'neg'; }
+function plSign(v) { return parseFloat(v) >= 0 ? '+' : ''; }
+
+// ── Data fetchers ─────────────────────────────────────────────────────────────
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function loadSummary() {
+  const data = await fetchJSON('/tmp/synta_paper_summary.json');
+  if (!data) return;
+
+  const eq = parseFloat(data.equity || 0);
+  const upl = parseFloat(data.unrealized_pl || 0);
+  const rpl = parseFloat(data.realized_pl_today || 0);
+  const bp = parseFloat(data.buying_power || 0);
+  const cash = parseFloat(data.cash || 0);
+  const positions = data.positions || [];
+
+  document.getElementById('equity').textContent = fmtUSD(eq);
+  document.getElementById('equity').className = 'card-value ' + plClass(eq - 100000);
+  document.getElementById('equity-sub').textContent = plSign(eq - 100000) + fmtUSD(eq - 100000) + ' od startu';
+
+  document.getElementById('unrealized-pl').textContent = plSign(upl) + fmtUSD(upl);
+  document.getElementById('unrealized-pl').className = 'card-value ' + plClass(upl);
+  document.getElementById('pos-count').textContent = positions.length + ' pozycji';
+
+  document.getElementById('realized-pl').textContent = plSign(rpl) + fmtUSD(rpl);
+  document.getElementById('realized-pl').className = 'card-value ' + plClass(rpl);
+
+  document.getElementById('buying-power').textContent = fmtUSD(bp);
+  document.getElementById('cash-sub').textContent = 'gotówka: ' + fmtUSD(cash);
+
+  // Positions table
+  const tbody = document.getElementById('positions-body');
+  if (positions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text2)">brak otwartych pozycji</td></tr>';
+  } else {
+    tbody.innerHTML = positions.map(p => {
+      const plpc = (parseFloat(p.unrealized_plpc) * 100).toFixed(2);
+      return `<tr>
+        <td><strong>${p.symbol}</strong></td>
+        <td>${parseFloat(p.qty).toFixed(2)}</td>
+        <td>${fmtUSD(p.market_value)}</td>
+        <td class="${plClass(p.unrealized_pl)}">${plSign(p.unrealized_pl)}${fmtUSD(p.unrealized_pl)}</td>
+        <td class="${plClass(p.unrealized_plpc)}">${plSign(p.unrealized_plpc)}${plpc}%</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const ts = new Date(data.ts).toLocaleTimeString('pl');
+  document.getElementById('last-update').textContent = 'aktualizacja ' + ts;
+}
+
+async function loadPortfolioHistory() {
+  const map = { '1H': '1H/1Min', '6H': '6H/5Min', '1D': '1D/1Hour', '1W': '1W/1Day' };
+  const [period, tf] = (map[chartPeriod] || '1D/1Hour').split('/');
+  const data = await fetchJSON(`/api/portfolio_history?period=${period}&timeframe=${tf}`);
+  if (!data || !data.equity) { drawChart([]); return; }
+  const pts = data.timestamp.map((t, i) => ({ x: t, y: data.equity[i] }));
+  chartData = pts;
+  drawChart(pts);
+}
+
+async function loadStrategies() {
+  const data = await fetchJSON('/api/strategies');
+  const list = document.getElementById('strategies-list');
+  if (!data || !data.strategies) {
+    list.innerHTML = '<div style="color:var(--text2)">brak danych o strategiach</div>';
+    return;
+  }
+  const active = data.strategies.filter(s => s.status === 'active');
+  document.getElementById('strategies-active').textContent = active.length;
+  document.getElementById('strategies-sub').textContent = data.strategies.length + ' łącznie';
+  list.innerHTML = data.strategies.map(s => {
+    const badge = s.status === 'active' ? 'badge-green' :
+                  s.status === 'backtesting' ? 'badge-blue' :
+                  s.status === 'paused' ? 'badge-yellow' : 'badge-red';
+    const statLabel = s.status === 'active' ? 'aktywna' :
+                      s.status === 'backtesting' ? 'backtest' :
+                      s.status === 'paused' ? 'pauza' : s.status;
+    const pl = s.paper_pl !== undefined ? `<span class="${plClass(s.paper_pl)}">${plSign(s.paper_pl)}${fmtUSD(s.paper_pl)}</span>` : '';
+    return `<div class="strategy-row">
+      <span class="strategy-name">${s.name}</span>
+      ${pl}
+      <span class="badge ${badge}">${statLabel}</span>
+    </div>`;
+  }).join('');
+}
+
+const MODEL_DEFS = [
+  { id: 'v100', name: 'V100', host: 'Debian1', ip: '192.168.0.68', model: 'gemma4-27b', vram_total: 32768, base: 'http://192.168.0.68:8080' },
+  { id: '3060', name: 'RTX 3060 Ti', host: 'Debian2', ip: '192.168.0.9', model: 'gemma4-12b', vram_total: 8192, base: 'http://192.168.0.9:8080' },
+  { id: 'local', name: 'Windows local', host: 'Windows', ip: 'localhost', model: 'phi3-mini', vram_total: null, base: 'http://localhost:8080' },
+];
+
+async function probeModel(m) {
+  const t0 = performance.now();
+  try {
+    const r = await Promise.race([
+      fetch(`${m.base}/health`, { cache: 'no-store' }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 2500)),
+    ]);
+    const latency = Math.round(performance.now() - t0);
+    if (!r.ok) return { ...m, status: 'error', latency, http: r.status };
+    let health = {};
+    try { health = await r.json(); } catch {}
+    return { ...m, status: 'up', latency, ...health };
+  } catch (e) {
+    return { ...m, status: e.message === 'timeout' ? 'timeout' : 'down', latency: Math.round(performance.now() - t0) };
+  }
+}
+
+function barHtml(pct, color) {
+  const w = Math.max(2, Math.min(100, pct));
+  return `<div style="height:5px;background:var(--border);border-radius:3px;margin-top:5px;">
+    <div style="height:100%;width:${w}%;background:${color};border-radius:3px;transition:width 0.4s;"></div>
+  </div>`;
+}
+
+function modelDebugCard(m) {
+  const statusColor = m.status === 'up' ? 'var(--green)' : m.status === 'timeout' ? 'var(--yellow)' : 'var(--red)';
+  const toks = m.tokens_per_second !== undefined ? m.tokens_per_second.toFixed(1) + ' tok/s' : '—';
+  const lat = m.latency !== undefined ? m.latency + ' ms' : '—';
+  const vramUsed = m.vram_used_mb;
+  const vramFree = m.vram_free_mb;
+  const vramTotal = m.vram_total || (vramUsed && vramFree ? vramUsed + vramFree : null);
+  const vramPct = vramTotal && vramUsed ? (vramUsed / vramTotal * 100) : null;
+  const temp = m.gpu_temp_c;
+  const tempPct = temp ? Math.min(100, temp / 100 * 100) : null;
+  const tempColor = temp > 75 ? 'var(--red)' : temp > 60 ? 'var(--yellow)' : 'var(--green)';
+  const ctxUsed = m.ctx_size_used;
+  const ctxTotal = m.ctx_size;
+  const ctxPct = ctxTotal && ctxUsed ? (ctxUsed / ctxTotal * 100) : null;
+  const queueLen = m.slots_idle !== undefined && m.slots_processing !== undefined
+    ? `${m.slots_processing}/${m.slots_idle + m.slots_processing} slots`
+    : m.queue_length !== undefined ? `queue: ${m.queue_length}` : '';
+
+  return `<div class="card" style="min-width:0">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div>
+        <div style="font-weight:700">${m.name}</div>
+        <div style="color:var(--text2);font-size:11px">${m.host} · ${m.model}</div>
+      </div>
+      <div style="text-align:right">
+        <span style="color:${statusColor};font-weight:600">${m.status}</span>
+        <div style="color:var(--text2);font-size:11px">${lat}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
+      <div>
+        <div style="color:var(--text2);font-size:11px">PRĘDKOŚĆ</div>
+        <div style="font-weight:700;color:var(--blue)">${toks}</div>
+      </div>
+      <div>
+        <div style="color:var(--text2);font-size:11px">TEMP GPU</div>
+        <div style="font-weight:700;color:${temp ? tempColor : 'var(--text2)'}">
+          ${temp !== undefined ? temp + '°C' : '—'}
+        </div>
+        ${tempPct !== null ? barHtml(tempPct, tempColor) : ''}
+      </div>
+      <div>
+        <div style="color:var(--text2);font-size:11px">VRAM</div>
+        <div style="font-weight:700">
+          ${vramUsed !== undefined ? Math.round(vramUsed) + ' MiB' : '—'}
+          ${vramTotal ? '<span style="color:var(--text2);font-size:11px"> / ' + Math.round(vramTotal) + '</span>' : ''}
+        </div>
+        ${vramPct !== null ? barHtml(vramPct, vramPct > 90 ? 'var(--red)' : 'var(--blue)') : ''}
+      </div>
+      <div>
+        <div style="color:var(--text2);font-size:11px">KONTEKST</div>
+        <div style="font-weight:700">
+          ${ctxUsed !== undefined ? ctxUsed : '—'}
+          ${ctxTotal ? '<span style="color:var(--text2);font-size:11px"> / ' + ctxTotal + '</span>' : ''}
+        </div>
+        ${ctxPct !== null ? barHtml(ctxPct, 'var(--purple)') : ''}
+      </div>
+    </div>
+    ${queueLen ? `<div style="margin-top:8px;color:var(--text2);font-size:11px">${queueLen}</div>` : ''}
+  </div>`;
+}
+
+async function loadModels() {
+  const results = await Promise.all(MODEL_DEFS.map(probeModel));
+  const list = document.getElementById('models-list');
+  const debugGrid = document.getElementById('models-debug-grid');
+  let online = 0;
+
+  list.innerHTML = results.map(m => {
+    const up = m.status === 'up';
+    if (up) online++;
+    const dot = up ? 'dot-green' : (m.status === 'timeout' ? 'dot-yellow' : 'dot-red');
+    const toks = m.tokens_per_second ? m.tokens_per_second.toFixed(1) + ' tok/s' : '';
+    return `<div class="model-row">
+      <span class="status-dot ${dot}"></span>
+      <span class="model-name"><strong>${m.name}</strong> <span style="color:var(--text2)">${m.model}</span></span>
+      <span style="color:var(--text2);font-size:12px">${m.status}${toks ? ' · ' + toks : ''}</span>
+    </div>`;
+  }).join('');
+
+  if (debugGrid) debugGrid.innerHTML = results.map(modelDebugCard).join('');
+
+  document.getElementById('models-online').textContent = online;
+  document.getElementById('models-sub').textContent = MODEL_DEFS.length + ' skonfigurowanych';
+}
+
+async function loadDrones() {
+  const data = await fetchJSON('/api/drone_feed');
+  const feed = document.getElementById('drones-feed');
+  if (!data || !data.entries) {
+    feed.innerHTML = '<div style="color:var(--text2)">brak danych od dronów</div>';
+    return;
+  }
+  feed.innerHTML = data.entries.slice(0, 30).map(e => {
+    const ts = new Date(e.ts).toLocaleTimeString('pl');
+    const color = e.sentiment > 0.3 ? 'var(--green)' : e.sentiment < -0.3 ? 'var(--red)' : 'var(--text2)';
+    const sym = e.symbol ? `<strong style="color:var(--blue)">${e.symbol}</strong> · ` : '';
+    return `<div class="drone-entry">
+      <span class="drone-ts">${ts}</span> ${sym}<span>${e.headline}</span>
+      ${e.sentiment !== undefined ? `<span style="color:${color};font-size:11px"> [${e.sentiment > 0 ? '+' : ''}${e.sentiment.toFixed(2)}]</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function loadOrders() {
+  const data = await fetchJSON('/tmp/synta_paper_receipts.json');
+  const tbody = document.getElementById('orders-body');
+  if (!data || !Array.isArray(data)) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text2)">brak zleceń</td></tr>';
+    return;
+  }
+  const rows = data.slice(-20).reverse();
+  tbody.innerHTML = rows.map(r => {
+    const ts = new Date(r.ts).toLocaleTimeString('pl');
+    const actionColor = r.action === 'buy' ? 'var(--green)' : r.action === 'sell' ? 'var(--red)' : 'var(--text2)';
+    const statusBadge = r.status === 'ok' ? 'badge-green' : r.status === 'skipped' ? 'badge-yellow' : 'badge-red';
+    return `<tr>
+      <td style="color:var(--text2)">${ts}</td>
+      <td>${r.symbol || '—'}</td>
+      <td style="color:${actionColor}">${r.action}</td>
+      <td>${r.qty || '—'}</td>
+      <td><span class="badge ${statusBadge}">${r.status}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Market hours check ───────────────────────────────────────────────────────
+function updateMarketStatus() {
+  const now = new Date();
+  const utcH = now.getUTCHours(), utcM = now.getUTCMinutes();
+  const mins = utcH * 60 + utcM;
+  const day = now.getUTCDay();
+  // NYSE: 9:30–16:00 ET = 13:30–20:00 UTC (winter)
+  const isWeekday = day >= 1 && day <= 5;
+  const isOpen = isWeekday && mins >= 13*60+30 && mins < 20*60;
+  const el = document.getElementById('market-status');
+  const dot = document.getElementById('conn-dot');
+  el.textContent = isOpen ? 'rynek otwarty' : 'rynek zamknięty';
+  el.style.color = isOpen ? 'var(--green)' : 'var(--text2)';
+}
+
+// ── Main loop ────────────────────────────────────────────────────────────────
+async function refresh() {
+  await Promise.all([
+    loadSummary(),
+    loadStrategies(),
+    loadModels(),
+    loadDrones(),
+    loadOrders(),
+  ]);
+  updateMarketStatus();
+}
+
+async function init() {
+  await refresh();
+  await loadPortfolioHistory();
+  loadEarningsChart();
+  setInterval(refresh, 15000);
+  setInterval(loadPortfolioHistory, 60000);
+  setInterval(loadEarningsChart, 120000);
+  window.addEventListener('resize', () => drawChart(chartData));
+}
+
+init();
+</script>
+</body>
+</html>
