@@ -29,7 +29,10 @@ COMPACT_CPU_TOOLS = {
     "paper_status",
     "paper_observed_results",
     "paper_test_position",
+    "propose_strategy_version_change",
     "check_code_candidate",
+    "batch_backtest_prices",
+    "batch_backtest_status",
     "backtest_prices",
 }
 
@@ -254,7 +257,7 @@ TOOLS = [
     ),
     tool_schema(
         "schedule_drone",
-        "Queue a persistent source watcher, isolated Python experiment, RTX researcher or critic. Jobs continue during V100 evaluation/training. Source payload is a public URL; Python gets fetch(url) for public internet and /work for files. Other payloads are short task briefs. interval=0 runs once; 300..86400 repeats. At most two CPU/source jobs and one RTX job execute simultaneously.",
+        "Queue a persistent source watcher, isolated Python experiment, RTX researcher or critic. Jobs continue during V100 evaluation/training. Source payload is a public URL; Python gets fetch(url) for public internet and /work for files. Other payloads are short task briefs. interval=0 runs once; 300..86400 repeats. CPU/source concurrency is admitted from measured host headroom; GPU work keeps its separate gate.",
         {
             "kind": {
                 "type": "string",
@@ -368,7 +371,7 @@ TOOLS = [
     ),
     tool_schema(
         "parallel_source_research",
-        "Send up to eight public URLs to lightweight source drones, at most two concurrent fetches. Returns bounded source excerpts, not verified conclusions. No arbitrary installed code, paid services or browser accounts.",
+        "Send up to eight public URLs to lightweight source drones. Concurrency is bounded by measured local CPU admission and the URL limit, not a hardcoded worker count. Returns bounded source excerpts, not verified conclusions. No arbitrary installed code, paid services or browser accounts.",
         {"urls": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 8}},
     ),
     tool_schema(
@@ -381,6 +384,16 @@ TOOLS = [
             "fee_bps": {"type": "number", "minimum": 0, "maximum": 1000},
             "slippage_bps": {"type": "number", "minimum": 0, "maximum": 1000},
         },
+    ),
+    tool_schema(
+        "batch_backtest_prices",
+        "Queue model-chosen historical spot-price hypotheses without blocking this tool turn. Return a job_id; use batch_backtest_status later for actual completion and receipt. A separately supervised CPU worker freezes public sources once, then evaluates source/rule/cost experiments. Repeated inputs reuse the same job, not new evidence. Costs are assumptions, never actual income or guaranteed profit. No PAPER or Live order is placed. Event filters use backtest_prices.",
+        {"experiments": {"type": "array", "items": {"type": "object"}, "minItems": 1}},
+    ),
+    tool_schema(
+        "batch_backtest_status",
+        "Read a previously queued historical backtest job by exact job_id. Distinguish queued, fetching, waiting-resource, running, completed, failed and uncertain; only verified completed receipts support analysis. No profit or order claim.",
+        {"job_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
     ),
     tool_schema(
         "search_memory",
@@ -411,6 +424,18 @@ TOOLS = [
             "leverage": {"type": "number"},
             "side": {"type": "string", "enum": ["long", "short"]},
             "adverse_bps": {"type": "number", "minimum": 0, "maximum": 10000},
+        },
+    ),
+    tool_schema(
+        "propose_strategy_version_change",
+        "Propose a versioned strategy change for a single paper portfolio ledger. Writes a receipt binding the new strategy_id, policy digest, rationale and approval evidence to the ledger; preserves all positions, cash and history; does not reset P&L. The model provides evidence of cost assessment and the rationale; the host validates all version fields and idempotency. Receipt is immutable once written.",
+        {
+            "portfolio_id": {"type": "string"},
+            "to_strategy_id": {"type": "string"},
+            "to_strategy_sha256": {"type": "string"},
+            "rationale": {"type": "string"},
+            "cost_assessment": {"type": "string"},
+            "evidence_sha256": {"type": "string"},
         },
     ),
     tool_schema(
@@ -623,9 +648,12 @@ class TextOnly(HTMLParser):
 
 
 class ResearchTools:
-    def __init__(self, root: Path, settings: dict, branch: str = "A"):
+    def __init__(
+        self, root: Path, settings: dict, branch: str = "A", mission_id: str | None = None
+    ):
         self.root, self.settings, self.sources = root, settings, []
         self.branch = branch
+        self.mission_id = mission_id
         self.known_memory_sources = set()
 
     def execute(self, name: str, arguments: dict) -> dict:
@@ -929,6 +957,8 @@ class ResearchTools:
         if name == "parallel_source_research":
             from concurrent.futures import ThreadPoolExecutor
 
+            from rlm.v100.resource_budget import local_budget
+
             urls = arguments.get("urls")
             if (
                 set(arguments) != {"urls"}
@@ -938,6 +968,17 @@ class ResearchTools:
             ):
                 raise ValueError("Source drones require 1-8 public URLs")
 
+            budget = local_budget(self.root)
+            workers = min(len(dict.fromkeys(urls)), int(budget["cpu_slots"]))
+            if workers < 1:
+                return {
+                    "sources": [],
+                    "state": "queued-resource-pressure",
+                    "workers": 0,
+                    "admission": budget,
+                    "scope": "No source fetch started; measured CPU/RAM headroom was insufficient",
+                }
+
             def fetch(url: str) -> dict:
                 try:
                     reader = ResearchTools(self.root, self.settings, self.branch)
@@ -945,12 +986,13 @@ class ResearchTools:
                 except (ValueError, OSError, requests.RequestException) as error:
                     return {"url": url, "error": str(error)[:300], "status": "failed"}
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
                 results = list(executor.map(fetch, dict.fromkeys(urls)))
             return {
                 "sources": results,
                 "scope": "Unverified source excerpts; original documents preserved",
-                "workers": 2,
+                "workers": workers,
+                "admission": budget,
             }
         if name == "audit_backtests":
             from rlm.v100.backtest_audit import run
@@ -965,6 +1007,26 @@ class ResearchTools:
                 raise ValueError(
                     "Backtest source does not match the required timestamped schema"
                 ) from error
+        if name == "batch_backtest_prices":
+            if set(arguments) != {"experiments"}:
+                raise ValueError("Invalid backtest batch request")
+            # Direct tool users predating mission-scoped research do not have a
+            # durable identity. Keep that narrow compatibility path synchronous;
+            # model research_turn always supplies a mission_id and therefore uses
+            # the durable asynchronous queue above.
+            if self.mission_id is None:
+                from rlm.v100.backtest_batch import run_public
+
+                return run_public(self.root, self.branch, arguments["experiments"])
+            from rlm.v100.backtest_async_queue import submit
+
+            return submit(self.root, self.branch, self.mission_id, arguments["experiments"])
+        if name == "batch_backtest_status":
+            from rlm.v100.backtest_async_queue import status
+
+            if set(arguments) != {"job_id"}:
+                raise ValueError("Invalid backtest batch status request")
+            return status(self.root, arguments["job_id"])
         if name in ("search_memory", "read_source"):
             from rlm.v100.mission_memory import store
 
@@ -1003,6 +1065,13 @@ class ResearchTools:
             from rlm.v100.paper_tools import execute
 
             return execute(self.root, self.branch, name, arguments)
+        if name == "propose_strategy_version_change":
+            from rlm.v100.paper_strategy_switch import propose_switch
+
+            required = {"portfolio_id", "to_strategy_id", "to_strategy_sha256", "rationale", "cost_assessment", "evidence_sha256"}
+            if set(arguments) != required:
+                raise ValueError("propose_strategy_version_change: invalid arguments")
+            return propose_switch(self.root, self.branch, **arguments)
         if name in ("list_free_models", "consult_free_model"):
             from rlm.v100.free_router import consult, public_catalog
 
@@ -1287,7 +1356,10 @@ def research_turn(
     owner = getattr(client, "research_owner", "A")
     journal = ActivityLog(root, owner, getattr(client, "activity_actor", "tester"))
     tools = ResearchTools(
-        root, getattr(client, "research_config", {}), getattr(client, "research_owner", "A")
+        root,
+        getattr(client, "research_config", {}),
+        getattr(client, "research_owner", "A"),
+        mission_id=run_id or task_id,
     )
     trace = []
     selected_names = getattr(client, "research_tool_names", None)
