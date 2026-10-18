@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHA_EXPECTED_GIG="$(sha256sum "${SCRIPT_DIR}/income/gig_worker.py" | awk '{print $1}')"
 SHA_EXPECTED_NEWS="$(sha256sum "${SCRIPT_DIR}/learning/news_collector.py" | awk '{print $1}')"
 SHA_EXPECTED_MODEL="$(sha256sum "${SCRIPT_DIR}/learning/model_updater.py" | awk '{print $1}')"
+SHA_EXPECTED_BOUNTY="$(sha256sum "${SCRIPT_DIR}/income/bounty_evaluator.py" | awk '{print $1}')"
 
 function run_tests() {
   echo "[TEST] Running smoke tests..."
@@ -41,12 +42,16 @@ function deploy() {
   # Upload files
   scp "${SCRIPT_DIR}/income/gig_worker.py"           "${HOST}:${REMOTE_DIR}/income/"
   scp "${SCRIPT_DIR}/income/earnings_history_api.py" "${HOST}:${REMOTE_DIR}/income/"
+  scp "${SCRIPT_DIR}/income/bounty_evaluator.py"     "${HOST}:${REMOTE_DIR}/income/"
   scp "${SCRIPT_DIR}/learning/news_collector.py"     "${HOST}:${REMOTE_DIR}/learning/"
   scp "${SCRIPT_DIR}/learning/social_collector.py"   "${HOST}:${REMOTE_DIR}/learning/"
   scp "${SCRIPT_DIR}/learning/quarterly_parser.py"   "${HOST}:${REMOTE_DIR}/learning/"
   scp "${SCRIPT_DIR}/learning/historical_fetcher.py" "${HOST}:${REMOTE_DIR}/learning/"
   scp "${SCRIPT_DIR}/learning/model_updater.py"      "${HOST}:${REMOTE_DIR}/learning/"
   scp "${SCRIPT_DIR}/dashboard/earnings_chart.js"    "${HOST}:${REMOTE_DIR}/dashboard/"
+  # Deploy bounty-evaluator systemd service
+  scp "${SCRIPT_DIR}/systemd/synta-bounty-evaluator.service" "${HOST}:/home/marek/.config/systemd/user/synta-bounty-evaluator.service"
+  ssh "${HOST}" "systemctl --user daemon-reload; systemctl --user enable synta-bounty-evaluator; systemctl --user restart synta-bounty-evaluator || true"
 
   # Verify SHA on remote
   echo "[VERIFY] Checking SHA on remote..."
@@ -56,6 +61,9 @@ function deploy() {
     echo "[ERROR] SHA mismatch for news_collector.py — rolling back"; rollback; exit 1; }
   ssh "${HOST}" "sha256sum '${REMOTE_DIR}/learning/model_updater.py'" | grep -q "${SHA_EXPECTED_MODEL}" || {
     echo "[ERROR] SHA mismatch for model_updater.py — rolling back"; rollback; exit 1; }
+
+  ssh "${HOST}" "sha256sum '${REMOTE_DIR}/income/bounty_evaluator.py'" | grep -q "${SHA_EXPECTED_BOUNTY}" || {
+    echo "[ERROR] SHA mismatch for bounty_evaluator.py — rolling back"; rollback; exit 1; }
 
   echo "[DEPLOY] SHA verified OK."
 
