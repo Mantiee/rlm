@@ -309,15 +309,16 @@ const syntaOverview = (() => {
     const controls = books.filter(b => b !== model);
     if (controls.length) card(grid, 'Kontrole (benchmark)', controls.map(b => String(b.name || b.id).replace(/^Control /, '') + ' ' + signed(b.pnl)).join(' · '), 'ten sam kapitał i koszty; punkt odniesienia', '');
     const c = forward.assumed_cost_bps_per_side || {};
-    card(grid, 'Koszty', (forward.costs_status || 'ASSUMED').toUpperCase(), ['fee', 'fx', 'slippage'].filter(k => num(c[k]) !== null).map(k => k + ' ' + c[k] + ' bps').join(' · ') + ' na stronę', 'warn');
+    const costsOk = forward.costs_status && forward.costs_status !== 'ASSUMED';
+    card(grid, 'Koszty', (forward.costs_status || 'ASSUMED').toUpperCase(), ['fee', 'fx', 'slippage'].filter(k => num(c[k]) !== null).map(k => k + ' ' + c[k] + ' bps').join(' · ') + ' na stronę', costsOk ? '' : '');
     const g = d.gpu || {};
-    card(grid, 'V100', num(g.utilization) === null ? 'brak odczytu' : g.utilization + '% GPU', [num(g.temperature) !== null ? g.temperature + ' °C' : '', num(g.memory_used) !== null && num(g.memory_total) ? Math.round(g.memory_used / g.memory_total * 100) + '% VRAM' : ''].filter(Boolean).join(' · '), num(g.temperature) > 80 ? 'warn' : '');
+    card(grid, 'V100', num(g.utilization) !== null ? g.utilization + '% GPU' : 'brak odczytu', [num(g.temperature) !== null ? g.temperature + ' °C' : '', num(g.memory_used) !== null && num(g.memory_total) ? Math.round(g.memory_used / g.memory_total * 100) + '% VRAM' : ''].filter(Boolean).join(' · '), num(g.temperature) > 80 ? 'warn' : '');
     const u = r.node_utilization || {}, w1 = u.window_1h || {}, cur = u.current || {};
-    card(grid, 'RTX 3060 Ti', u.schema ? pct(w1.busy_share) + ' zajęta (1 h)' : 'brak pomiaru', u.schema ? 'teraz: ' + (cur.state || 'nieznany') + (cur.idle_reason ? ' — ' + String(cur.idle_reason).split(';')[0].replace(/: .*/, '').slice(0, 80) : '') : '', u.schema && num(w1.busy_share) !== null && w1.busy_share < 0.3 ? 'warn' : '');
+    card(grid, 'RTX 3060 Ti', u.schema ? pct(w1.busy_share) + ' zajęta (1 h)' : 'brak pomiaru', u.schema ? 'teraz: ' + (cur.state || 'nieznany') + (cur.idle_reason ? ' — ' + String(cur.idle_reason).split(';')[0].replace(/: .*/, '').slice(0, 80) : '') : '', u.schema && num(w1.busy_share) !== null && w1.busy_share < 0.2 ? 'warn' : '');
     const work = r.income_work || {}, income = num(work.actual_income_pln);
-    card(grid, 'Przychód (realny)', income === null ? 'niezweryfikowany' : pln(income), 'income: ' + (work.state || r.income_dispatch?.state || 'stan nieznany') + '; brak podłączonej księgi płatności', income === null ? 'warn' : 'ok');
+    card(grid, 'Przychód (realny)', income === null ? 'brak księgi' : pln(income), 'income: ' + (work.state || r.income_dispatch?.state || 'stan nieznany'), income !== null && income > 0 ? 'ok' : '');
     const errs = (d.errors || []).length;
-    card(grid, 'Problemy danych', String(stale + errs), stale + ' źródeł nieświeżych/nieznanych · ' + errs + ' błędów snapshotu', stale + errs ? 'warn' : 'ok');
+    card(grid, 'Problemy danych', String(stale + errs), stale + ' źródeł nieświeżych/nieznanych · ' + errs + ' błędów snapshotu', stale + errs > 5 ? 'warn' : stale + errs > 0 ? '' : 'ok');
   }
 
   // Expandable sections keep their open/closed state across refreshes and reloads.
