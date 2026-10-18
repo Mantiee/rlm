@@ -1,0 +1,20 @@
+[Unit]
+Description=Synta Gig Worker — autonomous gig task poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marek
+WorkingDirectory=/home/marek/ai-v100/income-self-learn
+Environment=SYNTA_DATA_DIR=/home/marek/ai-v100/income-self-learn/data
+Environment=SYNTA_INCOME_RESULTS=/home/marek/ai-v100/income-self-learn/income_results.json
+Environment=SYNTA_GIG_POLL_INTERVAL=300
+ExecStart=/usr/bin/python3 -u income/gig_worker.py
+Restart=always
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

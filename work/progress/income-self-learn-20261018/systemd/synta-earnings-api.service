@@ -1,0 +1,19 @@
+[Unit]
+Description=Synta Earnings History API — cumulative P&L + gig income endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marek
+WorkingDirectory=/home/marek/ai-v100/income-self-learn
+Environment=SYNTA_DATA_DIR=/home/marek/ai-v100/income-self-learn/data
+Environment=SYNTA_INCOME_RESULTS=/home/marek/ai-v100/income-self-learn/income_results.json
+ExecStart=/usr/bin/python3 -u income/earnings_history_api.py 8766
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,25 @@
+[Unit]
+Description=Synta Model Updater — self-learning signal pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marek
+WorkingDirectory=/home/marek/ai-v100/income-self-learn
+Environment=SYNTA_DATA_DIR=/home/marek/ai-v100/income-self-learn/data
+Environment=SYNTA_W_NEWS=0.25
+Environment=SYNTA_W_SOCIAL=0.25
+Environment=SYNTA_W_EARNINGS=0.30
+Environment=SYNTA_W_MOMENTUM=0.20
+Environment=SYNTA_BUY_THRESHOLD=0.30
+Environment=SYNTA_SELL_THRESHOLD=-0.30
+Environment=SYNTA_SYMBOLS=BTC,ETH,SOL,AAPL,MSFT,NVDA
+ExecStart=/usr/bin/python3 -u learning/model_updater.py
+Restart=always
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
