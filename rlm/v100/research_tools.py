@@ -33,6 +33,7 @@ COMPACT_CPU_TOOLS = {
     "check_code_candidate",
     "batch_backtest_prices",
     "batch_backtest_status",
+    "batch_backtest_throughput",
     "backtest_prices",
 }
 
@@ -394,6 +395,11 @@ TOOLS = [
         "batch_backtest_status",
         "Read a previously queued historical backtest job by exact job_id. Distinguish queued, fetching, waiting-resource, running, completed, failed and uncertain; only verified completed receipts support analysis. No profit or order claim.",
         {"job_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+    ),
+    tool_schema(
+        "batch_backtest_throughput",
+        "Report observed backtest throughput from the last 24 h of completed jobs and project a three-step path to 100x capacity (parallelism, source_caching, queue_depth). No profit claim; projections are arithmetic estimates from measured admission, not income guarantees.",
+        {},
     ),
     tool_schema(
         "search_memory",
@@ -1027,6 +1033,10 @@ class ResearchTools:
             if set(arguments) != {"job_id"}:
                 raise ValueError("Invalid backtest batch status request")
             return status(self.root, arguments["job_id"])
+        if name == "batch_backtest_throughput":
+            from rlm.v100.backtest_batch import throughput_report
+
+            return throughput_report(self.root)
         if name in ("search_memory", "read_source"):
             from rlm.v100.mission_memory import store
 
