@@ -37,6 +37,7 @@ ROLE_MODELS = {
     "qwen3.6:35b-a3b-q4_K_M": ("Q4_K_M", 21),
 }
 BACKEND = "ollama-research"
+LLAMACPP_BACKEND = "llamacpp-research"
 WINDOWS_3090_ORIGIN = "http://192.168.0.61:11435"
 REMOTE_ORIGIN_POLICY_KEY = "remote_origin_enabled"
 HELPER_WORKLOAD_LOCK = threading.Lock()
@@ -50,6 +51,14 @@ class OwnedGpuCooldown(requests.HTTPError):
     def __init__(self, message: str, response, retry_after_seconds: int):
         super().__init__(message, response=response)
         self.retry_after_seconds = retry_after_seconds
+
+
+class ResourceGuardUnavailable(requests.ConnectionError):
+    """A fail-closed guard rejection with a bounded, non-secret reason code."""
+
+    def __init__(self, message: str, reason_code: str):
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 FULL_METADATA = "ollama-full-v1"
@@ -138,6 +147,25 @@ def remote_profile(profile: dict) -> bool:
 def validate_remote(profile: dict) -> None:
     runtime, server, resources = profile["runtime"], profile["server"], profile["resources"]
     private_origin(runtime["base_url"])
+    if runtime.get("backend") == LLAMACPP_BACKEND:
+        LlamaCppResearchClient._validate_identity(resources.get("llamacpp_identity", {}))
+        identity = resources["llamacpp_identity"]
+        if (
+            runtime.get("tool_protocol") != "native"
+            or runtime.get("model_name") != identity["model"]["id"]
+            or runtime.get("context_window") != identity["server"]["context"]
+            or server.get("slots") != 1
+            or server.get("context_per_slot") != identity["server"]["context"]
+            or server.get("model")
+            or server.get("binary")
+            or server.get("draft_model")
+            or type(resources.get("helper_duty_percent", 65)) is not int
+            or not 1 <= resources.get("helper_duty_percent", 65) <= 65
+        ):
+            raise ValueError(
+                "Remote llama.cpp researcher profile does not match its exact identity"
+            )
+        return
     validate_workload(
         resources.get("helper_batch_tokens", 64),
         resources.get("helper_duty_percent", 65),
@@ -223,8 +251,30 @@ def check_guard(guard: dict, dedicated: bool = False) -> dict:
     if guard.get("ready") is not True:
         problems.append(str(guard.get("reason", "resource admission not ready")))
     if problems:
-        raise requests.ConnectionError(
-            label + " adaptive guard unavailable: " + "; ".join(problems)
+        if guard.get("contract") != expected:
+            reason_code = "resource-contract-mismatch"
+        elif type(age) not in (int, float) or not math.isfinite(age):
+            reason_code = "resource-heartbeat-invalid"
+        elif age < 0:
+            reason_code = "resource-heartbeat-from-future"
+        elif age > 10:
+            reason_code = "resource-heartbeat-stale"
+        else:
+            reason = str(guard.get("reason", "")).lower()
+            if "quarantin" in reason or "cooling" in reason:
+                reason_code = "resource-gpu-quarantined-or-cooling-down"
+            elif "busy" in reason:
+                reason_code = "resource-guard-busy"
+            elif "digest" in reason and "install" in reason:
+                reason_code = "model-digest-not-installed"
+            elif "metadata" in reason:
+                reason_code = "model-metadata-unavailable"
+            elif "update" in reason:
+                reason_code = "owned-update-window"
+            else:
+                reason_code = "resource-guard-not-ready"
+        raise ResourceGuardUnavailable(
+            label + " adaptive guard unavailable: " + "; ".join(problems), reason_code
         )
     return guard
 
@@ -691,6 +741,253 @@ class OllamaResearchClient(LlamaCppClient):
         }
 
 
+class LlamaCppResearchClient(OllamaResearchClient):
+    """Opt-in native llama.cpp client with pinned runtime and model identity.
+
+    This class is intentionally not selected by existing dispatch code. The
+    remote identity is content-addressed by the server contract, never by the
+    human-readable model ID returned from ``/v1/models``.
+    """
+
+    IDENTITY_SCHEMA = "synta-llamacpp-identity-v1"
+    IDENTITY_FIELDS = {
+        "schema",
+        "runtime",
+        "model",
+        "server",
+    }
+
+    def __init__(self, *, base_url: str, profile_pins: dict, **kwargs: Any):
+        origin = private_origin(base_url)
+        if not isinstance(profile_pins, dict) or set(profile_pins) != self.IDENTITY_FIELDS:
+            raise ValueError("Native llama.cpp profile pins must match the exact identity contract")
+        self._validate_identity(profile_pins)
+        self.profile_pins = copy.deepcopy(profile_pins)
+        self.model_digest = profile_pins["model"]["sha256"]
+        self.metadata_sha256 = profile_pins["model"]["template_sha256"]
+        self.max_vram_gib = 0
+        kwargs.setdefault("model_name", profile_pins["model"]["id"])
+        kwargs.setdefault("context_window", profile_pins["server"]["context"])
+        if kwargs["model_name"] != profile_pins["model"]["id"]:
+            raise ValueError("Native llama.cpp model ID differs from its profile pin")
+        if kwargs["context_window"] != profile_pins["server"]["context"]:
+            raise ValueError("Native llama.cpp context differs from its profile pin")
+        super(OllamaResearchClient, self).__init__(base_url="http://127.0.0.1:11435", **kwargs)
+        self.base_url = origin
+        self.request_lock = threading.Lock()
+        self.tool_protocol = "native"
+        self.dedicated_host = False
+        self.helper_batch_tokens = 64
+        self.helper_duty_percent = 65
+        self.require_adaptive_windows_guard = False
+
+    @classmethod
+    def _validate_identity(cls, identity: dict) -> None:
+        if set(identity) != cls.IDENTITY_FIELDS or identity.get("schema") != cls.IDENTITY_SCHEMA:
+            raise ValueError("Native llama.cpp identity schema mismatch")
+        expected_shapes = {
+            "runtime": {"version", "binary_path", "binary_sha256"},
+            "model": {
+                "id",
+                "path",
+                "sha256",
+                "template_path",
+                "template_sha256",
+                "tokenizer_path",
+                "tokenizer_sha256",
+            },
+            "server": {"context", "parallel", "gpu_layers"},
+        }
+        for key, fields in expected_shapes.items():
+            value = identity.get(key)
+            if not isinstance(value, dict) or set(value) != fields:
+                raise ValueError("Native llama.cpp identity fields are incomplete or unexpected")
+        runtime, model, server = identity["runtime"], identity["model"], identity["server"]
+        hashes = (
+            runtime["binary_sha256"],
+            model["sha256"],
+            model["template_sha256"],
+            model["tokenizer_sha256"],
+        )
+        if (
+            not isinstance(runtime["version"], str)
+            or not runtime["version"]
+            or not isinstance(runtime["binary_path"], str)
+            or not runtime["binary_path"]
+            or not isinstance(model["id"], str)
+            or not model["id"]
+            or not isinstance(model["path"], str)
+            or not model["path"]
+            or not isinstance(model["template_path"], str)
+            or not model["template_path"]
+            or not isinstance(model["tokenizer_path"], str)
+            or not model["tokenizer_path"]
+            or any(
+                not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in hashes
+            )
+            or type(server["context"]) is not int
+            or server["context"] < 1
+            or type(server["parallel"]) is not int
+            or server["parallel"] != 1
+            or not (
+                server["gpu_layers"] == "all"
+                or type(server["gpu_layers"]) is int
+                and server["gpu_layers"] >= 0
+            )
+        ):
+            raise ValueError("Native llama.cpp identity values are invalid")
+
+    def remote_request(self, endpoint: str, data: dict | None = None) -> dict:
+        methods = {
+            "/v1/chat/completions": "post",
+            "/apply-template": "post",
+            "/tokenize": "post",
+            "/v1/models": "get",
+            "/props": "get",
+            "/api/synta-resources": "get",
+            "/api/synta-identity": "get",
+        }
+        method_name = methods.get(endpoint)
+        if method_name is None or (data is None) != (method_name == "get"):
+            raise ValueError("Native llama.cpp endpoint or method is not permitted")
+        with requests.Session() as session:
+            session.trust_env = False
+            method = getattr(session, method_name)
+            arguments = {} if data is None else {"json": data}
+            if data is not None:
+                arguments["headers"] = {
+                    "X-Synta-Task": re.sub(r"[^A-Za-z0-9 ._:/-]", "", str(self.activity_actor))[
+                        :100
+                    ],
+                    "X-Synta-Request": re.sub(
+                        r"[^A-Za-z0-9_-]",
+                        "",
+                        str(
+                            self.activity_context.get(
+                                "chat_request_id", self.activity_context.get("request_id", "")
+                            )
+                        ),
+                    )[:64],
+                }
+            with method(
+                self.base_url + endpoint,
+                timeout=(min(5, self.remaining_timeout()), self.remaining_timeout()),
+                allow_redirects=False,
+                stream=True,
+                **arguments,
+            ) as response:
+                if 300 <= response.status_code < 400:
+                    raise ValueError("Native llama.cpp server redirected the request")
+                response.raise_for_status()
+                body = bytearray()
+                for block in response.iter_content(65536):
+                    body.extend(block)
+                    if len(body) > 2 * 1024**2:
+                        raise ValueError("Native llama.cpp response exceeds its byte budget")
+        result = json.loads(body)
+        if not isinstance(result, dict):
+            raise ValueError("Native llama.cpp returned a non-object response")
+        return result
+
+    def identity(self) -> dict:
+        identity = self.remote_request("/api/synta-identity")
+        self._validate_identity(identity)
+        if identity != self.profile_pins:
+            raise ValueError(
+                "Native llama.cpp runtime, model, template, tokenizer or server pins changed"
+            )
+        models = self.remote_request("/v1/models").get("data")
+        if not isinstance(models, list) or not any(
+            isinstance(row, dict) and row.get("id") == self.model_name for row in models
+        ):
+            raise ValueError("Pinned llama.cpp model ID is not available")
+        # Server props and guard telemetry are status only; neither can replace
+        # content-addressed identity or establish residency/peak VRAM.
+        props = self.remote_request("/props")
+        resources = self.remote_request("/api/synta-resources")
+        self.last_remote_status = {"props": props, "resources": resources}
+        return identity
+
+    def count_text(self, text: str, parse_special: bool = False) -> int:
+        result = self.remote_request(
+            "/tokenize", {"content": text, "add_special": False, "parse_special": parse_special}
+        )
+        tokens = result.get("tokens")
+        if not isinstance(tokens, list) or any(type(token) is not int for token in tokens):
+            raise ValueError("Native llama.cpp tokenizer returned invalid token IDs")
+        return len(tokens)
+
+    def template_args(self) -> dict:
+        if self.enable_thinking is None:
+            return {}
+        args = {"chat_template_kwargs": {"enable_thinking": self.enable_thinking}}
+        if not self.enable_thinking:
+            args["reasoning_effort"] = "none"
+        return args
+
+    def count_messages(self, messages: list[dict[str, Any]]) -> int:
+        self.identity()
+        rendered = self.remote_request(
+            "/apply-template", {"messages": messages, **self.template_args()}
+        ).get("prompt")
+        if not isinstance(rendered, str):
+            raise ValueError("Native llama.cpp did not return the rendered template")
+        return self.count_text(rendered, parse_special=True) + 1
+
+    def http_request(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        if endpoint == "/apply-template":
+            if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
+                raise ValueError("Native template rendering needs messages")
+            result = self.remote_request(endpoint, data)
+            if not isinstance(result.get("prompt"), str):
+                raise ValueError("Native llama.cpp did not return a rendered template")
+            return result
+        if endpoint != "/v1/chat/completions" or not isinstance(data, dict):
+            raise ValueError("Native llama.cpp client cannot change endpoints")
+        if data.get("model") != self.model_name or data.get("tools") or data.get("stream"):
+            raise ValueError(
+                "Native researcher requires pinned model and bounded non-streaming text"
+            )
+        maximum = data.get("max_tokens")
+        prompt_tokens = self.count_messages(data.get("messages", []))
+        if (
+            type(maximum) is not int
+            or not 1 <= maximum <= 8192
+            or prompt_tokens + maximum > self.context_window
+        ):
+            raise ValueError("Native rendered prompt and output exceed pinned context")
+        with self.request_lock, self.workload_slot() as quota:
+            self.identity()
+            started = time.monotonic()
+            try:
+                response = self.remote_request(endpoint, data)
+            finally:
+                self.reserve_helper_idle(quota, max(0, time.monotonic() - started))
+        usage = response.get("usage")
+        if not isinstance(usage, dict):
+            raise ValueError("Native llama.cpp omitted measured token usage")
+        incoming, outgoing = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        if (
+            type(incoming) is not int
+            or type(outgoing) is not int
+            or incoming <= 0
+            or outgoing <= 0
+            or incoming > prompt_tokens
+            or outgoing > maximum
+            or incoming + outgoing > self.context_window
+        ):
+            raise ValueError("Native llama.cpp returned invalid measured token usage")
+        response.setdefault("timings", {})
+        response["timings"].update(
+            {
+                "count_mode": "llama.cpp-rendered-template-and-tokenizer",
+                "prompt_budget": prompt_tokens,
+            }
+        )
+        return response
+
+
 def prepare_remote(profile: dict, root: Path, url: str, context: int, digest: str) -> Path:
     chosen = copy.deepcopy(profile)
     chosen["runtime"].update(
@@ -814,7 +1111,26 @@ def selected_helper(root: Path, role: str = "fast") -> Path:
     if selected is not None:
         return selected
     remote = root / "research/researcher-rtx3090.json"
-    path = remote if remote.exists() else root / "research/researcher-cpu.toml"
+    if remote.exists():
+        # Guard: never return RTX3090 path when operator has disabled the Windows helper.
+        # Returning it to callers that bypass helper_client would cause fail-open on Windows.
+        from rlm.v100.mission_chat import preferences
+        if preferences(root).get("remote_helper_enabled", True) is False:
+            raise ValueError(
+                "Windows RTX helper is disabled by operator; selected_helper refuses RTX3090 path"
+            )
+        # Load the base_url from the profile to check origin policy
+        import json as _json
+        try:
+            _profile_url = _json.loads(remote.read_text()).get("runtime", {}).get("base_url", "")
+        except (OSError, ValueError):
+            _profile_url = ""
+        if _profile_url and not origin_enabled(root, _profile_url):
+            raise ValueError(
+                "Windows RTX helper origin is disabled by resource policy; selected_helper refuses RTX3090 path"
+            )
+        return remote
+    path = root / "research/researcher-cpu.toml"
     if not path.exists():
         raise ValueError("Missing prepared researcher")
     return path
