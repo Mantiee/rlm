@@ -107,6 +107,13 @@ class PaperLearning:
         self.settings_sha = sha(self.settings)
         self.stop_event = threading.Event()
         self.fee_retry_after = 0.0
+        self.spot_rules_status_path = root / "research/paper/spot-rules-status.json"
+        spot_status = (
+            json.loads(self.spot_rules_status_path.read_text())
+            if self.spot_rules_status_path.exists()
+            else {}
+        )
+        self.spot_rules_blocked = spot_status.get("state") == "blocked"
         self.failure: Exception | None = None
         self.worker: threading.Thread | None = None
         self.scope = ExitStack()
@@ -143,6 +150,60 @@ class PaperLearning:
             book.close()
         ActivityLog(self.root, "controller", "paper-learning").write("steps", kind, payload)
 
+    def decision_round(self, profile: dict, cycle: int) -> dict:
+        """Run and receipt one bounded A/B model decision pass on the serving endpoint."""
+        from rlm.v100.paper_agents import paper_decision_round
+
+        started = time.time()
+        model = profile.get("runtime", {}).get("model_version", "unknown")
+        self.note(
+            "decision-round-started",
+            {
+                "cycle": cycle,
+                "started_at": started,
+                "model_version": model,
+                "branches": ["A", "B"],
+                "scope": "Paper proposals only; host cost and risk gates still apply; no real orders.",
+            },
+        )
+        try:
+            self.check()
+            book = PaperBook(self.root)
+            try:
+                events = paper_decision_round(book, profile)
+            finally:
+                book.close()
+            outcome = {
+                "status": "decision-round-completed",
+                "cycle": cycle,
+                "started_at": started,
+                "completed_at": time.time(),
+                "model_version": model,
+                "decisions_recorded": len(events),
+                "branch_actions": [
+                    {
+                        "branch": event.get("branch"),
+                        "action": event.get("payload", {}).get("proposal", {}).get("action"),
+                        "sequence": event.get("sequence"),
+                    }
+                    for event in events
+                ],
+                "scope": "Paper decisions only. A HOLD or proposal is not a fill, profit, model update, or real order.",
+            }
+        except Exception as error:
+            outcome = {
+                "status": "decision-round-unavailable",
+                "cycle": cycle,
+                "started_at": started,
+                "completed_at": time.time(),
+                "model_version": model,
+                "error": type(error).__name__,
+                "detail": str(error)[:400],
+                "scope": "Decision attempt failed; no trade is inferred or fabricated.",
+            }
+        self.note(outcome["status"], outcome)
+        return outcome
+
     def tick(self) -> None:
         self.check()
         book = PaperBook(self.root)
@@ -159,12 +220,15 @@ class PaperLearning:
 
                     from rlm.v100.spot_bootstrap import FeeSourceUnavailable, prepare
 
-                    if time.time() >= self.fee_retry_after and any(
-                        datetime.fromisoformat(
-                            state["fee_profiles"][item["fee_profile"]]["valid_until"]
+                    if time.time() >= self.fee_retry_after and (
+                        self.spot_rules_blocked
+                        or any(
+                            datetime.fromisoformat(
+                                state["fee_profiles"][item["fee_profile"]]["valid_until"]
+                            )
+                            <= datetime.now(UTC) + timedelta(hours=1)
+                            for item in kraken
                         )
-                        <= datetime.now(UTC) + timedelta(hours=1)
-                        for item in kraken
                     ):
                         try:
                             prepare(self.root, refresh=True)
@@ -179,7 +243,40 @@ class PaperLearning:
                                     "scope": "Existing fee expiry and fill gates unchanged. Quotes, research and independent verified learning may continue; no guessed fees or expiry extension.",
                                 },
                             )
-                poll_crypto(book, self.stop_event.is_set)
+                        except ValueError as error:
+                            if str(error) != (
+                                "Spot execution rules changed; retain positions and inspect "
+                                "before updating"
+                            ):
+                                raise
+                            # Preserve all positions and fee gates. Existing spot
+                            # rules cannot authorize another simulated fill.
+                            self.spot_rules_blocked = True
+                            self.fee_retry_after = time.time() + 3600
+                            atomic_json(
+                                self.spot_rules_status_path,
+                                {
+                                    "state": "blocked",
+                                    "reason": str(error),
+                                    "retry_at": self.fee_retry_after,
+                                },
+                            )
+                            self.note(
+                                "spot-rules-blocked",
+                                {
+                                    "detail": str(error),
+                                    "retry_at": self.fee_retry_after,
+                                    "scope": "Kraken/crypto paper polling and fills suspended; ledger, balances and positions unchanged; independent learning continues.",
+                                },
+                            )
+                        else:
+                            self.spot_rules_blocked = False
+                            atomic_json(
+                                self.spot_rules_status_path,
+                                {"state": "cleared", "updated": time.time()},
+                            )
+                if not self.spot_rules_blocked:
+                    poll_crypto(book, self.stop_event.is_set)
             from rlm.v100.provider_registry import poll as poll_registered
             from rlm.v100.reward_policy import train as train_reward
 

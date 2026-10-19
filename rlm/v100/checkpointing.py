@@ -1,5 +1,6 @@
 """Best validation-loss selection; latest complete checkpoint remains resumable."""
 
+import json
 import math
 from pathlib import Path
 
@@ -24,11 +25,26 @@ def record_best(output: Path, state, manifest_sha256: str) -> None:
     if state.best_model_checkpoint is None:
         return
     checkpoint = Path(state.best_model_checkpoint).resolve()
-    if (
-        not checkpoint.is_relative_to(output.resolve())
-        or not (checkpoint / "complete.json").is_file()
-    ):
+    if not checkpoint.is_relative_to(output.resolve()):
         raise ValueError("Best checkpoint must be complete and inside its training round")
+    complete_path = checkpoint / "complete.json"
+    if not complete_path.is_file():
+        raise ValueError("Best checkpoint must be complete and inside its training round")
+    try:
+        complete = json.loads(complete_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("Best checkpoint completion receipt is unreadable") from error
+    try:
+        checkpoint_step = int(checkpoint.name.removeprefix("checkpoint-"))
+    except ValueError as error:
+        raise ValueError("Best checkpoint has an invalid step identity") from error
+    if (
+        not isinstance(complete, dict)
+        or type(complete.get("step")) is not int
+        or complete["step"] != checkpoint_step
+        or complete.get("manifest_sha256") != manifest_sha256
+    ):
+        raise ValueError("Best checkpoint completion receipt does not match this training manifest")
     metric = float(state.best_metric)
     if not math.isfinite(metric):
         raise ValueError("Best checkpoint has a nonfinite validation metric")

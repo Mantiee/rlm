@@ -23,7 +23,21 @@ from rlm.v100.paper import PaperBook
 from rlm.v100.protection import file_hash
 from tests.test_v100_backtesting import candles
 from tests.test_v100_duel import decision, profile, records
-from tests.test_v100_paper import Clock, configuration, decide, quote
+from tests.test_v100_paper import Clock, allow_cost_math_only, configuration, decide, quote
+
+
+class BoundedChatStop:
+    def __init__(self):
+        self.checks = 0
+        self.stopped = False
+
+    def wait(self, seconds):
+        self.checks += 1
+        assert self.checks <= 4, "Chat queue failed to reach the isolated responder"
+        return self.stopped
+
+    def set(self):
+        self.stopped = True
 
 
 @pytest.mark.parametrize(
@@ -184,7 +198,8 @@ def test_spot_prepare_uses_primary_rules_does_not_reset_capital(tmp_path, monkey
     assert spot_bootstrap.prepare(tmp_path)["status"].startswith("existing")
 
 
-def test_order_below_documented_minimum_is_not_filled(tmp_path):
+def test_order_below_documented_minimum_is_not_filled(tmp_path, monkeypatch):
+    allow_cost_math_only(monkeypatch)
     clock = Clock()
     book = PaperBook(tmp_path, clock)
     book.initialize()
@@ -398,7 +413,7 @@ def test_chat_service_acknowledges_once_and_closes(tmp_path, monkeypatch):
     from rlm.v100 import mission_chat
 
     identity = mission_chat.submit(tmp_path, "Co robisz?")
-    stop = threading.Event()
+    stop = BoundedChatStop()
     calls = []
 
     def reply(root, directory, request):
@@ -406,7 +421,11 @@ def test_chat_service_acknowledges_once_and_closes(tmp_path, monkeypatch):
         stop.set()
         return {"answer": "Badam", "applied": []}
 
-    monkeypatch.setattr(mission_chat, "respond", reply)
+    monkeypatch.setattr(
+        mission_chat,
+        "_respond_with_lifecycle",
+        lambda root, directory, request, accepted_cpu=None: reply(root, directory, request),
+    )
     mission_chat.service(tmp_path, tmp_path, stop)
     assert calls == [identity]
     assert mission_chat.inspect(tmp_path, identity)["state"] == "completed"
@@ -492,7 +511,7 @@ def test_remote_outage_keeps_verified_current_master_available(tmp_path, monkeyp
 
     from rlm.v100 import competition, remote_helper
 
-    source = {"runtime": {"base_url": "remote"}}
+    source = {"runtime": {"base_url": "http://192.168.1.10:11435"}}
     monkeypatch.setattr(competition, "load_profile", lambda *args: source)
     monkeypatch.setattr(remote_helper, "remote_profile", lambda p: True)
 
@@ -593,7 +612,7 @@ def test_chat_timeout_is_terminal_and_clears_processing_marker(tmp_path, monkeyp
     from rlm.v100 import mission_chat
 
     identity = mission_chat.submit(tmp_path, "Edit the dashboard")
-    stop = threading.Event()
+    stop = BoundedChatStop()
 
     def reply(root, directory, request):
         active = json.loads((root / "research/state/chat-active.json").read_text())
@@ -601,7 +620,11 @@ def test_chat_timeout_is_terminal_and_clears_processing_marker(tmp_path, monkeyp
         stop.set()
         raise requests.Timeout("Read timed out")
 
-    monkeypatch.setattr(mission_chat, "respond", reply)
+    monkeypatch.setattr(
+        mission_chat,
+        "_respond_with_lifecycle",
+        lambda root, directory, request, accepted_cpu=None: reply(root, directory, request),
+    )
     mission_chat.service(tmp_path, tmp_path, stop)
     actual = mission_chat.inspect(tmp_path, identity)
     assert actual["state"] == "failed" and actual["attempts"] == 1

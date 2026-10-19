@@ -51,10 +51,26 @@ SUPPLEMENTAL=''
 for GROUP in video render; do
   if getent group "$GROUP" >/dev/null; then SUPPLEMENTAL="$SUPPLEMENTAL $GROUP"; fi
 done
-if [[ ! -x "$BASE/venv/bin/python" ]]; then python3 -m venv "$BASE/venv"; fi
-PY="$BASE/venv/bin/python"
-"$PY" -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.6.0'
-"$PY" -m pip install --index-url https://pypi.org/simple 'safetensors==0.5.3' 'psutil==7.0.0'
+# Build beside the retained runtime: active jobs keep their original interpreter.
+PY_TAG="$(python3 -c 'import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))')"
+VENV="$BASE/venvs/torch-2.6.0-cu124-py$PY_TAG"
+if [[ ! -x "$VENV/bin/python" ]]; then python3 -m venv "$VENV"; fi
+PY="$VENV/bin/python"
+"$PY" -m pip install --index-url https://download.pytorch.org/whl/cu124 'torch==2.6.0+cu124'
+"$PY" -m pip install --index-url https://pypi.org/simple 'numpy==2.1.3' 'safetensors==0.5.3' 'psutil==7.0.0'
+"$PY" - <<'CPU_PROBE'
+import tempfile
+from pathlib import Path
+import torch
+from safetensors.torch import load_file, save_file
+assert torch.__version__ == '2.6.0+cu124', 'Pinned CUDA-enabled build required'
+with tempfile.TemporaryDirectory() as folder:
+    path = Path(folder) / 'probe.safetensors'
+    expected = torch.arange(4, dtype=torch.float32)
+    save_file({'probe': expected}, str(path))
+    assert torch.equal(load_file(str(path))['probe'], expected), 'Checkpoint round-trip failed'
+print('CPU checkpoint round-trip verified; CUDA execution is checked after drain', flush=True)
+CPU_PROBE
 "$PY" -m py_compile "$SOURCE/owned_node.py" "$SOURCE/owned_node_update.py" "$SOURCE/compute_kernel.py"
 RUNTIME="$BASE/runtime/ollama-0.40.0"
 ARCHIVE="$BASE/downloads/ollama-linux-amd64-0.40.0.tar.zst"
@@ -212,6 +228,19 @@ if [[ -n "$PREVIOUS" ]]; then
   fi
 fi
 touch "$STATE/installing"
+# No GPU work before the old inference/compute jobs have drained.
+"$PY" - <<'CUDA_PROBE'
+import json
+import torch
+assert torch.cuda.is_available(), 'CUDA unavailable; existing driver is not replaced'
+assert 'RTX 3060 Ti' in torch.cuda.get_device_name(0), 'Unexpected CUDA device'
+torch.cuda.set_per_process_memory_fraction(0.05)
+value = torch.arange(4, device='cuda', dtype=torch.float32)
+assert value.square().sum().item() == 14, 'CUDA kernel verification failed'
+torch.cuda.synchronize()
+print(json.dumps({'stage':'cuda-kernel-verified','torch':torch.__version__,
+                  'cuda':torch.version.cuda,'device':torch.cuda.get_device_name(0)}),flush=True)
+CUDA_PROBE
 ln -sfn "$SOURCE" "$BASE/current"
 systemctl daemon-reload
 systemctl enable --now synta3060-ollama.service synta3060-node.service synta3060-update.timer

@@ -167,14 +167,21 @@ def test_transient_readonly_generation_retries_without_tools(tmp_path, monkeypat
     assert result["response"]["actions"] == []
 
 
-def test_game_paused_question_hands_off_to_accepted_cpu_command_worker(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "failure",
+    [
+        requests.ConnectionError("Windows adaptive guard unavailable: heavy game running"),
+        chat_readonly.PlannerOriginDisabled("Planner origin disabled"),
+    ],
+)
+def test_unavailable_planner_question_hands_off_to_accepted_cpu_command_worker(
+    tmp_path, monkeypatch, failure
+):
     admitted(tmp_path, monkeypatch, lambda *a: None)
     monkeypatch.setattr(
         chat_readonly,
         "response",
-        lambda *a: (_ for _ in ()).throw(
-            requests.ConnectionError("Windows adaptive guard unavailable: heavy game running")
-        ),
+        lambda *a: (_ for _ in ()).throw(failure),
     )
     identity = chat_readonly.submit(tmp_path, "What is this?")
     stop = threading.Event()
@@ -191,3 +198,23 @@ def test_game_paused_question_hands_off_to_accepted_cpu_command_worker(tmp_path,
     worker.join(2)
     assert state == "gateway-pending"
     assert mission_chat.inspect(tmp_path, identity)["route"] == "gateway-commands"
+
+
+def test_disabled_windows_origin_is_not_submitted_or_contacted(tmp_path, monkeypatch):
+    from rlm.v100 import common
+    from rlm.v100.remote_helper import WINDOWS_3090_ORIGIN
+
+    admitted(tmp_path, monkeypatch, lambda *a: pytest.fail("Disabled Windows contacted"))
+    selected = profile(tmp_path)
+    selected["resources"] = {**selected.get("resources", {}), "device": "remote"}
+    selected["runtime"]["base_url"] = WINDOWS_3090_ORIGIN
+    # Origin routing is independent of the separately tested metadata validator.
+    monkeypatch.setattr(common, "load_profile", lambda *args: selected)
+    atomic_json(tmp_path / "planner.json", selected)
+    atomic_json(
+        tmp_path / "research/user-preferences.json",
+        {"remote_origin_enabled": {WINDOWS_3090_ORIGIN: False}},
+    )
+    assert chat_readonly.submit(tmp_path, "What is the result?") is None
+    with pytest.raises(chat_readonly.PlannerOriginDisabled):
+        chat_readonly.response(tmp_path, {"id": "saved", "message": "What is the result?"})

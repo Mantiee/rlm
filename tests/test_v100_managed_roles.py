@@ -1,6 +1,7 @@
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -82,14 +83,69 @@ def test_training_defers_package_without_stopping_it(tmp_path, monkeypatch):
     assert not calls
 
 
-def test_downgrade_is_rejected_before_mutation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("installed", ["0.1.3+v100.104", "foreign-package"])
+def test_older_release_cannot_mutate_newer_or_unknown_linux(tmp_path, monkeypatch, installed):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Selected release mutated the local installation")
+
+    for name in (
+        "dashboard_update",
+        "remote_chat_update",
+        "queue_chat_probe",
+        "remote_preparation",
+    ):
+        monkeypatch.setattr(updater, name, forbidden)
+    monkeypatch.setattr(updater.subprocess, "run", forbidden)
+    # An actual watchdog file would previously have been executed before the check.
+    watchdog = tmp_path / "rlm/v100/mission_watchdog.py"
+    watchdog.parent.mkdir(parents=True)
+    watchdog.write_text("raise AssertionError('must not run')", encoding="utf-8")
+
+    def probe(args, **kwargs):
+        assert args[0] != "ps", "Package validation must precede other subprocesses"
+        return installed
+
+    monkeypatch.setattr(updater.subprocess, "check_output", probe)
+    if installed == "foreign-package":
+        with pytest.raises(ValueError, match="unknown installed package"):
+            updater.linux(tmp_path, tmp_path, "a" * 40, {"version": 103})
+    else:
+        result = updater.linux(tmp_path, tmp_path, "a" * 40, {"version": 103})
+        assert result["stage"] == "newer-local-package-retained"
+        assert result["installed"] == installed
+        assert result["target"] == "0.1.3+v100.103"
+    assert not (tmp_path / "research").exists()
+
+
+@pytest.mark.parametrize("installed", ["0.1.3+v100.104", "foreign-package"])
+def test_main_guards_before_materialization_and_self_refresh(tmp_path, monkeypatch, installed):
+    # Do not modify os.name: pathlib must keep its native platform implementation.
+    monkeypatch.setattr(updater, "os", type("LinuxOS", (), {"name": "posix"}))
     monkeypatch.setattr(
-        updater.subprocess,
-        "check_output",
-        lambda args, **kw: "" if args[0] == "ps" else "0.1.3+v100.99",
+        sys, "argv", ["managed-bootstrap", "--root", str(tmp_path), "--revision", "a" * 40]
     )
-    with pytest.raises(ValueError, match="downgrade"):
-        updater.linux(tmp_path, tmp_path, "a" * 40, {"version": 83})
+    monkeypatch.setattr(updater, "release", lambda _: ("a" * 40, {"version": 103}))
+    monkeypatch.setattr(updater.subprocess, "check_output", lambda *args, **kwargs: installed)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Main changed release files before installed-package validation")
+
+    for name in ("materialize", "refresh_private_sync", "refresh_bootstrap", "linux"):
+        monkeypatch.setattr(updater, name, forbidden)
+    bootstrap = tmp_path / "tools/managed-bootstrap/managed_bootstrap.py"
+    bootstrap.parent.mkdir(parents=True)
+    bootstrap.write_bytes(b"newer local updater")
+    if installed == "foreign-package":
+        with pytest.raises(ValueError, match="unknown installed package"):
+            updater.main()
+    else:
+        updater.main()
+    assert bootstrap.read_bytes() == b"newer local updater"
+    state = json.loads((tmp_path / "research/managed-update/status.json").read_text())
+    assert state["stage"] == (
+        "failed" if installed == "foreign-package" else "newer-local-package-retained"
+    )
+    assert not (tmp_path / "tools/managed-releases").exists()
 
 
 def test_v83_bash_syntax():
@@ -131,7 +187,7 @@ def test_native_maintenance_restores_profile_after_failed_benchmark(tmp_path, mo
     monkeypatch.setattr(
         inference_benchmark,
         "run",
-        lambda *a: (_ for _ in ()).throw(RuntimeError("failed native probe")),
+        lambda *a, **kwargs: (_ for _ in ()).throw(RuntimeError("failed native probe")),
     )
     resumed = []
     monkeypatch.setattr(

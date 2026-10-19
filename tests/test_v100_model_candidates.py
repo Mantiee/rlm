@@ -13,7 +13,10 @@ def test_catalog_resolves_immutable_hash(monkeypatch):
         lambda url: {
             "sha": "a" * 40,
             "siblings": [
-                {"rfilename": "gemma-4-E2B-it-Q4_K_M.gguf", "lfs": {"sha256": "b" * 64, "size": 1024}}
+                {
+                    "rfilename": "gemma-4-E2B-it-Q4_K_M.gguf",
+                    "lfs": {"sha256": "b" * 64, "size": 1024},
+                }
             ],
         },
     )

@@ -1,6 +1,7 @@
 """An admitted CPU copy of accepted native weights, never a training candidate."""
 
 import copy
+import math
 import os
 import threading
 import time
@@ -60,8 +61,12 @@ class AcceptedCPUChat:
         self.profile = None
         self.stop = stop or threading.Event()
         self.deadline = None
+        self.verification = None
+        self.verification_lock = threading.Lock()
 
-    def close(self) -> None:
+    def close(self, *, cancel_verification: bool = True) -> None:
+        if cancel_verification and self.verification is not None:
+            self.verification["cancel"].set()
         active = self.client is not None
         self.stack.close()
         self.stack = ExitStack()
@@ -79,67 +84,124 @@ class AcceptedCPUChat:
         if self.client is not None and (
             time.monotonic() - self.last_used > 180 or available_ram_gib() < 4
         ):
-            self.close()
+            self.close(cancel_verification=False)
+
+    def prewarm(self, accepted: dict, *, budget: float = 600) -> None:
+        """Hash once in this process before chat; never load a model or extend a turn."""
+        if not math.isfinite(budget) or not 0 < budget <= 600:
+            raise ValueError("Prewarm budget must be greater than zero and at most 600 seconds")
+        if accepted.get("resources", {}).get("accepted_cpu_chat"):
+            self.verification_task(Path(accepted["server"]["model"]), time.monotonic() + budget)
+
+    def verification_task(self, model: Path, deadline: float) -> dict:
+        from rlm.v100.protection import file_identity
+
+        identity = (model.resolve(), *file_identity(model))
+        with self.verification_lock:
+            current = self.verification
+            if current is not None:
+                if current["identity"] == identity:
+                    return current
+                if not current["done"].is_set():
+                    current["cancel"].set()
+                    raise RuntimeError("Previous accepted weight verification is stopping")
+            task = {
+                "identity": identity,
+                "done": threading.Event(),
+                "cancel": threading.Event(),
+                "result": None,
+                "failure": None,
+            }
+            self.verification = task
+
+            def check():
+                if task["cancel"].is_set() or self.stop.is_set():
+                    raise RuntimeError("CPU weight verification cancelled")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "Accepted CPU weight verification exceeded its startup budget"
+                    )
+
+            last_update = [0.0]
+
+            def progress(path, completed, total):
+                check()
+                now = time.monotonic()
+                if now - last_update[0] >= 1 or completed == total:
+                    last_update[0] = now
+                    atomic_json(
+                        self.directory / "accepted-cpu-chat-status.json",
+                        {
+                            "available": False,
+                            "stage": "verifying-accepted-weights",
+                            "bytes_verified": completed,
+                            "bytes_total": total,
+                            "updated": time.time(),
+                            "model": str(path),
+                        },
+                    )
+
+            def verify():
+                try:
+                    task["result"] = file_hash(model, check=check, progress=progress)
+                except Exception as failure:
+                    task["failure"] = failure
+                    atomic_json(
+                        self.directory / "accepted-cpu-chat-status.json",
+                        {
+                            "available": False,
+                            "stage": "weight-verification-failed",
+                            "error": str(failure),
+                            "updated": time.time(),
+                        },
+                    )
+                finally:
+                    task["done"].set()
+
+            threading.Thread(
+                target=verify, daemon=True, name="accepted-cpu-weight-verification"
+            ).start()
+            return task
 
     def verify_weights(self, model: Path, deadline: float) -> str:
-        done, cancel = threading.Event(), threading.Event()
-        result, failures = [], []
-        last_update = [0.0]
-
-        def check() -> None:
-            if cancel.is_set() or self.stop.is_set():
+        existing = self.verification
+        task = self.verification_task(model, deadline)
+        if existing is task and not task["done"].is_set():
+            raise RuntimeError("Accepted CPU weights are warming; verification is still running")
+        while not task["done"].wait(0.05):
+            if self.stop.is_set():
+                task["cancel"].set()
                 raise RuntimeError("CPU weight verification cancelled")
             if time.monotonic() >= deadline:
-                raise TimeoutError("Accepted CPU weight verification exceeded its startup budget")
-
-        def progress(path: Path, completed: int, total: int) -> None:
-            check()
-            now = time.monotonic()
-            if now - last_update[0] >= 1 or completed == total:
-                last_update[0] = now
+                task["cancel"].set()
+                failure = TimeoutError(
+                    "Accepted CPU weight verification exceeded its startup budget"
+                )
                 atomic_json(
                     self.directory / "accepted-cpu-chat-status.json",
                     {
                         "available": False,
-                        "stage": "verifying-accepted-weights",
-                        "bytes_verified": completed,
-                        "bytes_total": total,
+                        "stage": "weight-verification-failed",
+                        "error": str(failure),
                         "updated": time.time(),
-                        "model": str(path),
                     },
                 )
+                raise failure
+        if task["failure"] is not None:
+            raise task["failure"]
+        # Never start another synchronous full-file read if the artifact changes.
+        from rlm.v100.protection import file_identity
 
-        def verify() -> None:
-            try:
-                result.append(file_hash(model, check=check, progress=progress))
-            except Exception as failure:
-                failures.append(failure)
-            finally:
-                done.set()
+        self.check_verification_stop(deadline)
+        if (model.resolve(), *file_identity(model)) != task["identity"]:
+            raise ValueError("Accepted weights changed after verification")
+        return task["result"]
 
-        threading.Thread(
-            target=verify, daemon=True, name="accepted-cpu-weight-verification"
-        ).start()
-        try:
-            while not done.wait(0.1):
-                check()
-            check()
-            if failures:
-                raise failures[0]
-            return result[0]
-        except Exception as failure:
-            atomic_json(
-                self.directory / "accepted-cpu-chat-status.json",
-                {
-                    "available": False,
-                    "stage": "weight-verification-failed",
-                    "error": str(failure),
-                    "updated": time.time(),
-                },
-            )
-            raise
-        finally:
-            cancel.set()
+    def check_verification_stop(self, deadline):
+        if self.stop.is_set():
+            raise RuntimeError("CPU weight verification cancelled")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Accepted CPU weight verification exceeded its startup budget")
 
     def get(self, accepted: dict):
         if self.stop.is_set():
@@ -149,7 +211,7 @@ class AcceptedCPUChat:
         stat = model.stat()
         identity = (str(model.resolve()), stat.st_size, stat.st_mtime_ns)
         if self.identity != identity:
-            self.close()
+            self.close(cancel_verification=False)
         if self.client is not None:
             self.client.request_deadline = deadline
             try:
@@ -160,7 +222,7 @@ class AcceptedCPUChat:
                 if Path(props["model_path"]).resolve() != model.resolve():
                     raise ValueError("CPU chat endpoint no longer serves accepted weights")
             except Exception:
-                self.close()
+                self.close(cancel_verification=False)
                 raise
             self.last_used = time.monotonic()
             return self.client
@@ -178,7 +240,11 @@ class AcceptedCPUChat:
         try:
             actual = self.stack.enter_context(
                 managed_server(
-                    path, self.root, self.directory / "accepted-cpu-chat.log", cancel=self.stop
+                    path,
+                    self.root,
+                    self.directory / "accepted-cpu-chat.log",
+                    cancel=self.stop,
+                    lifecycle_role="reader-owned",
                 )
             )
             client = helper_client(actual, self.root)
@@ -186,7 +252,7 @@ class AcceptedCPUChat:
             client.timeout = 5
             assert_served_expert(client, actual, self.root, {"files": {"model-gguf": self.sha256}})
         except Exception:
-            self.close()
+            self.close(cancel_verification=False)
             raise
         client.timeout = 600
         self.client, self.identity = client, identity

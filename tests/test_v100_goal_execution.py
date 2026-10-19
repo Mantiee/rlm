@@ -25,6 +25,12 @@ def test_income_job_moves_beyond_seed_rotation_to_model_selected_tools(tmp_path,
         assert chosen.request_deadline > time.monotonic()
         assert len(job["brief"]) <= 400
         assert observations[0]["capital_contract"]["real_spendable_pln"] == 0
+        assert (
+            "do not wait for the operator to supply a 'Host ID'"
+            in observations[0]["public_observation_contract"]
+        )
+        assert "observe_goal_source" in observations[0]["public_observation_contract"]
+        assert "local, reproducible" in observations[0]["public_observation_contract"]
         return {"research_trace": [{"tool": "sandbox_run", "result": {"exit_code": 0}}]}
 
     monkeypatch.setattr(researchers, "research_task", execute)

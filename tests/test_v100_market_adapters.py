@@ -138,7 +138,16 @@ def test_derivative_ticker_never_fabricates_interval_or_settled_funding():
     cfg = {"provider": "bybit-linear", "settings": {"contract": "ETHUSDT"}}
     data = {
         "retCode": 0,
-        "result": {"list": [{"symbol": "ETHUSDT", "fundingRate": "0.001", "markPrice": "1200"}]},
+        "result": {
+            "list": [
+                {
+                    "symbol": "ETHUSDT",
+                    "fundingRate": "0.001",
+                    "markPrice": "1200",
+                    "ts": "1791367200000",
+                }
+            ]
+        },
     }
     row = market_adapters.normalize(
         cfg,
@@ -149,7 +158,26 @@ def test_derivative_ticker_never_fabricates_interval_or_settled_funding():
         "PLN",
     )[0]
     assert row["kind"] == "news" and "not settled funding" in row["excerpt"]
+    assert row["available_at"] == "2026-10-07T10:00:00+00:00"
+    assert '"exchange_updated_at": "2026-10-07T10:00:00+00:00"' in row["excerpt"]
     assert "mark_low" not in row and "funding_events" not in row
+
+
+def test_derivative_ticker_rejects_missing_or_future_exchange_timestamp():
+    cfg = {"provider": "bybit-linear", "settings": {"contract": "ETHUSDT"}}
+    data = {
+        "retCode": 0,
+        "result": {"list": [{"symbol": "ETHUSDT", "fundingRate": "0.001"}]},
+    }
+    with pytest.raises(ValueError, match="lacks a valid exchange update timestamp"):
+        market_adapters.normalize(
+            cfg, data, "a" * 64, "2026-10-07T10:00:00Z", "https://example.org", "PLN"
+        )
+    data["result"]["list"][0]["ts"] = "1791374400000"
+    with pytest.raises(ValueError, match="future"):
+        market_adapters.normalize(
+            cfg, data, "a" * 64, "2026-10-07T10:00:00Z", "https://example.org", "PLN"
+        )
 
 
 def test_monthly_sports_quota_blocks_network_and_never_prints_key(tmp_path, monkeypatch):

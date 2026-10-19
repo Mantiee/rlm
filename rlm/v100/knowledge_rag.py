@@ -8,8 +8,10 @@ import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import threading
 import time
+import uuid
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -332,72 +334,201 @@ def search(root: Path, query: str, limit: int = 4) -> dict:
     return result
 
 
-def attach(root: Path, messages: list[dict]) -> list[dict]:
+def save_task_receipt(path: Path, value: dict) -> None:
+    """Atomically publish one no-clobber per-task receipt."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            # Hard-link creation is atomic and fails if the destination exists.
+            # The complete, synced inode becomes visible under its final name.
+            os.link(temporary, path)
+        except FileExistsError as error:
+            raise ValueError("Knowledge task receipt already exists") from error
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def attach(
+    root: Path,
+    messages: list[dict],
+    *,
+    task_id: str | None = None,
+    run_id: str | None = None,
+) -> list[dict]:
     """Supply bounded goal-relevant archive excerpts, never training labels."""
     messages = without_previous_archive(messages)
+    task_id = task_id or uuid.uuid4().hex
+    if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", task_id):
+        raise ValueError("Invalid knowledge receipt task ID")
+    if run_id is not None and (
+        not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run_id)
+    ):
+        raise ValueError("Invalid knowledge receipt run ID")
     database = root / "research/knowledge/passages.sqlite3"
-    if not database.exists():
-        return messages
-    from rlm.v100.activity import ActivityLog
-    from rlm.v100.goals import load_goal
+    from rlm.v100.common import atomic_json
 
     task = next(
         (row.get("content", "") for row in reversed(messages) if row.get("role") == "user"), ""
     )
     task = query_text(task)
-    goal = load_goal(root) or {}
-    query = (str(task) + " " + goal.get("text", ""))[:600]
-    try:
-        result = search(root, query, 2)
-        result["passages"] = [
-            {
-                key: str(row.get(key, ""))[:limit]
-                for key, limit in (
-                    ("id", 64),
-                    ("title", 160),
-                    ("text", 800),
-                    ("source", 600),
-                    ("revision", 64),
-                )
-            }
-            for row in result["passages"][:2]
-        ]
-        excerpt_characters = sum(len(row["text"]) for row in result["passages"])
-        from rlm.v100.common import atomic_json
+    goal = {}
+    goal_error = None
+    goal_state = "not-read"
+    if database.exists():
+        try:
+            from rlm.v100.goals import load_goal
 
-        atomic_json(
-            root / "research/knowledge/goal-use.json",
-            {
-                "goal_id": goal.get("id"),
-                "updated": time.time(),
-                "query": query,
-                "sources": [row["source"] for row in result["passages"]],
-                "seconds": result["seconds"],
-                "state": result.get("state", "unknown"),
-                "error": result.get("error"),
-                "excerpt_characters": excerpt_characters,
-                "context_policy": "At most two 800-character excerpts; replace previous archive supplement each turn. The full index stays on disk.",
-                "scope": "Goal-linked retrieval for research; only verified experiment outcomes may become training labels",
-            },
-        )
-        ActivityLog(root, "controller", "knowledge").write(
-            "steps",
-            "goal-knowledge-retrieved",
-            {
-                "query": query,
-                "sources": [row["source"] for row in result["passages"]],
-                "seconds": result["seconds"],
-                "state": result.get("state", "unknown"),
-                "scope": result["scope"],
-            },
+            goal = load_goal(root) or {}
+            goal_state = "available"
+        except (OSError, TypeError, ValueError) as error:
+            # Archive retrieval is optional; a damaged goal snapshot must not
+            # stop an otherwise valid research turn.
+            goal_error = str(error)[:300]
+            goal_state = "unavailable"
+    goal_text = goal.get("text", "")
+    if not isinstance(goal_text, str):
+        goal_error = "Goal snapshot text is not a string"
+        goal_state = "unavailable"
+        goal = {}
+        goal_text = ""
+    query = (str(task) + " " + goal_text)[:600]
+    try:
+        result = (
+            search(root, query, 2)
+            if database.exists()
+            else {
+                "passages": [],
+                "seconds": 0,
+                "state": "not-indexed",
+                "scope": "Wikipedia archive index is not available",
+            }
         )
     except (OSError, ValueError, sqlite3.Error) as error:
         result = {
+            "passages": [],
+            "seconds": None,
             "state": "unavailable",
             "error": str(error),
             "scope": "Continue goal work using other evidence; indexed knowledge unavailable",
         }
-    if not result.get("passages") and result.get("state") != "unavailable":
+    indexed_passages = result.get("passages", [])[:2]
+    passage_receipts = [
+        {
+            "id": str(row.get("id", ""))[:64],
+            "url": str(row.get("source", ""))[:600],
+            "revision": str(row.get("revision", ""))[:64],
+            "content_sha256": hashlib.sha256(str(row.get("text", "")).encode()).hexdigest(),
+            "excerpt_sha256": hashlib.sha256(str(row.get("text", ""))[:800].encode()).hexdigest(),
+            "title": str(row.get("title", ""))[:160],
+            "text": str(row.get("text", ""))[:800],
+        }
+        for row in indexed_passages
+    ]
+    result["passages"] = passage_receipts
+    excerpt_characters = sum(len(row["text"]) for row in passage_receipts)
+    retrieval_state = result.get("state", "unknown")
+    if retrieval_state == "retrieved" and not passage_receipts:
+        retrieval_state = "no-results"
+    receipt_path = root / "research/knowledge/tasks" / (task_id + ".json")
+    receipt = {
+        "schema": "v100-knowledge-task-v1",
+        "task_id": task_id,
+        "run_id": run_id,
+        "goal_id": goal.get("id"),
+        "goal_state": goal_state,
+        "goal_error": goal_error,
+        "updated": time.time(),
+        "query": query,
+        "query_sha256": hashlib.sha256(query.encode()).hexdigest(),
+        "retrieval_state": retrieval_state,
+        "context_prepared": bool(passage_receipts),
+        "passages": [
+            {key: row[key] for key in ("id", "url", "revision", "content_sha256", "excerpt_sha256")}
+            for row in passage_receipts
+        ],
+        "sources": sorted({row["url"] for row in passage_receipts}),
+        "seconds": result.get("seconds"),
+        "error": result.get("error"),
+        "excerpt_characters": excerpt_characters,
+        "scope": "Receipt proves retrieval and context preparation only; it does not prove that a model request received or semantically used the source",
+    }
+    receipt_persistence_failed = False
+    try:
+        save_task_receipt(receipt_path, receipt)
+    except OSError as error:
+        # Never supply a source excerpt when its task-level provenance cannot
+        # be recorded. Keep the task moving without archive context.
+        receipt_persistence_failed = True
+        retrieval_state = "unavailable"
+        passage_receipts = []
+        result["passages"] = []
+        result["state"] = retrieval_state
+        result["error"] = f"Could not persist task receipt: {error}"[:500]
+        result["scope"] = "Archive context omitted because task receipt persistence failed"
+        excerpt_characters = 0
+        receipt.update(
+            {
+                "retrieval_state": retrieval_state,
+                "context_prepared": False,
+                "passages": [],
+                "sources": [],
+                "excerpt_characters": 0,
+                "error": result["error"],
+                "scope": result["scope"],
+            }
+        )
+    # Preserve the existing latest-use receipt for readers of the current dashboard.
+    try:
+        atomic_json(
+            root / "research/knowledge/goal-use.json",
+            {
+                "goal_id": goal.get("id"),
+                "updated": receipt["updated"],
+                "query": query,
+                "sources": receipt["sources"],
+                "seconds": result.get("seconds"),
+                "state": retrieval_state,
+                "error": result.get("error"),
+                "excerpt_characters": excerpt_characters,
+                "context_policy": "At most two 800-character excerpts; replace previous archive supplement each turn. The full index stays on disk.",
+                "scope": (
+                    "Archive context omitted because task receipt persistence failed"
+                    if receipt_persistence_failed
+                    else "Goal-linked retrieval for research; only verified experiment outcomes may become training labels"
+                ),
+                "task_receipt": None if receipt_persistence_failed else str(receipt_path),
+            },
+        )
+    except OSError:
+        pass
+    try:
+        from rlm.v100.activity import ActivityLog
+
+        ActivityLog(root, "controller", "knowledge").write(
+            "steps",
+            "goal-knowledge-retrieved",
+            {
+                "task_id": task_id,
+                "run_id": run_id,
+                "query": query,
+                "sources": receipt["sources"],
+                "seconds": receipt["seconds"],
+                "state": receipt["retrieval_state"],
+                "scope": receipt["scope"],
+            },
+        )
+    except (ImportError, OSError, ValueError, sqlite3.Error):
+        pass
+    if receipt_persistence_failed:
+        return messages
+    if not result.get("passages") and retrieval_state != "unavailable":
         return messages
     return [
         *messages,

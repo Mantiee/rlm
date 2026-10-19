@@ -44,6 +44,7 @@ $Rule = "v100-helper-$Port-from-$DebianIp"
 $BlockRule = "$Rule-block-other-addresses"
 $OwnerPath = Join-Path $Root 'server-owner.json'
 $GuardianPath = Join-Path $Root 'guardian-owner.json'
+$ManualStopPath = Join-Path $Root 'helper-manual-stop.flag'
 function Stop-HelperProcesses([string]$RuntimePath) {
     # A dead parent can leave llama-server.exe alive. This directory is reserved
     # for this single helper, so include its orphan workers as well as Ollama.
@@ -64,6 +65,8 @@ function Stop-HelperProcesses([string]$RuntimePath) {
     }
 }
 if ($Stop) {
+    # Tell the logon watchdog this was an intentional stop, not a crash.
+    Set-Content -LiteralPath $ManualStopPath -Value 'operator-stop' -Encoding ASCII
     $proxyOwner = Join-Path $Root 'resource-proxy-owner.json'
     if (Test-Path -LiteralPath $proxyOwner) {
         $owner = Get-Content -Raw -LiteralPath $proxyOwner | ConvertFrom-Json
@@ -97,6 +100,9 @@ if ($Stop) {
     Remove-NetFirewallRule -Name $BlockRule -ErrorAction SilentlyContinue
     Write-Host 'Isolated helper stopped. Model files retained.'
     return
+}
+if (Test-Path -LiteralPath $ManualStopPath) {
+    throw 'RTX helper operator manual-stop flag is present; launcher refused before any worker or GPU start. Resume only through a separate reviewed operator action.'
 }
 if (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue) {
     throw "Port $Port is already in use. Existing process left intact."
@@ -246,6 +252,12 @@ $WorkerScript = Join-Path $Root 'serve-worker.ps1'
 param([string]$OllamaPath, [string]$HelperRoot, [string]$ProxyPython, [string]$ProxyBind, [string]$ProxyOwner, [int]$ProxyPort)
 $ErrorActionPreference = 'Stop'
 $prefix = [IO.Path]::GetFullPath((Split-Path $OllamaPath)).TrimEnd('\') + '\'
+$manualStopPath = Join-Path $HelperRoot 'helper-manual-stop.flag'
+function Stop-IsolatedGpuProcesses {
+    Get-CimInstance Win32_Process -Filter "Name='ollama.exe' OR Name='llama-server.exe'" |
+        Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 $proxy = $null
 if ($ProxyPython) {
     $source = Join-Path $HelperRoot 'windows_resource_proxy.py'
@@ -257,12 +269,27 @@ if ($ProxyPython) {
 }
 $restarting = $false
 while ($true) {
-    while (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) {
+    if (Test-Path -LiteralPath $manualStopPath) {
+        @{time=(Get-Date).ToUniversalTime().ToString('o');phase='paused-for-manual-stop'} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
+        Stop-IsolatedGpuProcesses
+        break
+    }
+    while ((Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $manualStopPath)) {
         @{time=(Get-Date).ToUniversalTime().ToString('o');phase='paused-for-game'} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
         Start-Sleep -Seconds 15
         $restarting = $true
     }
+    if (Test-Path -LiteralPath $manualStopPath) {
+        @{time=(Get-Date).ToUniversalTime().ToString('o');phase='paused-for-manual-stop'} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
+        Stop-IsolatedGpuProcesses
+        break
+    }
     if ($restarting) { Start-Sleep -Seconds 60 }
+    if (Test-Path -LiteralPath $manualStopPath) {
+        @{time=(Get-Date).ToUniversalTime().ToString('o');phase='paused-for-manual-stop'} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
+        Stop-IsolatedGpuProcesses
+        break
+    }
     if (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) { continue }
     $server = Start-Process -FilePath $OllamaPath -ArgumentList 'serve' -PassThru -WindowStyle Hidden `
     -RedirectStandardOutput (Join-Path $HelperRoot 'logs/server.stdout.log') `
@@ -276,13 +303,24 @@ while ($true) {
             param($url,$body)
             Invoke-RestMethod $url -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120
         }
-        while ($warmJob.State -eq 'Running' -and -not (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue)) { Start-Sleep -Seconds 3 }
+        while ($warmJob.State -eq 'Running' -and -not (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $manualStopPath)) { Start-Sleep -Seconds 3 }
         if ($warmJob.State -eq 'Running') { Stop-Job $warmJob }
         $null = Receive-Job $warmJob -ErrorAction SilentlyContinue
         Remove-Job $warmJob -Force
+        if (Test-Path -LiteralPath $manualStopPath) {
+            @{time=(Get-Date).ToUniversalTime().ToString('o');phase='paused-for-manual-stop'} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
+            Stop-IsolatedGpuProcesses
+            break
+        }
     }
     @{time=(Get-Date).ToUniversalTime().ToString('o');phase='serving';pid=$server.Id} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
     while (-not $server.HasExited) {
+        if (Test-Path -LiteralPath $manualStopPath) {
+            @{time=(Get-Date).ToUniversalTime().ToString('o');phase='paused-for-manual-stop'} | ConvertTo-Json -Compress | Add-Content (Join-Path $HelperRoot 'logs/guardian.jsonl')
+            Stop-IsolatedGpuProcesses
+            $restarting = $false
+            break
+        }
         if ($proxy -and $proxy.HasExited) { Stop-Process -Id $server.Id -Force; throw 'Resource proxy exited; GPU stopped. See resource-proxy.stderr.log.' }
         if (Get-Process -Name 'League of Legends' -ErrorAction SilentlyContinue) {
             Get-CimInstance Win32_Process -Filter "Name='ollama.exe' OR Name='llama-server.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }

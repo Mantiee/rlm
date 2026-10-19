@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from rlm.v100 import competition, drones, income_work, research_contract
 from rlm.v100.common import atomic_json
@@ -62,7 +63,10 @@ def test_quality_migration_retains_text_and_backup(tmp_path):
 
 def test_operator_disabled_gpu_never_contacts_remote_helper(tmp_path, monkeypatch):
     atomic_json(tmp_path / "research/user-preferences.json", {"remote_helper_enabled": False})
-    profile = {"resources": {"device": "remote"}, "runtime": {}}
+    profile = {
+        "resources": {"device": "remote"},
+        "runtime": {"base_url": "http://10.0.0.1:11435", "model_name": "gemma4-test"},
+    }
     atomic_json(tmp_path / "remote.json", profile)
     monkeypatch.setattr(competition, "load_profile", lambda *args: profile)
     monkeypatch.setattr(
@@ -129,7 +133,8 @@ def test_waiting_for_startup_preserves_source_then_registers_once(tmp_path, monk
         lambda *a: (_ for _ in ()).throw(income_work.MasterNotReady("Old PID gone")),
     )
     first = drones.execute(tmp_path, income_job(goal))
-    assert first["state"] == "waiting for accepted master" and first["retry_after_seconds"] == 30
+    assert first["state"] == "waiting for accepted master"
+    assert first["retry_after_seconds"] == 30
     saved = json.loads(Path(first["dossier"]).read_text())
     assert saved["analysis_attempts"] == 0
     monkeypatch.setattr(
@@ -151,10 +156,90 @@ def test_income_retry_changes_due_without_changing_periodic_interval(tmp_path, m
     receipt = drones.schedule(tmp_path, "A", "income", goal["id"], 600)
     monkeypatch.setattr(drones.time, "time", lambda: 1000)
     drones.finish(
-        tmp_path, receipt["id"], {"state": "waiting for accepted master", "retry_after_seconds": 30}
+        tmp_path,
+        receipt["id"],
+        {"status": "deferred", "state": "waiting for accepted master", "retry_after_seconds": 30},
     )
     job = drones.inspect(tmp_path)[0]
     assert job["interval"] == 600 and job["due"] == 1030 and job["state"] == "queued"
+
+
+def test_generic_income_timeout_without_tool_receipts_is_not_fast_retried(tmp_path, monkeypatch):
+    goal, _ = financial_world(tmp_path)
+    receipt = drones.schedule(tmp_path, "A", "income", goal["id"], 0)
+    monkeypatch.setattr(drones.time, "time", lambda: 1000)
+    drones.finish(
+        tmp_path,
+        receipt["id"],
+        {"status": "failed", "error": "ambiguous timeout", "retry_after_seconds": 120},
+    )
+    job = drones.inspect(tmp_path)[0]
+    assert job["state"] == "failed"
+
+
+def test_owned_gpu_pre_admission_deferral_requeues_fairly_for_research(tmp_path, monkeypatch):
+    receipt = drones.schedule(tmp_path, "A", "researcher", "research", 900)
+    monkeypatch.setattr(drones.time, "time", lambda: 1000)
+    drones.finish(
+        tmp_path,
+        receipt["id"],
+        {
+            "status": "deferred",
+            "retry_after_seconds": 20,
+            "scope": "Explicit pre-admission cooldown; no model turn or tools ran",
+        },
+    )
+    job = drones.inspect(tmp_path)[0]
+    assert job["state"] == "queued" and job["due"] == 1020
+    assert job["interval"] == 900 and job["result"]["retry_attempt"] == 1
+    monkeypatch.setattr(drones.time, "time", lambda: 1020)
+    drones.finish(
+        tmp_path,
+        receipt["id"],
+        {"status": "deferred", "retry_after_seconds": 20},
+    )
+    job = drones.inspect(tmp_path)[0]
+    assert job["state"] == "queued" and job["due"] == 1050
+    assert job["result"]["retry_attempt"] == 2
+
+
+def test_one_shot_owned_gpu_deferrals_are_bounded(tmp_path, monkeypatch):
+    receipt = drones.schedule(tmp_path, "A", "researcher", "one-shot", 0)
+    now = [1000]
+    monkeypatch.setattr(drones.time, "time", lambda: now[0])
+    for attempt in range(1, 7):
+        drones.finish(
+            tmp_path,
+            receipt["id"],
+            {"status": "deferred", "retry_after_seconds": 15},
+        )
+        job = drones.inspect(tmp_path)[0]
+        assert job["state"] == ("queued" if attempt <= 5 else "failed")
+        now[0] += 15
+
+
+def test_pre_admission_retry_delay_requires_explicit_gpu_cooldown():
+    from rlm.v100.remote_helper import OwnedGpuCooldown
+
+    assert drones.admission_retry_delay(OwnedGpuCooldown("busy", None, 30)) == 30
+    assert drones.admission_retry_delay(RuntimeError("Owned GPU cooldown: 2.0 s")) is None
+    assert drones.admission_retry_delay(RuntimeError("HTTP 503 server unavailable")) is None
+
+
+def test_cooldown_during_research_turn_is_a_deferred_receipt_only_for_typed_error():
+    from rlm.v100.remote_helper import OwnedGpuCooldown
+
+    def busy(*args):
+        raise OwnedGpuCooldown("Owned GPU cooldown: 2.0 s", None, 15)
+
+    result = drones.run_research_task(busy)
+    assert result["status"] == "deferred" and result["retry_after_seconds"] == 15
+
+    def timeout(*args):
+        raise requests.Timeout("ambiguous request outcome")
+
+    with pytest.raises(requests.Timeout):
+        drones.run_research_task(timeout)
 
 
 def test_missing_protected_process_is_deferred_but_candidate_mismatch_is_not(tmp_path, monkeypatch):
@@ -240,7 +325,9 @@ def test_previous_benchmark_is_history_and_current_complete_wins_over_stale_coun
     assert current["report"] == str(run / "public-baseline.json")
 
 
-def test_startup_deferral_is_bounded_and_does_not_consume_analysis_attempt(tmp_path, monkeypatch):
+def test_startup_blocker_preserves_retry_and_does_not_consume_analysis_attempt(
+    tmp_path, monkeypatch
+):
     identity = evidence(tmp_path, monkeypatch)
     from rlm.v100.goal_learning import observation
     from rlm.v100.goals import load_goal
@@ -253,11 +340,86 @@ def test_startup_deferral_is_bounded_and_does_not_consume_analysis_attempt(tmp_p
         lambda *a: (_ for _ in ()).throw(income_work.MasterNotReady("Booting")),
     )
     job = income_job(load_goal(tmp_path))
-    for _ in range(8):
-        result = drones.execute(tmp_path, job)
-        assert 15 <= result["retry_after_seconds"] <= 600
-    assert result["retry_after_seconds"] == 600 and result["sources_collected"] == 1
+    result = drones.execute(tmp_path, job)
+    assert result["state"] == "waiting for accepted master"
+    assert 15 <= result["retry_after_seconds"] <= 600
+    assert result["sources_collected"] == 1
     assert json.loads(Path(result["dossier"]).read_text())["analysis_attempts"] == 0
+
+
+def test_income_explicit_gpu_cooldown_receipt_carries_bounded_retry(tmp_path, monkeypatch):
+    from rlm.v100.goal_learning import observation
+    from rlm.v100.goals import load_goal
+    from rlm.v100.remote_helper import OwnedGpuCooldown
+
+    identity = evidence(tmp_path, monkeypatch)
+    source = {"id": identity, **observation(tmp_path, identity)}
+    monkeypatch.setattr(income_work, "observe", lambda *a: source)
+    monkeypatch.setattr(
+        income_work,
+        "accepted_master",
+        lambda *a: (_ for _ in ()).throw(OwnedGpuCooldown("Owned GPU cooldown: 2.0 s", None, 15)),
+    )
+    result = drones.execute(tmp_path, income_job(load_goal(tmp_path)))
+    assert result["state"] == result["status"] == "deferred"
+    assert result["retry_after_seconds"] == 15
+    assert json.loads(Path(result["dossier"]).read_text())["analysis_attempts"] == 0
+
+
+def test_income_gpu_cooldown_retry_reuses_same_source_until_inference_is_accepted(
+    tmp_path, monkeypatch
+):
+    from rlm.v100.goal_learning import observation
+    from rlm.v100.goals import load_goal
+    from rlm.v100.remote_helper import OwnedGpuCooldown
+
+    identity = evidence(tmp_path, monkeypatch)
+    source = {"id": identity, **observation(tmp_path, identity)}
+    observed_urls = []
+
+    def collect(root, url):
+        observed_urls.append(url)
+        return source
+
+    monkeypatch.setattr(income_work, "observe", collect)
+    admission_attempts = []
+
+    def accepted_master(*args):
+        admission_attempts.append(True)
+        if len(admission_attempts) == 1:
+            raise OwnedGpuCooldown("Owned GPU cooldown: 2.0 s", None, 15)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(income_work, "accepted_master", accepted_master)
+    proposal = specification(identity)
+    proposal.pop("evidence")
+    attempts_at_inference = []
+
+    def native_turn(*args, **kwargs):
+        status = json.loads((tmp_path / "research/income-work/status.json").read_text())
+        dossier = json.loads(Path(status["dossier"]).read_text())
+        attempts_at_inference.append(dossier["analysis_attempts"])
+        return {"content": json.dumps(proposal)}
+
+    monkeypatch.setattr(income_work, "native_turn", native_turn)
+    goal = load_goal(tmp_path)
+
+    deferred = drones.execute(tmp_path, income_job(goal))
+    saved_after_cooldown = json.loads(Path(deferred["dossier"]).read_text())
+    assert deferred["state"] == deferred["status"] == "deferred"
+    assert (
+        deferred["retry_scope"] == "Explicit Owned GPU cooldown; request rejected before inference"
+    )
+    assert saved_after_cooldown["analysis_attempts"] == 0
+    assert saved_after_cooldown["source"]["id"] == identity
+
+    completed = drones.execute(tmp_path, income_job(goal, 1))
+    assert len(observed_urls) == 1
+    assert completed["state"] == "feasibility dossier prepared"
+    assert completed["sources_collected"] == 1
+    assert completed["evidence_id"] == identity
+    assert attempts_at_inference == [1]
+    assert completed["actual_income_pln"] is None
 
 
 def test_invalid_analysis_attempts_are_limited_then_research_rotates(tmp_path, monkeypatch):

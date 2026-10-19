@@ -1,5 +1,6 @@
 """Forward-only paper portfolios. No broker credentials or real order endpoints."""
 
+import copy
 import hashlib
 import json
 import re
@@ -11,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from rlm.v100.activity import ActivityLog
+from rlm.v100.execution_cost_gate import execution_cost_blocker
 
 D = Decimal
 ZERO = D("0")
@@ -135,6 +137,7 @@ def winning_payout(profile: dict, effective: Decimal, odds: Decimal) -> Decimal:
 class PaperBook:
     def __init__(self, root: Path, clock=utcnow, *, read_only: bool = False):
         self.root, self.clock = root, clock
+        self.decision_snapshots: dict[tuple[str, int], dict] = {}
         directory = root / "research/paper"
         path = directory / "ledger.sqlite3"
         if read_only:
@@ -212,7 +215,10 @@ class PaperBook:
 
     def events(self) -> list[dict]:
         result, previous = [], "0" * 64
-        for row in self.db.execute("SELECT * FROM events ORDER BY sequence"):
+        rows = self.db.execute("SELECT * FROM events ORDER BY sequence")
+        for expected_sequence, row in enumerate(rows, start=1):
+            if row["sequence"] != expected_sequence:
+                raise ValueError("Paper event sequence is not contiguous")
             event = dict(row)
             event["payload"] = json.loads(event["payload"])
             body = {
@@ -442,6 +448,48 @@ class PaperBook:
         if budget + reserved > number(state["branches"][branch]["cash"]):
             raise ValueError("Insufficient unreserved paper cash")
 
+    def decision_snapshot(self, state: dict, branch: str, asof_sequence: int, symbol: str) -> dict:
+        """Only host-captured input can outlive unrelated append-only ledger events."""
+        if type(asof_sequence) is not int:
+            raise ValueError("Invalid paper decision sequence")
+        latest = self.sequence()
+        row = self.db.execute(
+            "SELECT time FROM events WHERE sequence=?", (asof_sequence,)
+        ).fetchone()
+        if row is None or asof_sequence > latest or timestamp(row["time"]) > self.clock():
+            raise ValueError("Invalid or future paper decision sequence")
+        snapshot = self.decision_snapshots.get((branch, asof_sequence))
+        if snapshot is None:
+            if asof_sequence != latest:
+                raise ValueError("Decision context changed; no host-captured input snapshot")
+            snapshot = self.context_snapshot(branch)
+
+        def portfolio(value):
+            # Quote-only high-water marks may advance; pause/cash/positions must not.
+            return {key: item for key, item in value.items() if key != "peak"}
+
+        instrument = snapshot["instruments"].get(symbol)
+        fee_id = (instrument or {}).get("fee_profile")
+        if (
+            portfolio(snapshot["portfolio"]) != portfolio(state["branches"][branch])
+            or snapshot["pending"] != [o for o in state["orders"] if o["branch"] == branch]
+            or snapshot["risk"] != state["risk"]
+            or snapshot["currency"] != state["currency"]
+            or snapshot["goal"] != state["goal"]
+            or instrument != state["instruments"].get(symbol)
+            or snapshot["fee_profiles"].get(fee_id) != state["fee_profiles"].get(fee_id)
+            or symbol in state["outcomes"]
+        ):
+            raise ValueError("Decision portfolio, instrument or cost policy changed; recompute")
+        quote = snapshot["quotes"].get(symbol)
+        if quote:
+            if any(
+                timestamp(quote[key]) > timestamp(row["time"])
+                for key in ("available_at", "observed_at")
+            ):
+                raise ValueError("Future quote cannot enter paper decision inputs")
+        return snapshot
+
     def decide(self, branch: str, proposal: dict, asof_sequence: int) -> dict:
         if branch not in ("A", "B"):
             raise ValueError("Unknown paper branch")
@@ -454,8 +502,9 @@ class PaperBook:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             state = self.state()
-            if asof_sequence != self.sequence():
-                raise ValueError("Decision context changed; recompute instead of using future data")
+            snapshot = self.decision_snapshot(
+                state, branch, asof_sequence, proposal.get("symbol", "")
+            )
             order = {
                 **proposal,
                 "id": uuid.uuid4().hex,
@@ -488,6 +537,35 @@ class PaperBook:
                 profile = state["fee_profiles"][instrument["fee_profile"]]
                 if timestamp(profile["valid_until"]) <= self.clock():
                     raise ValueError("Fee evidence expired; new decisions cannot assume zero costs")
+                input_quote = snapshot["quotes"].get(symbol)
+                if input_quote is None:
+                    raise ValueError("No quote was available in the model decision input")
+                age = (self.clock() - timestamp(input_quote["observed_at"])).total_seconds()
+                if not 0 <= age <= state["risk"]["quote_age_seconds"]:
+                    raise ValueError("Model input quote is stale or future; recompute")
+                input_cost_blocker = execution_cost_blocker(profile, input_quote)
+                if input_cost_blocker:
+                    raise ValueError(input_cost_blocker)
+                cost_blocker = execution_cost_blocker(profile, state["quotes"][symbol])
+                if cost_blocker:
+                    raise ValueError(cost_blocker)
+                side = (
+                    state["branches"][branch]["positions"].get(symbol, {}).get("side")
+                    if proposal["action"] == "close"
+                    else proposal.get("side", "long")
+                )
+                buying = (proposal["action"] == "open") == (side == "long")
+                price_field = "ask" if buying else "bid"
+                reference = number(input_quote[price_field], positive=True)
+                current = number(state["quotes"][symbol][price_field], positive=True)
+                adverse = (current - reference) if buying else (reference - current)
+                if adverse > reference * number(profile["slippage_bps"]) / 10000:
+                    raise ValueError("Quote moved beyond modeled slippage; recompute")
+                if asof_sequence != self.sequence():
+                    # A slow model's quote cannot silently become a fresh execution reference.
+                    order["decision_reference_price"] = str(reference)
+                    order["decision_price_field"] = price_field
+                    order["decision_slippage_bps"] = profile["slippage_bps"]
                 if proposal["action"] == "open":
                     if (
                         self.clock() - timestamp(state["quotes"][symbol]["observed_at"])
@@ -523,7 +601,9 @@ class PaperBook:
                 state["orders"].append(order)
             instrument = state["instruments"].get(proposal.get("symbol"), {})
             decision_inputs = {
-                "quote": state["quotes"].get(proposal.get("symbol")),
+                "quote": snapshot["quotes"].get(proposal.get("symbol")),
+                "latest_quote_at_acceptance": state["quotes"].get(proposal.get("symbol")),
+                "asof_sequence": asof_sequence,
                 "instrument": instrument,
                 "fee_profile": state["fee_profiles"].get(instrument.get("fee_profile")),
                 "risk": state["risk"],
@@ -674,7 +754,61 @@ class PaperBook:
                     "equity": {branch: str(self.equity(state, branch)) for branch in ("A", "B")},
                 },
             )
+            quote_decisions = []
+            if kind == "quote":
+                # A healthy feed must not make the dashboard look like the
+                # controller is deciding when its model round is stalled. Add
+                # an explicit, non-executable HOLD receipt for each branch to
+                # the same ledger transaction as the quote. Model decisions
+                # may still follow, but neither these receipts nor their
+                # rationale imply a strategy signal or bypass cost gates.
+                instrument = state["instruments"][symbol]
+                decision_inputs = {
+                    "quote": observation,
+                    "quote_sequence": event["sequence"],
+                    "instrument": instrument,
+                    "fee_profile": state["fee_profiles"].get(instrument.get("fee_profile")),
+                    "risk": state["risk"],
+                }
+                for branch in ("A", "B"):
+                    proposal = {
+                        "action": "hold",
+                        "symbol": symbol,
+                        "side": "long",
+                        "budget": 0,
+                        "leverage": 1,
+                        "rationale": (
+                            "Automatic freshness receipt: no fresh model proposal was "
+                            "available for this quote. No costs were assumed and no fill "
+                            "is authorized."
+                        ),
+                        "accepted_research": [],
+                        "receipt_source": "host-quote-freshness-guard",
+                        "quote_sequence": event["sequence"],
+                    }
+                    decision_order = {
+                        **proposal,
+                        "id": uuid.uuid4().hex,
+                        "branch": branch,
+                        "created_at": self.clock().isoformat(),
+                        "asof_sequence": self.sequence(),
+                    }
+                    quote_decisions.append(
+                        self.record(
+                            state,
+                            "decision",
+                            {
+                                "proposal": decision_order,
+                                "decision_inputs": decision_inputs,
+                            },
+                            branch,
+                        )
+                    )
         ActivityLog(self.root, "controller", "paper").write("metrics", "paper-observation", event)
+        for decision_event in quote_decisions:
+            ActivityLog(self.root, decision_event["branch"], "paper").write(
+                "decisions", "paper-hold-freshness-receipt", decision_event
+            )
         return event
 
     def corporate_action(self, state: dict, symbol: str, snapshot: dict) -> list[dict]:
@@ -805,6 +939,28 @@ class PaperBook:
             if number(position["margin"]) + gross - D(
                 position["carrying_costs"]
             ) <= maintenance + fee_total(profile, quantity * price, liquidation=True):
+                cost_blocker = execution_cost_blocker(profile, quote)
+                if cost_blocker:
+                    # Legacy positions may survive a software upgrade that
+                    # invalidates their assumed cost profile. Do not book a
+                    # simulated liquidation fill using unverified FX/slippage.
+                    result.append(
+                        {
+                            "branch": branch,
+                            "symbol": symbol,
+                            "action": "liquidation-blocked",
+                            "reason": "unverified-execution-costs",
+                            "detail": cost_blocker,
+                            "order_id": position["order_id"],
+                        }
+                    )
+                    portfolio["paused"] = True
+                    state["orders"] = [
+                        order
+                        for order in state["orders"]
+                        if order["branch"] != branch or order["action"] != "open"
+                    ]
+                    continue
                 result.append(
                     self.close_position(
                         state, branch, symbol, quote, "liquidation", quantity, price
@@ -857,6 +1013,35 @@ class PaperBook:
                     }
                 )
                 continue
+            cost_blocker = execution_cost_blocker(profile, quote)
+            if cost_blocker:
+                result.append(
+                    {
+                        "branch": branch,
+                        "symbol": symbol,
+                        "action": "cancel",
+                        "reason": "unverified-execution-costs",
+                        "detail": cost_blocker,
+                        "order_id": order["id"],
+                    }
+                )
+                continue
+            if "decision_reference_price" in order:
+                reference = number(order["decision_reference_price"], positive=True)
+                field = order["decision_price_field"]
+                current = number(quote[field], positive=True)
+                adverse = (current - reference) if field == "ask" else (reference - current)
+                if adverse > reference * number(order["decision_slippage_bps"]) / 10000:
+                    result.append(
+                        {
+                            "branch": branch,
+                            "symbol": symbol,
+                            "action": "cancel",
+                            "reason": "decision-price-slippage-exceeded",
+                            "order_id": order["id"],
+                        }
+                    )
+                    continue
             if order["action"] == "close":
                 position = state["branches"][branch]["positions"][symbol]
                 available = number(
@@ -929,6 +1114,11 @@ class PaperBook:
     ) -> dict | None:
         instrument = state["instruments"][symbol]
         profile = state["fee_profiles"][instrument["fee_profile"]]
+        cost_blocker = execution_cost_blocker(profile, quote)
+        if cost_blocker:
+            # Keep the mutation boundary fail-closed even if a future caller
+            # bypasses decide()/fill_orders().
+            raise ValueError(cost_blocker)
         portfolio = state["branches"][branch]
         if instrument["product"] == "bet":
             step = number(instrument["quantity_step"], positive=True)
@@ -1068,6 +1258,11 @@ class PaperBook:
         portfolio = state["branches"][branch]
         position = portfolio["positions"][symbol]
         profile = state["fee_profiles"][state["instruments"][symbol]["fee_profile"]]
+        cost_blocker = execution_cost_blocker(profile, quote)
+        if cost_blocker:
+            # Liquidation and ordinary closes both book a price and fees.
+            # They must not become a bypass around the caller-side gate.
+            raise ValueError(cost_blocker)
         side = position["side"]
         price = (
             override_price
@@ -1155,7 +1350,7 @@ class PaperBook:
 
     def context_snapshot(self, branch: str) -> dict:
         state = self.state()
-        return {
+        context = {
             "goal": state["goal"],
             "sequence": self.sequence(),
             "currency": state["currency"],
@@ -1169,3 +1364,7 @@ class PaperBook:
             "fee_profiles": state["fee_profiles"],
             "pending": [order for order in state["orders"] if order["branch"] == branch],
         }
+        self.decision_snapshots[(branch, context["sequence"])] = copy.deepcopy(context)
+        while len(self.decision_snapshots) > 16:
+            del self.decision_snapshots[next(iter(self.decision_snapshots))]
+        return context

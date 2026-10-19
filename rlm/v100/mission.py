@@ -1,7 +1,6 @@
 """Background income research and guarded learning, with adaptive context capacity."""
 
 import copy
-import fcntl
 import json
 import os
 import signal
@@ -9,6 +8,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from rlm.v100 import file_lock as fcntl
 from rlm.v100.common import atomic_json, load_profile
 from rlm.v100.competition import (
     command,
@@ -17,6 +17,7 @@ from rlm.v100.competition import (
     require_idle_gpu,
 )
 from rlm.v100.evaluation import evaluate_suite
+from rlm.v100.evaluation import resume_baseline as resume_development_baseline
 from rlm.v100.goals import load_goal, set_goal
 from rlm.v100.inference import generation_conditions
 from rlm.v100.protection import compare_reports, execution_hash, file_hash
@@ -313,7 +314,12 @@ def run(root: Path, profile: dict, directory: Path) -> None:
         require_idle_gpu()
         note(directory, "loading-context", context_window=context)
         try:
-            with managed_server(path, root, directory / f"server-{context}.log") as serving:
+            with managed_server(
+                path,
+                root,
+                directory / f"server-{context}.log",
+                lifecycle_role="accepted",
+            ) as serving:
                 free = gpu_free_gib()
                 if free < 4:
                     raise RuntimeError("Context leaves less than 4 GiB inference headroom")
@@ -343,6 +349,11 @@ def run(root: Path, profile: dict, directory: Path) -> None:
                     )
                     print("Reused complete matching baseline:", original_report, flush=True)
                 else:
+                    resumed = resume_development_baseline(
+                        root, serving, suite, directory / f"baseline-{context}.json"
+                    )
+                    if resumed:
+                        print("Resumed exact matching development baseline:", resumed, flush=True)
                     baseline = evaluate_suite(
                         client, serving, suite, directory / f"baseline-{context}.json"
                     )

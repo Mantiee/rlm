@@ -22,6 +22,71 @@ NON_MARKET = re.compile(
 PAPER = re.compile(r"paper[ -]trad|paper (?:profit|simulation|p.?&.?l)|trading simulation", re.I)
 
 
+def python_process_receipt(root: Path, value: dict) -> dict | None:
+    """Verify archived process provenance without certifying task correctness."""
+    if (
+        type(value.get("exit_code")) is not int
+        or value["exit_code"] != 0
+        or value.get("timed_out") is not False
+    ):
+        return None
+    directory = value.get("directory")
+    if not isinstance(directory, str):
+        return None
+    folder = Path(directory)
+    archive = (root / "research/python-experiments").resolve()
+    if folder.is_symlink() or not folder.resolve().is_relative_to(archive):
+        return None
+    receipt_path = folder / "result.json"
+    if (
+        not receipt_path.is_file()
+        or receipt_path.is_symlink()
+        or receipt_path.stat().st_size > 2 * 2**20
+    ):
+        return None
+    try:
+        archived = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if archived != value:
+        return None
+    artifacts = []
+    total_bytes = 0
+    work = folder / "work"
+    if work.is_symlink():
+        return None
+    if work.is_dir():
+        for path in work.rglob("*"):
+            if len(artifacts) >= 20:
+                break
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or not path.resolve().is_relative_to(work.resolve())
+            ):
+                continue
+            size = path.stat().st_size
+            if not 0 < size <= 32 * 2**20 - total_bytes:
+                continue
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            total_bytes += size
+            artifacts.append({"path": str(path), "bytes": size, "sha256": digest})
+    output = value.get("output")
+    if not artifacts and not (isinstance(output, str) and output.strip()):
+        return None
+    return {
+        "tool": "run_research_python",
+        "kind": "executed-unvalidated",
+        "directory": str(folder),
+        "receipt_sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+        "exit_code": 0,
+        "timed_out": False,
+        "artifacts": artifacts,
+        "scope": "Archived process exit and output provenance only; task correctness, usefulness and income unverified",
+    }
+
+
 def assessment(root: Path, result: dict, historical: bool = False) -> dict:
     hypothesis, test = result.get("hypothesis", ""), result.get("suggested_test", "")
     reason = None
@@ -41,7 +106,11 @@ def assessment(root: Path, result: dict, historical: bool = False) -> dict:
     proposals, forecasts, processes = [], [], []
     for receipt in trace:
         value = receipt.get("result", {})
-        if value.get("status") in {"failed", "blocked"} or value.get("state") == "blocked" or value.get("error"):
+        if (
+            value.get("status") in {"failed", "blocked"}
+            or value.get("state") == "blocked"
+            or value.get("error")
+        ):
             continue
         identity = value.get("id")
         if receipt.get("tool") == "observe_goal_source" and identity:
@@ -53,6 +122,10 @@ def assessment(root: Path, result: dict, historical: bool = False) -> dict:
             forecasts.append(identity)
         elif tool == "backtest_prices" and value.get("report") and not value.get("cache_reused"):
             work.append({"tool": tool, "report": value["report"]})
+        elif tool == "run_research_python":
+            receipt = python_process_receipt(root, value)
+            if receipt is not None:
+                processes.append(receipt)
         elif tool == "sandbox_run" and value.get("exit_code") == 0:
             processes.append({"tool": tool, "scope": "Process exit only, not task validation"})
     goal_id = (load_goal(root) or {}).get("id", "no-goal")
@@ -108,7 +181,8 @@ def assessment(root: Path, result: dict, historical: bool = False) -> dict:
             "proposal_receipts": proposals,
             "forecast_commitments": forecasts,
             "process_receipts": processes,
-            "eligible_for_review": reason is None and (not repeated or bool(work or forecasts or processes)),
+            "eligible_for_review": reason is None
+            and (not repeated or bool(work or forecasts or processes)),
             "scope": "Lexical category and receipt audit only; no profit, causal or ML-label certification",
         }
         if not historical:

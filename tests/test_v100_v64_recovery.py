@@ -98,12 +98,13 @@ def test_live_paper_display_does_not_replay_audit_and_detects_state_tamper(tmp_p
     book.initialize()
     book.configure(configuration(clock))
     book.ingest(quote(clock))
+    sequence = book.sequence()
     monkeypatch.setattr(PaperBook, "events", lambda *args: pytest.fail("Display scanned history"))
     book.db.execute("BEGIN IMMEDIATE")
     value = financial_snapshot.live_ledger(tmp_path)
     assert value["branches"]["A"]["equity"] == "10000"
     assert value["executed_fills"] is None
-    assert value["ledger_sequence"] == 3
+    assert value["ledger_sequence"] == sequence == book.sequence()
     assert "stale quote: TEST" in value["blockers"]
     book.db.rollback()
     with book.db:

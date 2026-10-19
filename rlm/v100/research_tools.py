@@ -8,6 +8,7 @@ import re
 import socket
 import ssl
 import subprocess
+import uuid
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -15,11 +16,11 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 import urllib3
+
+from rlm.v100.activity import ActivityLog
 from rlm.v100.agent import native_turn, research_output_limit, tool_schema, tool_turn
 from rlm.v100.insights import PROOF_DOMAINS
 from rlm.v100.tool_protocol import json_object
-
-from rlm.v100.activity import ActivityLog
 
 COMPACT_CPU_TOOLS = {
     "search_memory",
@@ -1260,7 +1261,9 @@ def route_research_tool(client, messages: list[dict], tools: list[dict], journal
         return route(client, corrected_messages, tools=tools, retry_output_limit=2048)
 
 
-def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dict:
+def research_turn(
+    client, messages: list[dict], schema: dict, root: Path, run_id: str | None = None
+) -> dict:
     from rlm.v100.research_policy import apply
 
     messages = [dict(row) for row in messages]
@@ -1273,7 +1276,11 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
     from rlm.v100.knowledge_rag import attach
 
     memory_messages = messages
-    messages = attach(root, messages)
+    task_id = uuid.uuid4().hex
+    activity_context = getattr(client, "activity_context", {})
+    if not run_id and isinstance(activity_context, dict):
+        run_id = activity_context.get("chat_request_id")
+    messages = attach(root, messages, task_id=task_id, run_id=run_id)
     from rlm.v100 import decision_memory
 
     messages = decision_memory.attach(root, messages, client.context_window)
@@ -1388,4 +1395,5 @@ def research_turn(client, messages: list[dict], schema: dict, root: Path) -> dic
     result["content"] = json.dumps(public_response)
     decision_memory.record(root, memory_messages, public_response, trace)
     result["research_trace"] = trace
+    result["knowledge_task_id"] = task_id
     return result

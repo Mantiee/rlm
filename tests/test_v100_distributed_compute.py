@@ -13,6 +13,7 @@ from rlm.v100 import (
     distributed_compute,
     drones,
     mission,
+    remote_nodes,
 )
 from rlm.v100.common import atomic_json
 from rlm.v100.protection import file_hash
@@ -71,6 +72,156 @@ def test_lost_worker_lease_requeued_and_cancelled_job_not_reclaimed(tmp_path, mo
     assert compute_worker.claim(mailbox, "new")
     distributed_compute.cancel(tmp_path, identity)
     assert compute_worker.claim(mailbox, "third") is None
+
+
+def failed_cuda_receipt(tmp_path, mailbox, identity, diagnostic=True, rss_limit=1536 * 2**20):
+    job_path = tmp_path / "research/compute-jobs" / identity / "job.json"
+    job = compute_worker.read_json(job_path)
+    job["device"] = "cuda"
+    atomic_json(job_path, job)
+    atomic_json(mailbox / "jobs" / (identity + ".json"), job)
+    state_path = job_path.with_name("state.json")
+    state = compute_worker.read_json(state_path)
+    state["job_sha256"] = file_hash(job_path)
+    atomic_json(state_path, state)
+    nonce = "c" * 32
+    lease = {"job_id": identity, "worker": "debian-3060ti-gpu", "nonce": nonce}
+    atomic_json(mailbox / "claims" / identity / "lease.json", lease)
+    result = {
+        **lease,
+        "state": "failed",
+        "job_sha256": file_hash(job_path),
+        "detail": "Owned compute reserve stopped: worker-host-rss-budget",
+    }
+    if diagnostic:
+        result["resource_failure"] = {
+            "device": "cuda",
+            "reasons": ["worker-host-rss-budget"],
+            "gpu_ready": True,
+            "elapsed_seconds": 4.0,
+            "host_rss_bytes": rss_limit + 1,
+            "host_available_bytes": 4 * 2**30,
+            "host_rss_limit_bytes": rss_limit,
+            "host_available_minimum_bytes": 2**30,
+            "elapsed_limit_seconds": 150,
+        }
+    destination = mailbox / "results" / (identity + "-" + nonce)
+    atomic_json(destination / "receipt.json", result)
+
+
+@pytest.mark.parametrize("rss_limit", [768 * 2**20, 1536 * 2**20])
+def test_cuda_failure_persists_diagnostic_and_cooldown_before_retry(
+    tmp_path, monkeypatch, rss_limit
+):
+    mailbox, identity = configured(tmp_path, monkeypatch)
+    failed_cuda_receipt(tmp_path, mailbox, identity, rss_limit=rss_limit)
+    before = time.time()
+
+    distributed_compute.tick(tmp_path)
+
+    state = compute_worker.read_json(tmp_path / "research/compute-jobs" / identity / "state.json")
+    assert state["state"] == "queued"
+    assert state["attempts"] == 1
+    assert state["retry_not_before"] >= before + distributed_compute.CUDA_RETRY_COOLDOWN_SECONDS
+    assert state["last_failure"]["resource_failure"]["reasons"] == ["worker-host-rss-budget"]
+
+    monkeypatch.setattr(remote_nodes, "request", lambda *args, **kwargs: pytest.fail("retried"))
+    remote_nodes.cpu_bridge(
+        tmp_path,
+        {
+            "cpu_ready": True,
+            "cpu_slots": 1,
+            "cpu_active": 0,
+            "ready": True,
+            "free_vram_gib": 3.0,
+            "temperature_c": 40,
+            "generating": False,
+            "gpu_compute_claimed": False,
+            "kernel_sha256": "unused",
+            "worker_sha256": "unused",
+        },
+    )
+    assert not (mailbox / "claims" / identity / "lease.json").exists()
+    # Historical budget receipts must remain retryable once their cooldown expires.
+    monkeypatch.setattr(remote_nodes.time, "time", lambda: state["retry_not_before"] + 1)
+    calls = []
+    monkeypatch.setattr(
+        remote_nodes, "request", lambda *args, **kwargs: calls.append(args) or {"state": "running"}
+    )
+    job = compute_worker.read_json(tmp_path / "research/compute-jobs" / identity / "job.json")
+    remote_nodes.cpu_bridge(
+        tmp_path,
+        {
+            "cpu_ready": True,
+            "cpu_slots": 1,
+            "cpu_active": 0,
+            "ready": True,
+            "free_vram_gib": 3.0,
+            "temperature_c": 40,
+            "generating": False,
+            "gpu_compute_claimed": False,
+            "kernel_sha256": job["kernel_sha256"],
+            "worker_sha256": job["worker_sha256"],
+        },
+    )
+    assert calls and calls[0][0] == "GET"
+    assert (mailbox / "claims" / identity / "lease.json").is_file()
+
+
+def test_cuda_failure_without_structured_diagnostic_is_terminal(tmp_path, monkeypatch):
+    mailbox, identity = configured(tmp_path, monkeypatch)
+    failed_cuda_receipt(tmp_path, mailbox, identity, diagnostic=False)
+
+    distributed_compute.tick(tmp_path)
+
+    state = compute_worker.read_json(tmp_path / "research/compute-jobs" / identity / "state.json")
+    assert state["state"] == "failed"
+    assert state["last_failure"]["resource_failure"] is None
+    assert state["retry_not_before"] is None
+    assert (mailbox / "closed" / (identity + ".json")).is_file()
+
+
+def test_cancelled_cuda_job_is_not_reclaimed_and_remote_lease_is_deleted(tmp_path, monkeypatch):
+    mailbox, identity = configured(tmp_path, monkeypatch)
+    job_path = tmp_path / "research/compute-jobs" / identity / "job.json"
+    job = compute_worker.read_json(job_path)
+    job["device"] = "cuda"
+    atomic_json(job_path, job)
+    atomic_json(mailbox / "jobs" / (identity + ".json"), job)
+    nonce = "d" * 32
+    atomic_json(
+        mailbox / "claims" / identity / "lease.json",
+        {"job_id": identity, "worker": "debian-3060ti-gpu", "nonce": nonce},
+    )
+    distributed_compute.cancel(tmp_path, identity)
+    calls = []
+    monkeypatch.setattr(
+        remote_nodes,
+        "request",
+        lambda method, path, value=None: calls.append((method, path)) or {"state": "cancelled"},
+    )
+
+    remote_nodes.cpu_bridge(
+        tmp_path,
+        {
+            "cpu_ready": True,
+            "cpu_slots": 1,
+            "cpu_active": 0,
+            "ready": True,
+            "free_vram_gib": 3.0,
+            "temperature_c": 40,
+            "generating": False,
+            "gpu_compute_claimed": False,
+            "kernel_sha256": "unused",
+            "worker_sha256": "unused",
+        },
+    )
+    distributed_compute.tick(tmp_path)
+
+    state = compute_worker.read_json(tmp_path / "research/compute-jobs" / identity / "state.json")
+    assert state["state"] == "cancelled"
+    assert state["retry_not_before"] is None
+    assert calls == [("DELETE", "/api/synta-cpu/" + identity + "-" + nonce)]
 
 
 def received(tmp_path, mailbox, identity, bad_hash=False):

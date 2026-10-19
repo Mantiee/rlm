@@ -21,6 +21,20 @@ def test_identity_rejects_exited_process_even_when_start_ticks_remain(monkeypatc
         assert serving.process_identity(123) == "42"
 
 
+def test_identity_normalizes_a_disappearing_proc_stat(monkeypatch):
+    original = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        if path == Path("/proc/123/stat"):
+            raise FileNotFoundError("process exited during identity check")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    with pytest.raises(ProcessLookupError, match="Process 123 no longer exists"):
+        serving.process_identity(123)
+
+
 def test_stop_handles_exit_after_status_without_signal(tmp_path, monkeypatch):
     live = {"running": True, "pid": 123, "process_start": "42", "run": str(tmp_path)}
     states = iter([live, {**live, "running": False}])

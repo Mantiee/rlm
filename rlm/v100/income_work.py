@@ -5,6 +5,7 @@ Human participation and security programs are never automated or submitted.
 """
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -26,9 +27,52 @@ STARTING_SOURCES = (
     ("authorized software security research", "https://www.mozilla.org/en-US/security/bug-bounty/"),
 )
 
+# The operator disabled this Windows inference origin after repeated host
+# crashes. It stays excluded across restarts unless Synta preferences contain
+# an explicit per-origin opt-in. Other LAN helpers keep their normal policy.
+WINDOWS_3090_ORIGIN = "http://192.168.0.61:11435"
+REMOTE_ORIGIN_POLICY_KEY = "remote_origin_enabled"
+
 
 class MasterNotReady(RuntimeError):
     """Transient serving startup, shutdown or unavailable protected receipt."""
+
+
+def income_remote_origin_enabled(root: Path, base_url: str) -> bool:
+    """Apply the global helper kill switch and persistent per-origin settings.
+
+    The Windows RTX 3090 endpoint is denied unless the Synta preferences file
+    explicitly sets ``remote_origin_enabled[origin]`` to ``true``. Other remote
+    origins remain enabled by default and can be individually disabled. Local
+    serving profiles do not call this function and remain eligible.
+    """
+    from rlm.v100.mission_chat import preferences
+    from rlm.v100.remote_helper import private_origin
+
+    try:
+        origin = private_origin(base_url)
+    except (TypeError, ValueError):
+        return False
+    settings = preferences(root)
+    if settings.get("remote_helper_enabled", True) is False:
+        return False
+    policy = settings.get(REMOTE_ORIGIN_POLICY_KEY, {})
+    if not isinstance(policy, dict):
+        # A malformed policy must not accidentally re-enable the disabled host.
+        return origin != WINDOWS_3090_ORIGIN
+    if origin == WINDOWS_3090_ORIGIN:
+        return policy.get(origin) is True
+    configured = policy.get(origin)
+    return True if configured is None else type(configured) is bool and configured
+
+
+def income_profile_enabled(root: Path, profile: dict) -> bool:
+    """Leave local V100 serving untouched; filter remote profiles by origin."""
+    from rlm.v100.remote_helper import remote_profile
+
+    if not remote_profile(profile):
+        return True
+    return income_remote_origin_enabled(root, profile.get("runtime", {}).get("base_url"))
 
 
 def backend_on_cooldown(root: Path, base_url: str) -> bool:
@@ -50,11 +94,11 @@ def backend_on_cooldown(root: Path, base_url: str) -> bool:
         return False
     try:
         previous = json.loads(status.read_text())
-        updated = previous.get("updated")
+        retry_at = previous.get("retry_at")
         if (
-            previous.get("state") != "model-selected work blocked"
-            or not isinstance(updated, (int, float))
-            or not 0 <= time.time() - updated < 900
+            previous.get("state") not in ("model-selected work blocked", "deferred")
+            or not isinstance(retry_at, (int, float))
+            or retry_at <= time.time()
         ):
             return False
         error = str(previous.get("error", ""))
@@ -66,8 +110,10 @@ def backend_on_cooldown(root: Path, base_url: str) -> bool:
 def record_backend_cooldown(root: Path, failure: dict) -> None:
     """Retain a recent endpoint failure separately from the activity display."""
     if (
-        failure.get("state") == "model-selected work blocked"
+        failure.get("state") == "deferred"
         and "503" in str(failure.get("error", ""))
+        and type(failure.get("retry_after_seconds")) is int
+        and 15 <= failure["retry_after_seconds"] <= 600
         and isinstance(failure.get("updated"), (int, float))
         and 0 <= time.time() - failure["updated"] < 900
     ):
@@ -77,6 +123,7 @@ def record_backend_cooldown(root: Path, failure: dict) -> None:
                 "state": failure["state"],
                 "error": str(failure["error"])[:400],
                 "updated": failure["updated"],
+                "retry_at": failure["updated"] + failure["retry_after_seconds"],
             },
         )
 
@@ -109,6 +156,8 @@ def owned_advisor(root: Path, branch: str, reason: str):
         if cpu_path.is_file() and accepted_path is not None:
             cpu_profile = load_profile(cpu_path, root)
             accepted = load_profile(accepted_path, root)
+            if not income_profile_enabled(root, cpu_profile):
+                raise ValueError("Accepted CPU advisor origin disabled by Synta preferences")
             if cpu_profile["server"]["model"] != accepted["server"]["model"]:
                 raise ValueError("CPU advisor weights differ from the accepted master")
             client = helper_client(cpu_profile, root, branch)
@@ -136,6 +185,9 @@ def owned_advisor(root: Path, branch: str, reason: str):
     for path in dict.fromkeys(p for p in candidates if p is not None):
         try:
             profile = load_profile(path, root)
+            if not income_profile_enabled(root, profile):
+                failures.append("Remote inference origin disabled by Synta preferences")
+                continue
             if not remote_profile(profile) or backend_on_cooldown(
                 root, profile.get("runtime", {}).get("base_url", "")
             ):
@@ -169,20 +221,33 @@ def accepted_master(root: Path, branch: str):
     if planner is not None and preferences(root).get("remote_helper_enabled", True):
         try:
             planner_profile = load_profile(planner, root)
-            if backend_on_cooldown(root, planner_profile.get("runtime", {}).get("base_url", "")):
-                raise ValueError("Planner endpoint on temporary HTTP 503 cooldown")
-            client = helper_client(planner_profile, root, branch)
-            client.timeout = min(client.timeout, 10)
-            backend_preflight(client)
-            # The short identity probe is not the generation deadline, especially for cold MoE loading.
-            client.timeout = 120
-            client.request_deadline = time.monotonic() + 150
-            client.enable_thinking = False
-            client.sampling_args = dict(client.sampling_args) | {"max_tokens": 2048}
-            client.research_token_ceiling = 2048
-            client.research_thinking_allowed = False
-            client.activity_actor = "income-research-planner"
-            return client
+            if not income_profile_enabled(root, planner_profile):
+                ActivityLog(root, branch, "income-research").write(
+                    "steps",
+                    "planner-origin-skipped",
+                    {
+                        "reason": "Remote inference origin disabled by Synta preferences",
+                        "scope": "Disabled endpoint skipped before network preflight; fallback remains available",
+                    },
+                )
+                planner = None
+            if planner is not None:
+                if backend_on_cooldown(
+                    root, planner_profile.get("runtime", {}).get("base_url", "")
+                ):
+                    raise ValueError("Planner endpoint on temporary HTTP 503 cooldown")
+                client = helper_client(planner_profile, root, branch)
+                client.timeout = min(client.timeout, 10)
+                backend_preflight(client)
+                # The short identity probe is not the generation deadline, especially for cold MoE loading.
+                client.timeout = 120
+                client.request_deadline = time.monotonic() + 150
+                client.enable_thinking = False
+                client.sampling_args = dict(client.sampling_args) | {"max_tokens": 2048}
+                client.research_token_ceiling = 2048
+                client.research_thinking_allowed = False
+                client.activity_actor = "income-research-planner"
+                return client
         except (OSError, ValueError, requests.RequestException) as error:
             ActivityLog(root, branch, "income-research").write(
                 "errors",
@@ -217,6 +282,12 @@ def accepted_master(root: Path, branch: str):
             root, branch, "Accepted V100 serving startup not ready; evidence retained"
         )
     profile = load_profile(path, root)
+    if not income_profile_enabled(root, profile):
+        return owned_advisor(
+            root,
+            branch,
+            "Accepted serving origin disabled by Synta per-origin policy; no request sent",
+        )
     client = helper_client(profile, root, branch)
     client.timeout = min(10, client.timeout)
     # Full protected receipt and endpoint check precedes any generation. A
@@ -275,10 +346,17 @@ def execute(root: Path, job: dict) -> dict:
             if (
                 saved.get("goal_id") == goal["id"]
                 and saved.get("analysis") is None
-                and previous.get("state")
-                in (
-                    "waiting for accepted master",
-                    "evidence collected; analysis blocked",
+                and (
+                    previous.get("state")
+                    in (
+                        "waiting for accepted master",
+                        "evidence collected; analysis blocked",
+                    )
+                    or (
+                        previous.get("state") == "deferred"
+                        and previous.get("retry_scope")
+                        == "Explicit Owned GPU cooldown; request rejected before inference"
+                    )
                 )
                 and saved.get("analysis_attempts", 0) < 3
                 and 0 <= time.time() - saved["source"]["acquired"] <= 86400
@@ -408,17 +486,148 @@ def execute(root: Path, job: dict) -> dict:
         )
         journal.write("steps", "income-analysis-deferred", value)
     except (ValueError, OSError, RuntimeError, requests.RequestException) as error:
-        saved["analysis_attempts"] = max(attempts_before + 1, saved.get("analysis_attempts", 0))
-        saved["analysis_error"] = str(error)[:400]
-        atomic_json(dossier, saved)
-        value.update(state="evidence collected; analysis blocked", error=str(error)[:400])
-        if saved.get("analysis_attempts", 0) < 3:
-            value["retry_after_seconds"] = 120
-        journal.write("errors", "income-analysis-blocked", value)
+        from rlm.v100.remote_helper import OwnedGpuCooldown
+
+        if isinstance(error, OwnedGpuCooldown):
+            saved["analysis_error"] = str(error)[:400]
+            atomic_json(dossier, saved)
+            value.update(
+                state="deferred",
+                status="deferred",
+                retry_after_seconds=error.retry_after_seconds,
+                retry_scope="Explicit Owned GPU cooldown; request rejected before inference",
+            )
+        else:
+            saved["analysis_attempts"] = max(attempts_before + 1, saved.get("analysis_attempts", 0))
+            saved["analysis_error"] = str(error)[:400]
+            atomic_json(dossier, saved)
+            value.update(state="evidence collected; analysis blocked", error=str(error)[:400])
+            journal.write("errors", "income-analysis-blocked", value)
     value["updated"] = time.time()
     atomic_json(path, value)
     journal.write("steps", "income-work-result", value)
     return value
+
+
+def dossier_evidence(root: Path, goal_id: str) -> list[str]:
+    """Use verified current income terms, never unrelated market-price labels."""
+    from rlm.v100.goal_learning import observation
+
+    folder = root / "research/income-work/dossiers"
+    if not folder.exists():
+        return []
+    if folder.is_symlink() or not folder.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Income dossier folder escaped its root")
+    candidates = sorted(
+        folder.glob("*.json"), key=lambda path: path.stat().st_mtime_ns, reverse=True
+    )[:8]
+    identities = []
+    for path in candidates:
+        if path.is_symlink() or not path.resolve().is_relative_to(folder.resolve()):
+            raise ValueError("Linked income dossier refused")
+        with path.open("rb") as handle:
+            raw = handle.read(2 * 2**20 + 1)
+        if len(raw) > 2 * 2**20:
+            raise ValueError("Income dossier exceeds read budget")
+        saved = json.loads(raw)
+        if saved.get("goal_id") != goal_id:
+            continue
+        identity = saved.get("source", {}).get("id")
+        if not isinstance(identity, str):
+            continue
+        source = observation(root, identity)
+        if (
+            source["field"] != ""
+            or source["value"] is not None
+            or not 0 <= time.time() - source["acquired"] <= 86400
+        ):
+            continue
+        if identity not in identities:
+            identities.append(identity)
+        if len(identities) == 3:
+            break
+    return identities
+
+
+def typed_income_work(
+    root: Path, branch: str, client, goal_id: str, evidence_ids: list[str]
+) -> dict:
+    """Commission once per evidence content and planner contract, retaining prior attempts."""
+    from rlm.v100.goal_learning import digest, observation
+    from rlm.v100.income_experiment import planner_contract_sha256, propose_and_run
+
+    inputs = sorted(
+        [
+            {key: source[key] for key in ("url", "field", "body_sha256")}
+            for source in (observation(root, identity) for identity in evidence_ids)
+        ],
+        key=lambda source: (source["url"], source["field"], source["body_sha256"]),
+    )
+    legacy_identity = digest({"goal_id": goal_id, "inputs": inputs})
+    contract = planner_contract_sha256()
+    identity = digest({"goal_id": goal_id, "inputs": inputs, "planner_contract_sha256": contract})
+    folder = root / "research/income-work/local-commissions"
+    if not folder.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Income commission archive escaped its root")
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (identity + ".json")
+    from rlm.v100 import file_lock
+
+    family = folder / (legacy_identity + ".family")
+    lock = folder / (legacy_identity + ".lock")
+    if path.is_symlink() or lock.is_symlink() or family.is_symlink():
+        raise ValueError("Linked income commission refused")
+    with lock.open("a") as lease:
+        file_lock.flock(lease, file_lock.LOCK_EX | file_lock.LOCK_NB)
+        if path.exists():
+            with path.open("rb") as handle:
+                raw = handle.read(128 * 1024 + 1)
+            if len(raw) > 128 * 1024:
+                raise ValueError("Income commission exceeds128KiB")
+            saved = json.loads(raw)
+            if saved.get("id") != identity or saved.get("goal_id") != goal_id:
+                raise ValueError("Income commission identity changed")
+            return {**saved, "reused": True}
+        prior_id = legacy_identity if (folder / (legacy_identity + ".json")).is_file() else None
+        if family.exists():
+            with family.open("rb") as handle:
+                family_raw = handle.read(4097)
+            if len(family_raw) > 4096:
+                raise ValueError("Income commission family exceeds4KiB")
+            previous_family = json.loads(family_raw)
+            prior_id = previous_family.get("latest_commission_id")
+            if (
+                previous_family.get("family_id") != legacy_identity
+                or not isinstance(prior_id, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", prior_id)
+            ):
+                raise ValueError("Income commission family identity changed")
+        record = {
+            "id": identity,
+            "goal_id": goal_id,
+            "inputs": inputs,
+            "planner_contract_sha256": contract,
+            "prior_commission_id": prior_id,
+            "evidence_ids": evidence_ids,
+            "state": "planning",
+            "updated": time.time(),
+            "actual_income_pln": None,
+            "checkpoint_path": str(path),
+        }
+        atomic_json(path, record)
+        atomic_json(family, {"family_id": legacy_identity, "latest_commission_id": identity})
+        try:
+            result = propose_and_run(root, branch, client, evidence_ids)
+            record.update(state=result["state"], experiment=result)
+        except (OSError, ValueError, SyntaxError, RuntimeError, requests.RequestException) as error:
+            record.update(state="typed local experiment blocked", error=str(error)[:400])
+        record.update(
+            updated=time.time(),
+            checkpoint_path=str(path),
+            scope="Model-selected local experiment; repeated unchanged inputs do not rerun. Process output is not usefulness, task validation or income.",
+        )
+        atomic_json(path, record)
+        return record
 
 
 def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict:
@@ -448,12 +657,16 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
     previous_evidence = {}
     if previous.get("result_path"):
         saved_path = Path(previous["result_path"]).resolve()
-        if not saved_path.is_relative_to((root / "research/income-work/experiments").resolve()):
+        archives = (
+            root / "research/income-work/experiments",
+            root / "research/income-work/local-commissions",
+        )
+        if not any(saved_path.is_relative_to(archive.resolve()) for archive in archives):
             raise ValueError("Previous work receipt escaped its experiment archive")
         if saved_path.is_file() and saved_path.stat().st_size <= 2 * 2**20:
             saved = json.loads(saved_path.read_text())
             if saved.get("goal_id") == goal["id"]:
-                result = saved["result"]
+                result = saved.get("result", {})
                 previous_evidence = {
                     key: result.get(key)
                     for key in ("hypothesis", "suggested_test", "status", "research_quality")
@@ -489,6 +702,47 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
         client.research_token_ceiling = 2048
         client.sampling_args = dict(client.sampling_args) | {"max_tokens": 2048}
         client.research_tool_steps = 6
+        evidence_ids = dossier_evidence(root, goal["id"])
+        if evidence_ids:
+            typed = typed_income_work(root, job["branch"], client, goal["id"], evidence_ids)
+            experiment = typed.get("experiment", {})
+            if typed.get("reused"):
+                previous_evidence["typed_local_checkpoint"] = {
+                    "id": typed["id"],
+                    "state": typed["state"],
+                    "checkpoint_path": typed.get("checkpoint_path"),
+                    "experiment_id": experiment.get("id"),
+                    "artifacts": experiment.get("artifacts", [])[:8],
+                    "measurement": experiment.get("proposal", {}).get("measurement"),
+                    "failure_condition": experiment.get("proposal", {}).get("failure_condition"),
+                    "error": typed.get("error") or experiment.get("error"),
+                    "scope": "Do not repeat this plan/execution on unchanged inputs; seek genuinely new evidence or a different supported hypothesis. Pending work is not complete.",
+                }
+                value["typed_local_experiment"] = typed
+            else:
+                value.update(
+                    mode="model-selected local experiment",
+                    state=typed["state"],
+                    typed_local_experiment=typed,
+                    result_path=typed.get("checkpoint_path"),
+                    executed_work_receipts=int(
+                        experiment.get("state") == "executed-unvalidated"
+                        and not typed.get("reused", False)
+                    ),
+                    execution_checkpoint={
+                        "result_path": typed.get("checkpoint_path"),
+                        "phase": typed["state"],
+                        "scope": typed.get("scope"),
+                    },
+                    updated=time.time(),
+                )
+                if typed.get("error"):
+                    value["error"] = typed["error"]
+                atomic_json(path, value)
+                ActivityLog(root, job["branch"], "income-research").write(
+                    "steps", "typed-local-work-result", value
+                )
+                return value
         # Available named tools retain their own resource, network and data gates.
         # The model selects a source, domain and experiment, not a fixed URL rotation.
         client.research_tool_names = None
@@ -514,12 +768,32 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
                     },
                     "previous_work": {
                         key: previous.get(key)
-                        for key in ("state", "error", "result_path", "candidate_id", "dossier")
+                        for key in (
+                            "state",
+                            "error",
+                            "result_path",
+                            "candidate_id",
+                            "dossier",
+                            "execution_checkpoint",
+                        )
                     },
                     "previous_experiment_evidence": previous_evidence,
                     "archive_contract": "Archived proposals are hypotheses, not completed tests or income. Prefer legal automatable deliverables. Human research/usability participation requires the actual human: record the specific operator step once, then choose other useful work instead of repeating age/residency/account summaries or impersonating a participant.",
                     "commissioning_strategy_failures": comparisons,
                     "independent_promotion_checks": evidence_requirements,
+                    "public_observation_contract": (
+                        "A public-source observation ID is generated by the host; do not wait for "
+                        "the operator to supply a 'Host ID'. Call observe_goal_source with the "
+                        "public HTTPS URL and field='' to fetch and archive a text source; its "
+                        "receipt returns the ID required by register_income_opportunity. For a "
+                        "numeric forecast target, choose a public JSON URL and dotted numeric "
+                        "field instead. read_public_page can inspect official public terms, but "
+                        "its page receipt is not a goal observation ID. If one source is blocked, "
+                        "try another public official source or complete a local, reproducible "
+                        "zero-spend deliverable; do not hold the entire goal for a private ID, "
+                        "account, external interaction, real order or payment. Report a blocker "
+                        "only when all bounded public/local paths fail, with the exact receipt."
+                    ),
                     "autonomy_contract": (
                         "No predetermined asset, strategy, ranking or signal. "
                         "Choose hypotheses dynamically from observed evidence, "
@@ -554,10 +828,45 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
         identity = str(time.time_ns())
         result_path = root / "research/income-work/experiments" / (identity + ".json")
         atomic_json(result_path, {"goal_id": goal["id"], "result": result, "scope": value["scope"]})
+        quality = result.get("research_quality")
+        phases = {
+            "rejected test",
+            "repeated advisory",
+            "executed research receipt",
+            "forecast committed - outcome pending",
+            "process executed - task validation missing",
+            "proposal registered - no executed test",
+            "advisory only - no executed test",
+        }
+        classified = (
+            isinstance(quality, dict)
+            and quality.get("state") in phases
+            and all(
+                isinstance(quality.get(key), list)
+                for key in ("work_receipts", "process_receipts", "forecast_commitments")
+            )
+        )
+        phase = (
+            quality["state"]
+            if classified
+            else "advisory only; execution classification unavailable"
+        )
         value.update(
-            state="model-selected tool work recorded"
-            if successful
-            else "advisory only; no successful tool receipt",
+            state=phase,
+            research_quality=quality if isinstance(quality, dict) else None,
+            executed_work_receipts=(
+                len(quality["work_receipts"]) + len(quality["process_receipts"])
+                if classified
+                else 0
+            ),
+            forecast_commitments=quality["forecast_commitments"] if classified else [],
+            execution_checkpoint={
+                "result_path": str(result_path),
+                "quality_id": quality.get("id") if isinstance(quality, dict) else None,
+                "phase": phase,
+                "scope": "Resume from archived full trace and host receipt classification; process exit and forecasts are not task validation or income",
+            },
+            successful_tool_receipts_scope="Tool activity only; reads and proposals are not executed experiments",
             result_path=str(result_path),
             tool_receipts=len(trace),
             successful_tool_receipts=len(successful),
@@ -567,9 +876,17 @@ def execute_goal_work(root: Path, job: dict, goal: dict, previous: dict) -> dict
             + sum(row.get("tool") == "register_income_opportunity" for row in successful),
         )
     except (MasterNotReady, ValueError, OSError, RuntimeError, requests.RequestException) as error:
-        value.update(
-            state="model-selected work blocked", error=str(error)[:400], retry_after_seconds=120
-        )
+        value.update(state="model-selected work blocked", error=str(error)[:400])
+        from rlm.v100.remote_helper import OwnedGpuCooldown
+
+        retry_after = error.retry_after_seconds if isinstance(error, OwnedGpuCooldown) else None
+        if type(retry_after) is int and 15 <= retry_after <= 600:
+            value.update(
+                state="deferred",
+                status="deferred",
+                retry_after_seconds=retry_after,
+                retry_scope="Explicit Owned GPU cooldown; request rejected before inference",
+            )
     value["updated"] = time.time()
     record_backend_cooldown(root, value)
     atomic_json(path, value)

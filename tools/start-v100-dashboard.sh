@@ -27,6 +27,8 @@ from rlm.v100.common import atomic_json
 
 root = Path(os.environ['AI_V100_ROOT']).resolve()
 script = root / 'bin/serve-v100-dashboard.py'
+log = root / 'research/dashboard/service.log'
+log.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 if any(char in str(root) + sys.executable for char in ('\n', '\r', '"', '%', '\\')):
     raise ValueError('Unsupported service path')
 unit = Path.home() / '.config/systemd/user/v100-dashboard.service'
@@ -37,6 +39,7 @@ unit.write_text(
     '[Service]\nType=simple\n'
     f'ExecStart="{sys.executable}" -u "{script}" --root "{root}" --bind 192.168.0.68 --port 8765\n'
     f'WorkingDirectory={root}\n'
+    f'StandardOutput=append:{log}\nStandardError=append:{log}\n'
     'Environment=PYTHONNOUSERSITE=1\n'
     'Restart=on-failure\nRestartSec=10\nNice=15\nCPUQuota=25%\n'
     'MemoryMax=512M\nTasksMax=64\nUMask=0077\n'

@@ -56,19 +56,47 @@ def database(root: Path):
         db.close()
 
 
+def evidence_capacity(root: Path) -> dict:
+    """Read an explicit bounded host budget; never expand or delete evidence implicitly."""
+    path = root / "research/goal-learning/capacity.json"
+    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Goal evidence capacity configuration escaped its root")
+    limits = {"max_observations": 8192, "minimum_free_disk_gib": 2}
+    if path.exists():
+        with path.open("rb") as handle:
+            raw = handle.read(4097)
+        if len(raw) > 4096:
+            raise ValueError("Goal evidence capacity configuration exceeds 4 KiB")
+        configured = json.loads(raw)
+        if not isinstance(configured, dict) or set(configured) - set(limits):
+            raise ValueError("Unknown goal evidence capacity configuration fields")
+        limits.update(configured)
+    maximum = limits["max_observations"]
+    reserve = limits["minimum_free_disk_gib"]
+    if type(maximum) is not int or not 8192 <= maximum <= 131072:
+        raise ValueError("Goal evidence max_observations must be an integer 8192..131072")
+    if type(reserve) not in (int, float) or not math.isfinite(reserve) or not 2 <= reserve <= 64:
+        raise ValueError("Goal evidence minimum_free_disk_gib must be finite 2..64")
+    return limits
+
+
 def observe(root: Path, url: str, field: str = "") -> dict:
     """Archive publicly fetched evidence, optionally selecting a JSON numeric metric."""
     from rlm.v100.research_tools import TextOnly, download_page
 
     if not isinstance(field, str) or len(field) > 200:
         raise ValueError("JSON field path exceeds budget")
+    capacity = evidence_capacity(root)
     with database(root) as db:
-        if db.execute("SELECT count(*) FROM observations").fetchone()[0] >= 8192:
-            raise ValueError(
-                "Goal evidence archive budget exhausted; retain snapshots and review capacity"
-            )
-    if shutil.disk_usage(root).free < 2 * 2**30:
-        raise ValueError("Goal evidence requires 2 GiB of free disk headroom")
+        count = db.execute("SELECT count(*) FROM observations").fetchone()[0]
+    if count >= capacity["max_observations"]:
+        raise ValueError(
+            f"Goal evidence archive budget exhausted: {count}/{capacity['max_observations']} observations; retain snapshots and review capacity"
+        )
+    if shutil.disk_usage(root).free < capacity["minimum_free_disk_gib"] * 2**30:
+        raise ValueError(
+            f"Goal evidence requires {capacity['minimum_free_disk_gib']} GiB of free disk headroom"
+        )
     resolved, body = download_page(url, max_bytes=256 * 1024)
     acquired = time.time()
     value = None
@@ -104,8 +132,14 @@ def observe(root: Path, url: str, field: str = "") -> dict:
     retrieval = record(root, resolved, row["body_sha256"])
     identity = digest(row)
     archive = root / "research/goal-learning/sources" / (identity + ".json")
-    atomic_json(archive, {"observation": row, "body": body})
     with database(root) as db:
+        db.execute("BEGIN IMMEDIATE")
+        count = db.execute("SELECT count(*) FROM observations").fetchone()[0]
+        if count >= capacity["max_observations"]:
+            raise ValueError(
+                f"Goal evidence archive budget exhausted: {count}/{capacity['max_observations']} observations; retain snapshots and review capacity"
+            )
+        atomic_json(archive, {"observation": row, "body": body})
         db.execute(
             "INSERT OR IGNORE INTO observations VALUES (?, ?, ?)",
             (identity, acquired, json.dumps(row)),
@@ -189,8 +223,8 @@ def predict(root: Path, branch: str, specification: dict) -> dict:
     now = time.time()
     if target["value"] is None or not 0 <= now - target["acquired"] <= 60:
         raise ValueError("Target must be a numeric observation fetched within 60 seconds")
-    if any(item["acquired"] > now for item in features):
-        raise ValueError("Future evidence is forbidden")
+    if any(item["acquired"] > target["acquired"] for item in features):
+        raise ValueError("Forecast evidence must be available at or before the target observation")
     plan = read(root)
     if not plan.get("long"):
         raise ValueError("Operator long-term goal must exist before goal training")
@@ -215,6 +249,47 @@ def predict(root: Path, branch: str, specification: dict) -> dict:
     return {"id": identity, **row, "state": "precommitted", "weights_changed": False}
 
 
+def _settlement_result(root: Path, prediction: dict, observed_id: str) -> dict:
+    if not isinstance(observed_id, str):
+        raise ValueError("Outcome observation must be a host observation ID")
+    spec = prediction["specification"]
+    before, after = observation(root, spec["target"]), observation(root, observed_id)
+    if (after["url"], after["field"]) != (before["url"], before["field"]):
+        raise ValueError("Outcome series differs from committed target")
+    if not prediction["due"] <= after["acquired"] <= prediction["due"] + 300:
+        raise ValueError("Outcome outside horizon + 5 minute tolerance; no fabricated label")
+    if before["value"] is None or after["value"] is None:
+        raise ValueError("Forecast settlement requires numeric observations")
+    delta = after["value"] - before["value"]
+    if not math.isfinite(delta):
+        raise ValueError("Observed change is outside the finite scoring range")
+    actual = 2 if delta > spec["threshold"] else 0 if delta < -spec["threshold"] else 1
+    probabilities = spec["probabilities"]
+    return {
+        "observation": observed_id,
+        "actual": actual,
+        "delta": delta,
+        "brier": sum((p - (index == actual)) ** 2 for index, p in enumerate(probabilities)),
+        "flat_baseline_brier": 0 if actual == 1 else 2,
+        "uniform_baseline_brier": 2 / 3,
+        "correct": probabilities.index(max(probabilities)) == actual,
+        "scope": "Observed predictive association; no causal or profit certification",
+    }
+
+
+def _verified_settlement(root: Path, prediction: dict, encoded: str) -> dict:
+    try:
+        saved = json.loads(encoded)
+        if not isinstance(saved, dict) or not isinstance(saved.get("observation"), str):
+            raise ValueError
+        expected = _settlement_result(root, prediction, saved["observation"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Stored forecast settlement is invalid") from error
+    if saved != expected:
+        raise ValueError("Stored forecast settlement changed")
+    return expected
+
+
 def settle(root: Path, identity: str, observed_id: str) -> dict:
     with database(root) as db:
         db.execute("BEGIN IMMEDIATE")
@@ -225,29 +300,8 @@ def settle(root: Path, identity: str, observed_id: str) -> dict:
         if digest(prediction) != identity:
             raise ValueError("Forecast commitment changed")
         if item[1] is not None:
-            return json.loads(item[1])
-        spec = prediction["specification"]
-        before, after = observation(root, spec["target"]), observation(root, observed_id)
-        if (after["url"], after["field"]) != (before["url"], before["field"]):
-            raise ValueError("Outcome series differs from committed target")
-        if not prediction["due"] <= after["acquired"] <= prediction["due"] + 300:
-            raise ValueError("Outcome outside horizon + 5 minute tolerance; no fabricated label")
-        delta = after["value"] - before["value"]
-        if not math.isfinite(delta):
-            raise ValueError("Observed change is outside the finite scoring range")
-        actual = 2 if delta > spec["threshold"] else 0 if delta < -spec["threshold"] else 1
-        probabilities = spec["probabilities"]
-        brier = sum((p - (index == actual)) ** 2 for index, p in enumerate(probabilities))
-        result = {
-            "observation": observed_id,
-            "actual": actual,
-            "delta": delta,
-            "brier": brier,
-            "flat_baseline_brier": 0 if actual == 1 else 2,
-            "uniform_baseline_brier": 2 / 3,
-            "correct": probabilities.index(max(probabilities)) == actual,
-            "scope": "Observed predictive association; no causal or profit certification",
-        }
+            return _verified_settlement(root, prediction, item[1])
+        result = _settlement_result(root, prediction, observed_id)
         db.execute("UPDATE forecasts SET outcome=? WHERE id=?", (json.dumps(result), identity))
     return result
 
@@ -262,11 +316,23 @@ def tick(root: Path) -> None:
                 (time.time(), time.time() - 300),
             )
         )
+    fetched, fetch_errors = {}, {}
     for item in pending:
         prediction = json.loads(item["data"])
         target = observation(root, prediction["specification"]["target"])
+        source = (target["url"], target["field"])
         try:
-            acquired = observe(root, target["url"], target["field"])
+            if source in fetch_errors:
+                raise fetch_errors[source]
+            if source not in fetched:
+                try:
+                    fetched[source] = observe(root, *source)
+                except Exception as error:
+                    fetch_errors[source] = error
+                    raise
+            acquired = fetched[source]
+            # Shared fetch does not share eligibility: each commitment retains its
+            # own due..due+300 provenance check inside settle().
             result = settle(root, item["id"], acquired["id"])
             ActivityLog(root, prediction["branch"], "goal-learning").write(
                 "metrics", "forecast-resolved", {"id": item["id"], **result}
@@ -296,7 +362,7 @@ def records(root: Path, active_only: bool = True) -> list[dict]:
             continue
         if digest(forecast) != item["id"]:
             raise ValueError("Forecast commitment changed")
-        saved = json.loads(item["outcome"])
+        saved = _verified_settlement(root, forecast, item["outcome"])
         # Recompute without trusting a model-generated or edited success field.
         before = observation(root, forecast["specification"]["target"])
         after = observation(root, saved["observation"])
@@ -309,10 +375,10 @@ def records(root: Path, active_only: bool = True) -> list[dict]:
         actual = 2 if delta > spec["threshold"] else 0 if delta < -spec["threshold"] else 1
         features = [observation(root, key) for key in spec["evidence"]]
         if (
-            any(row["acquired"] > forecast["created"] for row in features)
+            any(row["acquired"] > before["acquired"] for row in features)
             or before["acquired"] > forecast["created"]
         ):
-            raise ValueError("Training evidence contains future observations")
+            raise ValueError("Training evidence was unavailable at the target observation")
         # All examples sharing an outcome series stay together in the host split ledger.
         series = digest([source_key(before["url"]), before["field"]])
         result.append(
@@ -405,11 +471,13 @@ def status(root: Path) -> dict:
     admission = root / "research/goal-learning/admission.json"
     path = root / "research/goal-learning/ledger.sqlite3"
     items, all_items = [], []
+    observation_count = 0
     if path.exists():
         db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
         db.row_factory = sqlite3.Row
         try:
             db.execute("BEGIN")
+            observation_count = db.execute("SELECT count(*) FROM observations").fetchone()[0]
             items = list(
                 db.execute(
                     "SELECT id, due, data, outcome FROM forecasts ORDER BY due DESC LIMIT 16"
@@ -431,7 +499,15 @@ def status(root: Path) -> dict:
         for item in items
         if goal and json.loads(item["data"])["plan"]["long"]["id"] == goal["id"]
     ]
-    resolved = [json.loads(item["outcome"]) for item in current if item["outcome"]]
+    verified_outcomes = {}
+    for item in current:
+        prediction = json.loads(item["data"])
+        if digest(prediction) != item["id"]:
+            raise ValueError("Forecast commitment changed")
+        verified_outcomes[item["id"]] = (
+            _verified_settlement(root, prediction, item["outcome"]) if item["outcome"] else None
+        )
+    resolved = [row for row in verified_outcomes.values() if row is not None]
     admission_record = json.loads(admission.read_text()) if admission.exists() else None
     if admission_record and admission_record.get("goal_id") != (goal or {}).get("id"):
         admission_record = {
@@ -443,8 +519,19 @@ def status(root: Path) -> dict:
     shadow = json.loads(policy_path.read_text()) if policy_path.exists() else None
     if shadow and shadow.get("goal_id") != (goal or {}).get("id"):
         shadow = None
+    capacity = evidence_capacity(root)
     return {
         "goal_id": goal["id"] if goal else None,
+        "evidence_capacity": {
+            **capacity,
+            "observations": observation_count,
+            "remaining": max(0, capacity["max_observations"] - observation_count),
+            "state": "exhausted"
+            if observation_count >= capacity["max_observations"]
+            else "near limit"
+            if observation_count >= capacity["max_observations"] * 0.9
+            else "available",
+        },
         "cpu_shadow_policy": shadow,
         "resolved_total": sum(item["outcome"] is not None for item in active_items),
         "pending_total": sum(
@@ -469,7 +556,7 @@ def status(root: Path) -> dict:
                 "branch": json.loads(item["data"])["branch"],
                 "question": json.loads(item["data"])["specification"]["question"][:200],
                 "probabilities": json.loads(item["data"])["specification"]["probabilities"],
-                "outcome": json.loads(item["outcome"]) if item["outcome"] else None,
+                "outcome": verified_outcomes[item["id"]],
                 "state": "resolved"
                 if item["outcome"]
                 else "expired"

@@ -12,7 +12,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -20,6 +20,7 @@ import requests
 
 from rlm.v100.activity import ActivityLog, append_locked
 from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.serving import assert_served_expert
 
 
 class BackendNotReady(requests.ConnectionError):
@@ -183,8 +184,10 @@ def trade_visualization_reply(root: Path) -> dict:
 
 def direct_facts(root: Path, message: str) -> dict | None:
     """Explicit read-only host questions never queue behind GPU work."""
-    from rlm.v100 import chat_facts, chat_progress
+    from rlm.v100 import chat_facts, chat_plan, chat_progress
 
+    if chat_plan.requested(message):
+        return chat_plan.respond(root)
     if trade_visualization_requested(message):
         return trade_visualization_reply(root)
     if message.strip() == "/status" or chat_progress.requested(message):
@@ -460,6 +463,168 @@ def schema(allow_long_goal: bool = False) -> dict:
     }
 
 
+def verified_plan_response(root: Path, client, responder: dict) -> dict:
+    """One model-selected read and concise generated answer under existing admission."""
+    from rlm.v100.agent import native_turn, tool_schema
+    from rlm.v100.research_tools import ResearchTools
+
+    bounded = copy.copy(client)
+    bounded.sampling_args = dict(client.sampling_args) | {"max_tokens": 48}
+    bounded.research_token_ceiling = 48
+    bounded.enable_thinking = False
+    bounded.request_deadline = min(
+        getattr(client, "request_deadline", float("inf")), time.monotonic() + 60
+    )
+    if bounded.request_deadline <= time.monotonic():
+        raise TimeoutError("Read-only plan verification deadline exhausted")
+    bounded.timeout = min(client.timeout, bounded.request_deadline - time.monotonic())
+    selected = native_turn(
+        bounded,
+        [{"role": "user", "content": "Call get_plan once."}],
+        tools=[tool_schema("get_plan", "Read recorded goal.", {})],
+    )
+    calls = selected.get("tool_calls") or []
+    if len(calls) != 1 or selected.get("actions") or selected.get("applied"):
+        raise ValueError("Verification requires exactly one model-selected read tool")
+    call = calls[0]
+    function = call.get("function", {})
+    if function.get("name") != "get_plan" or json.loads(function.get("arguments", "null")) != {}:
+        raise ValueError("Verification accepts only get_plan with empty arguments")
+    if time.monotonic() >= bounded.request_deadline:
+        raise TimeoutError("Read-only plan verification expired before tool execution")
+    journal = ActivityLog(root, "A", "chat-plan-verification")
+    step = journal.write(
+        "tools", "tool-start", {"tool": "get_plan", "arguments": {}}, tool_call_id=call.get("id")
+    )
+    tools = ResearchTools(root, {}, "A")
+    tools.allowed_tool_names = {"get_plan"}
+    receipt = {"tool": "get_plan", "arguments": {}, "result": tools.execute("get_plan", {})}
+    journal.write("tools", "tool-result", receipt, step_id=step)
+    if receipt_failed(receipt):
+        raise ValueError("Read-only plan tool failed; no generated success accepted")
+    goal = receipt["result"].get("long") or {}
+    excerpt = str(goal.get("text", "No recorded goal"))[:120]
+    if time.monotonic() >= bounded.request_deadline:
+        raise TimeoutError("Read-only plan verification expired after recorded tool receipt")
+    bounded.timeout = min(client.timeout, bounded.request_deadline - time.monotonic())
+    answer = native_turn(
+        bounded,
+        [
+            {
+                "role": "user",
+                "content": "Report this recorded goal excerpt briefly: "
+                + json.dumps(excerpt, ensure_ascii=False),
+            }
+        ],
+        response_format={
+            "type": "json_object",
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["answer"],
+                "properties": {"answer": {"type": "string", "maxLength": 160}},
+            },
+        },
+    )
+    result = json.loads(answer.get("content", "null"))
+    if (
+        answer.get("tool_calls")
+        or answer.get("actions")
+        or answer.get("applied")
+        or not isinstance(result, dict)
+        or set(result) != {"answer"}
+        or not isinstance(result["answer"], str)
+        or len(result["answer"]) > 160
+        or not answer_complete(result["answer"])
+    ):
+        raise ValueError("Invalid generated read-only plan answer; no extra actions accepted")
+    if time.monotonic() >= bounded.request_deadline:
+        raise TimeoutError("Read-only plan verification answer arrived after deadline")
+    return {
+        "answer": result["answer"],
+        "actions": [],
+        "applied": [],
+        "tool_receipts": [receipt],
+        "responder": responder,
+        "scope": "Model-selected get_plan read and generated goal excerpt; no plan changes or additional tools",
+    }
+
+
+def explicit_no_tools(message: str) -> bool:
+    """Current user restrictions only reduce permissions, never grant new ones."""
+    return bool(
+        re.search(
+            r"\b(?:no tools|without tools|do not use tools|don't use tools|"
+            r"bez narzędzi|bez narzedzi|nie używaj narzędzi|nie uzywaj narzedzi)\b",
+            message.casefold(),
+        )
+    )
+
+
+def recorded_context_requested(message: str) -> bool:
+    return bool(re.search(r"\b(?:goal|plan|cel|plany|planu|celu)\b", message.casefold()))
+
+
+def no_tools_response(client, message: str, plans: dict, responder: dict) -> dict:
+    """One real generation with strict empty actions and no tool/research context."""
+    prompt = (
+        "Answer the current user message directly in its language. Return JSON with answer "
+        "and actions: []. No tools or changes are allowed. Do not claim execution or income."
+    )
+    if plans:
+        prompt += " Recorded plans: " + json.dumps(
+            {
+                horizon: str((plans.get(horizon) or {}).get("text", "No recorded plan"))[:500]
+                for horizon in ("long", "mid", "short")
+            },
+            ensure_ascii=False,
+        )
+    reply = client.request(
+        "/v1/chat/completions",
+        {
+            "model": client.model_name,
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message},
+            ],
+            "max_tokens": 256,
+            "temperature": 0.0,
+            "stream": False,
+            "response_format": {
+                "type": "json_object",
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["answer", "actions"],
+                    "properties": {
+                        "answer": {"type": "string", "maxLength": 2000},
+                        "actions": {"type": "array", "maxItems": 0, "items": {}},
+                    },
+                },
+            },
+            **client.template_args(),
+        },
+    )
+    choice = reply["choices"][0]
+    result = json.loads(choice["message"]["content"])
+    if (
+        choice.get("finish_reason") not in ("stop", "eos")
+        or not isinstance(result, dict)
+        or set(result) != {"answer", "actions"}
+        or result["actions"] != []
+        or not isinstance(result["answer"], str)
+        or not answer_complete(result["answer"])
+    ):
+        raise ValueError("Invalid explicit no-tools response; no actions accepted")
+    return {
+        **result,
+        "applied": [],
+        "tool_receipts": [],
+        "responder": responder,
+        "scope": "Explicit no-tools question; model answer only, no execution",
+    }
+
+
 def conversation_question(message: str) -> bool:
     """Read-only questions take one generation; explicit work retains tools."""
     from rlm.v100.chat_goals import normalized
@@ -647,7 +812,15 @@ def operator_context(root: Path, message: str, state: dict) -> dict:
     return result
 
 
-def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> dict:
+def respond(
+    root: Path,
+    directory: Path,
+    request: dict,
+    accepted_cpu=None,
+    *,
+    skip_local=False,
+    lifecycle_snapshot=None,
+) -> dict:
     from rlm.v100.agent import native_turn
     from rlm.v100.competition import helper_client
     from rlm.v100.mission import status
@@ -659,210 +832,244 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     # Authorization comes only from the current authenticated local user message,
     # never from a model-generated action or text retrieved from the internet.
     message = request["message"].strip()
-    command_verification = bool(
-        re.fullmatch(
-            r"Execute a read-only check: use get_plan once, then report the recorded goal\. Do not change plans, files, preferences, models or schedule work\. Command verification ID: [a-f0-9]{40}",
-            message,
-        )
-    )
-    if message.startswith("/approve-web "):
-        from rlm.v100.web_operations import approve
+    from rlm.v100 import chat_plan
 
-        receipt = approve(root, message.removeprefix("/approve-web ").strip())
-        return {
-            "answer": json.dumps(receipt, ensure_ascii=False),
-            "actions": [],
-            "applied": [receipt],
-            "responder": {"model": "controller-web-approval"},
-        }
-    from rlm.v100 import resource_optimization
-
-    resource_context = resource_optimization.context(root, request)
-    if resource_context is not None:
-        return resource_optimization.apply(root, message, resource_context)
-    from rlm.v100 import chat_progress
-
-    if chat_progress.requested(message):
-        return chat_progress.respond(root, message)
-    if trade_visualization_requested(message):
-        return trade_visualization_reply(root)
-    from rlm.v100 import chat_facts, income_policy, market_research
-    from rlm.v100.chat_goals import authorizes_long
-
-    if re.search(
-        r"backtest|drawdown|odchyl|obsuni|glitch", income_policy.normalized(message)
-    ) and re.search(r"audit|sprawdz|zbadaj|check", income_policy.normalized(message)):
-        return chat_facts.audit_response(root, message)
-    if (
-        not authorizes_long(message)
-        and not message.startswith(("/goal ", "/cel "))
-        and income_policy.setting(message) is not None
-    ):
-        receipt = income_policy.update(root, message)
-        return {
-            "answer": (
-                "Zapisano badanie wzrostu hipotetycznego kapitału w paper. Zlecono porównanie strategii; wynik i koszty muszą być zmierzone."
-                if chat_facts.language(message) == "Polish"
-                else "Hypothetical-capital research saved. Strategy comparison commissioned; returns and costs must be measured."
-            ),
-            "actions": [],
-            "applied": [receipt],
-            "responder": {"model": "controller-research-policy"},
-        }
-    if market_research.requested(message):
-        return chat_facts.test_response(root, message)
-    if conversation_question(message) and chat_facts.requested(message):
-        return chat_facts.response(root, message)
-    quick_question = conversation_question(message) or message.casefold() in (
-        "hej",
-        "cześć",
-        "czesc",
-        "hello",
-        "hi",
-        "odpowiedz",
-    )
-    if re.search(
-        r"\b(?:co potrafisz|co umiesz|twoje możliwości|twoje mozliwosci|what can you do)\b",
-        message.casefold(),
-    ):
-        return {
-            "answer": "\n".join(
-                [
-                    "- Badam publiczne źródła i zapisuję dowody pod aktualny cel.",
-                    "- Zlecam ograniczone zadania CPU/RTX i sprawdzam ich wyniki; dostępność zasobów nie oznacza wykonania zadania.",
-                    "- Uruchamiam kod w izolowanej VM oraz edytuję i waliduję dashboard.",
-                    "- Rejestruję prognozy przed wynikiem i weryfikuję późniejsze etykiety do ML.",
-                    "- Trenuję kandydatów z zabezpieczeniami pamięci; nowe wagi wymagają niezależnych testów.",
-                    "- Pokazuję akcje, plany, wyniki, blokady i zmierzone tokeny w dashboardzie.",
-                    "- Zmieniam cel na wyraźne polecenie operatora. Nie składam realnych zleceń ani nie gwarantuję zysku.",
-                    "- Aktualny postęp odczytasz przez /status lub pytanie o postęp; brak danych pokazuję jako nieznany.",
-                ]
-            ),
-            "actions": [],
-            "applied": [],
-            "responder": {"model": "controller-capabilities"},
-            "scope": "Implemented mechanisms; not proof of current execution or accepted improvement",
-        }
-    from rlm.v100 import chat_progress
-
-    if chat_progress.requested(message) or chat_progress.continue_requested(message):
-        result = chat_progress.respond(root, message)
-        if chat_progress.continue_requested(message):
-            result["answer"] = (
-                "Kontynuacja dotychczasowego celu. Nie zmieniam planu na edycję dashboardu. "
-                "Działająca misja kontynuuje swoją kolejkę; trening wymaga zweryfikowanych danych i bramek jakości. "
-                "Ta odpowiedź nie uruchamia zatrzymanej misji ani nie potwierdza nowych wag.\n"
-                + result["answer"]
+    no_tools = explicit_no_tools(message)
+    quick_question = no_tools
+    allow_long_goal = False
+    command_verification = False
+    if not no_tools:
+        if chat_plan.requested(message):
+            return chat_plan.respond(root)
+        command_verification = bool(
+            re.fullmatch(
+                r"Execute a read-only check: use get_plan once, then report the recorded goal\. Do not change plans, files, preferences, models or schedule work\. Command verification ID: [a-f0-9]{40}",
+                message,
             )
-        return result
-    if message.strip() == "/reset-dashboard" or re.fullmatch(
-        r"(?:reset|restore|przywroc|przywróć) (?:the )?(?:default|domyslny|domyślny) (?:dashboard|raport html)[.! ]*",
-        message.strip(),
-        re.I,
-    ):
-        from rlm.v100.dashboard_editor import status as layout_status
-        from rlm.v100.dashboard_editor import write as layout_write
-        from rlm.v100.dashboard_layout import BASE_TEMPLATE
+        )
+        if message.startswith("/approve-web "):
+            from rlm.v100.web_operations import approve
 
-        written = layout_write(root, BASE_TEMPLATE)
-        publication = layout_status(root)
-        return {
-            "answer": (
-                "Zapisano zweryfikowany widok statusu, agentów, zasobów, raportów i dowodów. "
-                "Poprzedni HTML zachowano w kopii. Dane odświeża renderer hosta. "
-                + (
-                    "Publikacja potwierdzona."
-                    if publication.get("published")
-                    else "Host nie potwierdził jeszcze publikacji; sprawdź dashboard_status."
+            receipt = approve(root, message.removeprefix("/approve-web ").strip())
+            return {
+                "answer": json.dumps(receipt, ensure_ascii=False),
+                "actions": [],
+                "applied": [receipt],
+                "responder": {"model": "controller-web-approval"},
+            }
+        from rlm.v100 import resource_optimization
+
+        resource_context = resource_optimization.context(root, request)
+        if resource_context is not None:
+            return resource_optimization.apply(root, message, resource_context)
+        from rlm.v100 import chat_progress
+
+        if chat_progress.requested(message):
+            return chat_progress.respond(root, message)
+        if trade_visualization_requested(message):
+            return trade_visualization_reply(root)
+        from rlm.v100 import chat_facts, income_policy, market_research
+        from rlm.v100.chat_goals import authorizes_long
+
+        if re.search(
+            r"backtest|drawdown|odchyl|obsuni|glitch", income_policy.normalized(message)
+        ) and re.search(r"audit|sprawdz|zbadaj|check", income_policy.normalized(message)):
+            return chat_facts.audit_response(root, message)
+        if (
+            not authorizes_long(message)
+            and not message.startswith(("/goal ", "/cel "))
+            and income_policy.setting(message) is not None
+        ):
+            receipt = income_policy.update(root, message)
+            return {
+                "answer": (
+                    "Zapisano badanie wzrostu hipotetycznego kapitału w paper. Zlecono porównanie strategii; wynik i koszty muszą być zmierzone."
+                    if chat_facts.language(message) == "Polish"
+                    else "Hypothetical-capital research saved. Strategy comparison commissioned; returns and costs must be measured."
+                ),
+                "actions": [],
+                "applied": [receipt],
+                "responder": {"model": "controller-research-policy"},
+            }
+        if market_research.requested(message):
+            return chat_facts.test_response(root, message)
+        if conversation_question(message) and chat_facts.requested(message):
+            return chat_facts.response(root, message)
+        quick_question = conversation_question(message) or message.casefold() in (
+            "hej",
+            "cześć",
+            "czesc",
+            "hello",
+            "hi",
+            "odpowiedz",
+        )
+        if re.search(
+            r"\b(?:co potrafisz|co umiesz|twoje możliwości|twoje mozliwosci|what can you do)\b",
+            message.casefold(),
+        ):
+            return {
+                "answer": "\n".join(
+                    [
+                        "- Badam publiczne źródła i zapisuję dowody pod aktualny cel.",
+                        "- Zlecam ograniczone zadania CPU/RTX i sprawdzam ich wyniki; dostępność zasobów nie oznacza wykonania zadania.",
+                        "- Uruchamiam kod w izolowanej VM oraz edytuję i waliduję dashboard.",
+                        "- Rejestruję prognozy przed wynikiem i weryfikuję późniejsze etykiety do ML.",
+                        "- Trenuję kandydatów z zabezpieczeniami pamięci; nowe wagi wymagają niezależnych testów.",
+                        "- Pokazuję akcje, plany, wyniki, blokady i zmierzone tokeny w dashboardzie.",
+                        "- Zmieniam cel na wyraźne polecenie operatora. Nie składam realnych zleceń ani nie gwarantuję zysku.",
+                        "- Aktualny postęp odczytasz przez /status lub pytanie o postęp; brak danych pokazuję jako nieznany.",
+                    ]
+                ),
+                "actions": [],
+                "applied": [],
+                "responder": {"model": "controller-capabilities"},
+                "scope": "Implemented mechanisms; not proof of current execution or accepted improvement",
+            }
+        from rlm.v100 import chat_progress
+
+        if chat_progress.requested(message) or chat_progress.continue_requested(message):
+            result = chat_progress.respond(root, message)
+            if chat_progress.continue_requested(message):
+                result["answer"] = (
+                    "Kontynuacja dotychczasowego celu. Nie zmieniam planu na edycję dashboardu. "
+                    "Działająca misja kontynuuje swoją kolejkę; trening wymaga zweryfikowanych danych i bramek jakości. "
+                    "Ta odpowiedź nie uruchamia zatrzymanej misji ani nie potwierdza nowych wag.\n"
+                    + result["answer"]
                 )
-            ),
-            "actions": [],
-            "applied": [written],
-            "dashboard": publication,
-            "responder": {"model": "controller-dashboard", "delegated_while_master_busy": False},
-        }
-    if re.fullmatch(
-        r"(?:hej|czesc|cześć|hello|hi|witaj)(?:\s+(?:synta|master|v100))?[!.,\s]*", message, re.I
-    ):
-        return {
-            "answer": "Cześć! Jestem dostępny. Co mam sprawdzić lub wykonać?"
-            if chat_facts.language(message) == "Polish"
-            else "Hello. What should I inspect or execute?",
-            "actions": [],
-            "applied": [],
-            "responder": {"model": "controller-chat", "delegated_while_master_busy": False},
-        }
-    if message.startswith(("/goal ", "/cel ")):
-        receipt = update_plan(root, "long", message.split(" ", 1)[1], "user")
-        return {
-            "answer": "Zmieniono cel długoterminowy. Następna runda przeplanuje zadania.",
-            "actions": [],
-            "applied": [receipt],
-        }
+            return result
+        if message.strip() == "/reset-dashboard" or re.fullmatch(
+            r"(?:reset|restore|przywroc|przywróć) (?:the )?(?:default|domyslny|domyślny) (?:dashboard|raport html)[.! ]*",
+            message.strip(),
+            re.I,
+        ):
+            from rlm.v100.dashboard_editor import status as layout_status
+            from rlm.v100.dashboard_editor import write as layout_write
+            from rlm.v100.dashboard_layout import BASE_TEMPLATE
 
-    from rlm.v100.chat_goals import authorizes_long, direct_plan
-
-    direct = direct_plan(message)
-    if direct is not None:
-        horizon, objective = direct
-        receipt = update_plan(root, horizon, objective, "user")
-        return {
-            "answer": "Zapisano cel/plan: " + objective + ". Następna runda uwzględni zmianę.",
-            "actions": [],
-            "applied": [receipt],
-            "responder": {"model": "controller-goals", "delegated_while_master_busy": False},
-        }
-    allow_long_goal = authorizes_long(message)
-
-    if message == "/status":
-        from rlm.v100.progress import report
-
-        value = report(root)
-        return {
-            "answer": json.dumps(
-                {
-                    key: value[key]
-                    for key in (
-                        "running",
-                        "phase",
-                        "completed_learning_cycles",
-                        "accepted_weight_updates_this_run",
-                        "last_learning_cycle",
-                        "drones",
-                        "desktop",
-                        "official_benchmark",
+            written = layout_write(root, BASE_TEMPLATE)
+            publication = layout_status(root)
+            return {
+                "answer": (
+                    "Zapisano zweryfikowany widok statusu, agentów, zasobów, raportów i dowodów. "
+                    "Poprzedni HTML zachowano w kopii. Dane odświeża renderer hosta. "
+                    + (
+                        "Publikacja potwierdzona."
+                        if publication.get("published")
+                        else "Host nie potwierdził jeszcze publikacji; sprawdź dashboard_status."
                     )
+                ),
+                "actions": [],
+                "applied": [written],
+                "dashboard": publication,
+                "responder": {
+                    "model": "controller-dashboard",
+                    "delegated_while_master_busy": False,
                 },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            "actions": [],
-            "applied": [],
-            "responder": {"model": "controller-status", "delegated_while_master_busy": False},
-        }
+            }
+        if re.fullmatch(
+            r"(?:hej|czesc|cześć|hello|hi|witaj)(?:\s+(?:synta|master|v100))?[!.,\s]*",
+            message,
+            re.I,
+        ):
+            return {
+                "answer": "Cześć! Jestem dostępny. Co mam sprawdzić lub wykonać?"
+                if chat_facts.language(message) == "Polish"
+                else "Hello. What should I inspect or execute?",
+                "actions": [],
+                "applied": [],
+                "responder": {"model": "controller-chat", "delegated_while_master_busy": False},
+            }
+        if message.startswith(("/goal ", "/cel ")):
+            receipt = update_plan(root, "long", message.split(" ", 1)[1], "user")
+            return {
+                "answer": "Zmieniono cel długoterminowy. Następna runda przeplanuje zadania.",
+                "actions": [],
+                "applied": [receipt],
+            }
+
+        from rlm.v100.chat_goals import authorizes_long, direct_plan
+
+        direct = direct_plan(message)
+        if direct is not None:
+            horizon, objective = direct
+            receipt = update_plan(root, horizon, objective, "user")
+            return {
+                "answer": "Zapisano cel/plan: " + objective + ". Następna runda uwzględni zmianę.",
+                "actions": [],
+                "applied": [receipt],
+                "responder": {"model": "controller-goals", "delegated_while_master_busy": False},
+            }
+        allow_long_goal = authorizes_long(message)
+
+        if message == "/status":
+            from rlm.v100.progress import report
+
+            value = report(root)
+            return {
+                "answer": json.dumps(
+                    {
+                        key: value[key]
+                        for key in (
+                            "running",
+                            "phase",
+                            "completed_learning_cycles",
+                            "accepted_weight_updates_this_run",
+                            "last_learning_cycle",
+                            "drones",
+                            "desktop",
+                            "official_benchmark",
+                        )
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                "actions": [],
+                "applied": [],
+                "responder": {"model": "controller-status", "delegated_while_master_busy": False},
+            }
 
     mission = status(root)
-    paths = [directory / "serving-active.json", directory / "learning/live.json"]
-    current = mission.get("state", {}).get("live_profile")
-    if current:
-        paths.append(Path(current))
-    paths.extend(sorted(directory.glob("profile-*.json")))
-    path = next((p for p in paths if p.exists()), None)
-    if path is None:
-        raise BackendNotReady("Waiting for owned inference server")
-    profile = copy.deepcopy(load_profile(path, root))
+    if lifecycle_snapshot is not None:
+        # Use the exact profile snapshots whose endpoints were leased before
+        # this turn. Re-reading mutable selection files here could redirect
+        # generation to a port that was never included in the lease set.
+        profile = copy.deepcopy(lifecycle_snapshot["accepted"])
+    else:
+        paths = [directory / "serving-active.json", directory / "learning/live.json"]
+        current = mission.get("state", {}).get("live_profile")
+        if current:
+            paths.append(Path(current))
+        paths.extend(sorted(directory.glob("profile-*.json")))
+        path = next((p for p in paths if p.exists()), None)
+        if path is None:
+            raise BackendNotReady("Waiting for owned inference server")
+        profile = copy.deepcopy(load_profile(path, root))
     accepted_profile = copy.deepcopy(profile)
-    from rlm.v100.model_roles import selected_profile
+    if lifecycle_snapshot is not None:
+        planner = lifecycle_snapshot.get("planner")
+    else:
+        from rlm.v100.model_roles import selected_profile
 
-    planner = selected_profile(root, "planner")
+        planner = selected_profile(root, "planner")
     if planner is not None and preferences(root).get("remote_helper_enabled", True):
         try:
-            chosen = load_profile(planner, root)
+            chosen = (
+                copy.deepcopy(planner)
+                if lifecycle_snapshot is not None
+                else load_profile(planner, root)
+            )
+            if not chat_profile_origin_enabled(root, chosen):
+                raise BackendNotReady("Optional planner origin disabled by Synta preferences")
+            if skip_local:
+                from rlm.v100.remote_helper import remote_profile
+
+                if not remote_profile(chosen):
+                    raise BackendNotReady("Local planner endpoint is in a serving transition")
             probe = helper_client(chosen, root)
             probe.timeout = min(probe.timeout, 5)
             backend_preflight(probe)
             profile = copy.deepcopy(chosen)
-        except (OSError, ValueError, requests.RequestException) as error:
+        except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
             # No generation/tool execution has started; retain accepted local master.
             ActivityLog(root, "controller", "chat").write(
                 "errors",
@@ -889,16 +1096,15 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         if remote_profile(profile):
             backend_preflight(client)
             delegated = True
+        elif skip_local:
+            raise BackendNotReady("Accepted local endpoint is in a serving transition")
         else:
-            actual = client.request("/props")
-            if Path(actual["model_path"]).resolve() != Path(profile["server"]["model"]).resolve():
-                raise BackendNotReady("Waiting for the accepted serving model")
+            # The shared local port can temporarily serve a training candidate.
+            # Verify its protected PID, artifact hashes, execution identity and
+            # reported model before any user chat or tool call reaches it.
+            assert_served_expert(client, profile, root)
     except (requests.RequestException, OSError, ValueError) as serving_error:
         profile = copy.deepcopy(accepted_profile)
-        if not preferences(root).get("remote_helper_enabled", True):
-            raise BackendNotReady(str(serving_error)) from serving_error
-        if not profile.get("resources", {}).get("interactive_lab"):
-            raise BackendNotReady(str(serving_error)) from serving_error
         if accepted_cpu is not None and profile.get("resources", {}).get("accepted_cpu_chat"):
             try:
                 accepted_cpu.deadline = request.get("deadline", time.monotonic() + 180)
@@ -912,6 +1118,10 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                     {"available": False, "detail": cpu_detail},
                 )
         if not cpu_master:
+            if not preferences(root).get("remote_helper_enabled", True):
+                raise BackendNotReady(str(serving_error)) from serving_error
+            if not profile.get("resources", {}).get("interactive_lab"):
+                raise BackendNotReady(str(serving_error)) from serving_error
             from rlm.v100.remote_helper import remote_profile, selected_helper
             from rlm.v100.remote_nodes import selected_node
 
@@ -924,7 +1134,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             for candidate in dict.fromkeys(p for p in candidates if p is not None):
                 try:
                     helper = load_profile(candidate, root)
-                    if not remote_profile(helper):
+                    if not remote_profile(helper) or not chat_profile_origin_enabled(root, helper):
                         continue
                     available = helper_client(helper, root)
                     available.request_deadline = request.get("deadline", time.monotonic() + 180)
@@ -933,7 +1143,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
                     backend_preflight(available)
                     client = available
                     break
-                except (OSError, ValueError, requests.RequestException) as error:
+                except (OSError, ValueError, RuntimeError, requests.RequestException) as error:
                     errors.append(str(error)[:240])
             else:
                 raise BackendNotReady(
@@ -951,8 +1161,31 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
     client.activity_context = {**client.activity_context, "chat_request_id": request.get("id")}
     from rlm.v100 import chat_resources
 
-    resource_request = chat_resources.instruction(message)
-    question_only = quick_question and not resource_request
+    resource_request = None if no_tools else chat_resources.instruction(message)
+    question_only = no_tools or (quick_question and not resource_request)
+    if command_verification:
+        return verified_plan_response(
+            root,
+            client,
+            {
+                "model": client.model_name,
+                "delegated_while_master_busy": delegated,
+                "accepted_master_on_cpu": cpu_master,
+                "accepted_model_sha256": accepted_cpu.sha256 if cpu_master else None,
+            },
+        )
+    if no_tools:
+        return no_tools_response(
+            client,
+            message,
+            read_plans(root) if recorded_context_requested(message) else {},
+            {
+                "model": client.model_name,
+                "delegated_while_master_busy": delegated,
+                "accepted_master_on_cpu": cpu_master,
+                "accepted_model_sha256": accepted_cpu.sha256 if cpu_master else None,
+            },
+        )
     if question_only:
         return conversational_response(
             root,
@@ -1064,6 +1297,7 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         from rlm.v100.research_tools import research_turn
 
         client.research_owner = "A"
+        knowledge_task_id = None
         client.research_tool_names = {
             "inspect_trade_costs",
             "inspect_web_page",
@@ -1116,9 +1350,11 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
         if command_verification:
             client.research_tool_names = {"get_plan"}
         research = research_turn(client, messages, schema(allow_long_goal), root)
+        knowledge_task_id = research.get("knowledge_task_id")
         tool_receipts = research.get("research_trace", [])
         result = json.loads(research["content"])
     else:
+        knowledge_task_id = None
         tool_receipts = []
         result = json.loads(
             native_turn(
@@ -1187,6 +1423,8 @@ def respond(root: Path, directory: Path, request: dict, accepted_cpu=None) -> di
             str(row.get("result")) for row in tool_receipts
         )
     result["tool_receipts"] = tool_receipts
+    if knowledge_task_id:
+        result["knowledge_task_id"] = knowledge_task_id
     result["applied"] = apply_actions(root, result["actions"], message)
     if dashboard_request or any(
         row["tool"] in ("write_dashboard", "repair_dashboard") for row in tool_receipts
@@ -1284,6 +1522,150 @@ def reopen_unavailable_questions(root: Path) -> dict:
     return result
 
 
+def chat_profile_origin_enabled(root: Path, profile: dict) -> bool:
+    """Skip disabled optional hosts before constructing clients or acquiring leases."""
+    from rlm.v100.remote_helper import origin_enabled, remote_profile
+
+    return not remote_profile(profile) or origin_enabled(root, profile["runtime"]["base_url"])
+
+
+def _chat_lifecycle_profiles(root: Path, directory: Path, accepted_cpu=None) -> dict:
+    """Resolve immutable profile snapshots and every local endpoint for a turn."""
+    from rlm.v100.mission import status
+
+    mission = status(root)
+    paths = [directory / "serving-active.json", directory / "learning/live.json"]
+    current = mission.get("state", {}).get("live_profile")
+    if current:
+        paths.append(Path(current))
+    paths.extend(sorted(directory.glob("profile-*.json")))
+    selected = next((path for path in paths if path.exists()), None)
+    if selected is None:
+        return {"accepted": None, "planner": None, "profiles": []}
+    from rlm.v100.common import load_profile
+
+    accepted = load_profile(selected, root)
+    planner_profile = None
+    profiles = [accepted]
+    if preferences(root).get("remote_helper_enabled", True):
+        from rlm.v100.model_roles import selected_profile
+
+        planner = selected_profile(root, "planner")
+        if planner is not None:
+            try:
+                chosen = load_profile(planner, root)
+                if chat_profile_origin_enabled(root, chosen):
+                    planner_profile = chosen
+                    profiles.append(planner_profile)
+            except (OSError, ValueError):
+                # respond() records and ignores an unusable optional planner.
+                pass
+    if accepted_cpu is not None and accepted.get("resources", {}).get("accepted_cpu_chat"):
+        from rlm.v100.chat_backend import cpu_profile
+
+        profiles.append(cpu_profile(accepted))
+    return {"accepted": accepted, "planner": planner_profile, "profiles": profiles}
+
+
+@contextmanager
+def _chat_endpoint_leases(root: Path, directory: Path, accepted_cpu=None, *, profiles=None):
+    """Hold shared endpoint leases from before identity checks through all tools/recovery."""
+    from rlm.v100.serving import ServingLeaseUnavailable, endpoint_lease, local_endpoint
+
+    profiles = (
+        profiles
+        if profiles is not None
+        else _chat_lifecycle_profiles(root, directory, accepted_cpu)["profiles"]
+    )
+    endpoints = {}
+    for profile in profiles:
+        endpoint = local_endpoint(profile)
+        if endpoint is not None:
+            endpoints[endpoint] = profile
+    stack = ExitStack()
+    try:
+        # Identical ordering across chat processes prevents multi-port deadlocks.
+        for endpoint in sorted(endpoints):
+            stack.enter_context(
+                endpoint_lease(root, endpoints[endpoint], exclusive=False, timeout=0.25)
+            )
+    except ServingLeaseUnavailable:
+        stack.close()
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        stack.close()
+
+
+@contextmanager
+def _chat_fallback_lease(root: Path, directory: Path, accepted_cpu=None, *, accepted_profile=None):
+    """Protect the isolated accepted CPU fallback when the master port is busy."""
+    from rlm.v100.serving import endpoint_lease
+
+    if accepted_cpu is None or not accepted_cpu:
+        yield
+        return
+    if accepted_profile is None:
+        lifecycle = _chat_lifecycle_profiles(root, directory, accepted_cpu)
+        accepted_profile = lifecycle["accepted"]
+    profile = accepted_profile
+    if not profile.get("resources", {}).get("accepted_cpu_chat"):
+        yield
+        return
+    from rlm.v100.chat_backend import cpu_profile
+    from rlm.v100.serving import ServingLeaseUnavailable
+
+    try:
+        with endpoint_lease(root, cpu_profile(profile), exclusive=False, timeout=0.25):
+            yield
+    except ServingLeaseUnavailable as error:
+        raise BackendNotReady(str(error)) from error
+
+
+def _respond_with_lifecycle(root: Path, directory: Path, request: dict, accepted_cpu=None):
+    lifecycle = _chat_lifecycle_profiles(root, directory, accepted_cpu)
+    if lifecycle["accepted"] is None:
+        raise BackendNotReady("No immutable accepted profile was available for this chat turn")
+    with _chat_endpoint_leases(
+        root, directory, accepted_cpu, profiles=lifecycle["profiles"]
+    ) as lease_acquired:
+        if lease_acquired:
+            return (
+                respond(
+                    root,
+                    directory,
+                    request,
+                    accepted_cpu,
+                    lifecycle_snapshot=lifecycle,
+                )
+                if accepted_cpu is not None
+                else respond(root, directory, request, lifecycle_snapshot=lifecycle)
+            )
+        with _chat_fallback_lease(
+            root, directory, accepted_cpu, accepted_profile=lifecycle["accepted"]
+        ):
+            return (
+                respond(
+                    root,
+                    directory,
+                    request,
+                    accepted_cpu,
+                    skip_local=True,
+                    lifecycle_snapshot=lifecycle,
+                )
+                if accepted_cpu is not None
+                else respond(
+                    root,
+                    directory,
+                    request,
+                    skip_local=True,
+                    lifecycle_snapshot=lifecycle,
+                )
+            )
+
+
 def service(root: Path, directory: Path, stop: threading.Event, accepted_cpu=None) -> None:
     try:
         service_loop(root, directory, stop, accepted_cpu)
@@ -1316,11 +1698,7 @@ def service_loop(root: Path, directory: Path, stop: threading.Event, accepted_cp
             },
         )
         try:
-            response = (
-                respond(root, directory, request, accepted_cpu)
-                if accepted_cpu is not None
-                else respond(root, directory, request)
-            )
+            response = _respond_with_lifecycle(root, directory, request, accepted_cpu)
             if not isinstance(response.get("answer"), str) or not response["answer"].strip():
                 raise ValueError("Empty chat reply rejected; request not completed")
             failed = response.get("execution_status") == "failed"
