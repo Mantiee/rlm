@@ -294,7 +294,7 @@ def test_mtp_requires_pinned_quality_and_invalidates_context(tmp_path):
     base = {
         "schema": "v100-quality-v1",
         "suite_sha256": "fixed",
-        "generation": {},
+        "generation": {"temperature": 0.0},
         "memory_mode": "fixed prompt fixtures; no live retrieval",
         "model_sha256": file_hash(Path(data["server"]["model"])),
         "cases": [{"id": "x", "passed": True}],
@@ -325,11 +325,29 @@ def test_mtp_requires_pinned_quality_and_invalidates_context(tmp_path):
     changed = copy.deepcopy(data)
     changed["server"]["context_per_slot"] *= 2
     assert not mtp_gate.valid(changed)
+    sampled = copy.deepcopy(base)
+    sampled["generation"]["temperature"] = 1.0
+    for path in paths[:2]:
+        atomic_json(path, sampled)
+        data["resources"]["mtp_validation"]["reports"][str(path)] = file_hash(path)
+    # Quality verdicts measured under sampling noise never validate MTP.
+    assert not mtp_gate.valid(data)
+    atomic_json(paths[0], base)
+    data["resources"]["mtp_validation"]["reports"][str(paths[0])] = file_hash(paths[0])
     bad = copy.deepcopy(base)
     bad["cases"][0]["passed"] = False
     atomic_json(paths[1], bad)
     data["resources"]["mtp_validation"]["reports"][str(paths[1])] = file_hash(paths[1])
     assert not mtp_gate.valid(data)
+
+
+def test_mtp_quality_gate_decodes_greedily_without_changing_served_profile(tmp_path):
+    data = profile(tmp_path)
+    data["runtime"].update(temperature=1.0, top_p=0.95, top_k=64)
+    greedy = mtp_gate.gate_profile(data)
+    assert greedy["runtime"]["temperature"] == 0.0
+    assert {**greedy["runtime"], "temperature": 1.0} == data["runtime"]
+    assert data["runtime"]["temperature"] == 1.0
 
 
 def test_user_chat_queue_controls_and_alerts_survive_restart(tmp_path):

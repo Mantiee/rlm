@@ -15,6 +15,13 @@ def identity(profile: dict) -> str:
     return execution_hash(target)
 
 
+def gate_profile(profile: dict) -> dict:
+    # Pass/fail per case under temperature 1.0 sampling is noise; decide with greedy decoding.
+    chosen = copy.deepcopy(profile)
+    chosen["runtime"]["temperature"] = 0.0
+    return chosen
+
+
 def valid(profile: dict) -> bool:
     proof = profile.get("resources", {}).get("mtp_validation")
     if not isinstance(proof, dict) or not profile["server"].get("draft_model"):
@@ -35,6 +42,7 @@ def valid(profile: dict) -> bool:
         before, after = values["quality-baseline.json"], values["quality-candidate.json"]
         return (
             compare_reports(before, after)["passed"]
+            and before["generation"]["temperature"] == 0.0
             and before["model_sha256"]
             == after["model_sha256"]
             == file_hash(Path(profile["server"]["model"]))
@@ -83,8 +91,9 @@ def optimize(root: Path, path: Path, suite: Path, repeats: int = 3) -> Path:
     reports = {}
     for name, profile_path in (("baseline", baseline), ("candidate", candidate)):
         with managed_server(profile_path, root, folder / f"quality-{name}.server.log") as profile:
+            greedy = gate_profile(profile)
             reports[name] = evaluate_suite(
-                helper_client(profile, root), profile, suite, folder / f"quality-{name}.json"
+                helper_client(greedy, root), greedy, suite, folder / f"quality-{name}.json"
             )
     verdict = compare_reports(reports["baseline"], reports["candidate"])
     atomic_json(folder / "quality-verdict.json", verdict)
