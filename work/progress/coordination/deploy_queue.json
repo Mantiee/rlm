@@ -1,0 +1,458 @@
+{
+  "schema": "synta-claude-deploy-queue-v1",
+  "rule": "Deploy the FIRST package whose every target has host SHA == pre. host SHA == post means done; any other SHA means stop and report (do not force). One package per tick.",
+  "packages": [
+    {
+      "id": "V1-gate",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-mtp-gate-repair-20261019",
+      "release": "work/progress/mtp-gate-noise-repair-20261019/release.sh",
+      "copy": [
+        "work/progress/mtp-gate-noise-repair-20261019/mtp_gate.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/venvs/v100-continual/lib/python3.11/site-packages/rlm/v100/mtp_gate.py",
+          "pre": "e1089a1b4713f1851a5c8700a99c58ababe6fbc52e1e6f2e48252a199e291dab",
+          "post": "bcde048135b9030e053dc2a5ed1adb78c69cdfce3044cdde545b4cef8a792c9e"
+        }
+      ],
+      "accept": "host import OK; running mission unaffected; optimize-mtp window is a separate Mantie decision (~3.5h mission stop)",
+      "post": "8531e68255c98cc875c51af63044ff10966ad700f0ad0111905743814e3df1bb",
+      "repair": "Codex repair after exact-SHA/test-integrity rejection; no MTP enablement or restart",
+      "status": "deployed-verified",
+      "deployed_at": "2026-10-19T00:29:00Z",
+      "backup": "/home/marek/ai-v100/research/deploy/rollback/mtp-gate-repair-20261019-20261019T0029Z",
+      "host_sha": "8531e68255c98cc875c51af63044ff10966ad700f0ad0111905743814e3df1bb",
+      "restart": false,
+      "acceptance": "import OK; v100-mission active MainPID 959118; NRestarts 0; no MTP optimization run"
+    },
+    {
+      "id": "dashboard-review-clock-host39",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-dashboard-review-clock-host39",
+      "release": "work/progress/review-clock-future-label-20261019-host39/release.sh",
+      "copy": [
+        "work/progress/review-clock-future-label-20261019-host39/synta-paper-arena-ui.candidate.js"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/bin/synta-paper-arena-ui.js",
+          "pre": "39a91fc5b1b00470dd2dc0bc7b8f30133ca04f00cbe5ca2ed6ef7f62ff4aa8b2",
+          "post": "3c22d128150e1ce37f4f25d0d307d6f39a2f0b76b83a56cbdd99c01e58a6ef2a"
+        }
+      ],
+      "accept": "dashboard-only restart; active service and fresh Browser Use must show future review as za N s; no mission restart or GPU load",
+      "status": "deployed-verified",
+      "restart": true,
+      "deployed_at": "2026-10-19T00:38:00Z",
+      "backup": "/home/marek/ai-v100/research/deploy/rollback/dashboard-review-clock-20261019T0037Z",
+      "host_sha": "3c22d128150e1ce37f4f25d0d307d6f39a2f0b76b83a56cbdd99c01e58a6ef2",
+      "acceptance": "v100-dashboard active MainPID 990184 NRestarts 0; fresh Browser AX required"
+    },
+    {
+      "id": "candidate-lab-model-align-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-candidate-lab-model-align-20261019",
+      "release": "work/progress/candidate-lab-model-align-20261018/release.sh",
+      "copy": [
+        "work/progress/candidate-lab-model-align-20261018/researcher-config.json"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/research/paper-arena/researcher-config.json",
+          "pre": "eeb66f40f50094c670d6f1acdc676397c3aee7acd62b042bf6f59c04970f5ba3",
+          "post": "3bf25b8528ebfa26e9ac67d58e45119260b5aba1eb686d59c967532f9dd59731"
+        }
+      ],
+      "accept": "config parse; one bounded non-trading natural review; dashboard must show model/digest identity or explicit fail-closed mismatch; no mission restart",
+      "status": "deployed-verified",
+      "restart": false,
+      "deployed_at": "2026-10-19T00:43:00Z",
+      "backup": "/home/marek/ai-v100/research/deploy/rollback/candidate-lab-model-align-20261019T0043Z",
+      "host_sha": "3bf25b8528ebfa26e9ac67d58e45119260b5aba1eb686d59c967532f9dd59731"
+    },
+    {
+      "id": "dashboard-review-clock-cohort-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-dashboard-review-clock-cohort-20261019",
+      "release": "manual guarded exact-SHA release documented in manifest",
+      "copy": [
+        "work/progress/review-clock-cohort-20261019/synta-paper-arena-ui.candidate.js"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/bin/synta-paper-arena-ui.js",
+          "pre": "3c22d128150e1ce37f4f25d0d307d6f39a2f0b76b83a56cbdd99c01e58a6ef2a",
+          "post": "39e2fa779ccf66fa0003e508acd7b60d66e612d86c9bc3f05ac3825cd515a909"
+        }
+      ],
+      "accept": "fresh Browser AX shows cohort future review as za N s; dashboard only restart; mission/GPU untouched",
+      "status": "superseded-host-drift",
+      "restart": true,
+      "host_sha": "5ce205b1555f6ea8a551a3a47b6602b413d7a558de9a417d74f30553c2546a6c",
+      "superseded_at": "2026-10-18T23:10:00Z",
+      "superseded_reason": "Strict preflight found a newer host SHA. Host already contains reviewClock(cohort.review_at); only one separate overdue-label line differs. Candidate was not deployed.",
+      "acceptance": "Fresh Browser AX shows future/overdue review labels; no overwrite or restart performed."
+    },
+    {
+      "id": "candidate-json-feedback-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-candidate-lab-json-feedback-20261019",
+      "release": "work/progress/candidate-json-feedback-20261019/release.sh",
+      "copy": [
+        "work/progress/candidate-json-feedback-20261019/synta-paper-candidate-lab.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/bin/synta-paper-candidate-lab.py",
+          "pre": "023521237fdc87ee1b5c1fc83709c9bca7332a997271d179456c93ec4e831b81",
+          "post": "ca5fae1fa42ad6e7e5b72634e6943b1af0a0ea124590e8aec7aaf28be9fa7ebf"
+        }
+      ],
+      "accept": "Host SHA exact; py_compile; candidate-lab active MainPID 998052 NRestarts 0; natural malformed-response feedback acceptance pending next request; mission untouched",
+      "status": "deployed-verified",
+      "restart": true,
+      "deployed_at": "2026-10-18T23:14:49Z",
+      "backup": "/home/marek/ai-v100/research/deploy/rollback/candidate-json-feedback-20261019-20261018T231449Z",
+      "host_sha": "ca5fae1fa42ad6e7e5b72634e6943b1af0a0ea124590e8aec7aaf28be9fa7ebf",
+      "runtime_note": "Natural malformed response accepted: JSONDecodeError class-only feedback persisted; raw parse text absent; no candidate/replay/promotion.",
+      "acceptance": "Host SHA exact; service and mission active; Browser AX fresh; natural state persisted safe bounded feedback."
+    },
+    {
+      "id": "candidate-output-budget-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/candidate-output-budget-20261019.py",
+      "release": "work/progress/candidate-output-budget-20261019/release.sh",
+      "copy": [
+        "work/progress/candidate-output-budget-20261019/synta-paper-candidate-lab.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/bin/synta-paper-candidate-lab.py",
+          "pre": "ca5fae1fa42ad6e7e5b72634e6943b1af0a0ea124590e8aec7aaf28be9fa7ebf",
+          "post": "2cedeef6f331335edd36cdd36b11491ec3597b42db40be4191a70a585cfc90a7"
+        }
+      ],
+      "accept": "Host SHA exact; candidate-lab active; mission unchanged; natural compact-output review required",
+      "status": "deployed-verified",
+      "restart": true,
+      "deployed_at": "2026-10-18T23:31:37Z",
+      "backup": "/home/marek/ai-v100/research/deploy/rollback/candidate-output-budget-20261019-20261018T233137Z",
+      "host_sha": "2cedeef6f331335edd36cdd36b11491ec3597b42db40be4191a70a585cfc90a7",
+      "acceptance": "candidate-lab MainPID 1001241 NRestarts 0 active; v100-mission MainPID 959118 NRestarts 0 active; dashboard service active; no GPU workload"
+    },
+    {
+      "id": "dashboard-legacy-card-clarity-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/dashboard_insights.py",
+      "release": "work/progress/dashboard-legacy-card-clarity-20261019/deploy_remote.sh",
+      "copy": [
+        "work/progress/dashboard-legacy-card-clarity-20261019/dashboard_insights.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/venvs/v100-continual/lib/python3.11/site-packages/rlm/v100/dashboard_insights.py",
+          "pre": "b653bbb3dcb3343efed7fa9becbf75105d63e5f0a5724b87de1fcf6b762ea50d",
+          "post": "401e478f27fa0f30887aff308bd3c25b89ba3f4fd458a1da4dc465675363da83"
+        }
+      ],
+      "accept": "Legacy A/B card relabeled archive/benchmark; dashboard recovers after restart; mission/PAPER semantics unchanged",
+      "status": "deployed-verified",
+      "restart": true,
+      "deployed_at": "2026-10-18T23:36:36Z",
+      "backup": "/home/marek/ai-v100/research/deploy/rollback/dashboard-legacy-card-clarity-20261019-20261018T233636Z",
+      "host_sha": "401e478f27fa0f30887aff308bd3c25b89ba3f4fd458a1da4dc465675363da83",
+      "acceptance": "v100-dashboard MainPID 1002560 NRestarts 0; transient snapshot recovered to fresh in 16s; mission not restarted"
+    },
+    {
+      "id": "arena-writer-busy-timeout-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-paper-arena.py",
+      "release": "work/progress/arena-writer-busy-timeout-20261019/deploy_remote.sh",
+      "copy": [
+        "work/progress/arena-writer-busy-timeout-20261019/synta-paper-arena.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/bin/synta-paper-arena.py",
+          "pre": "d2027f8300fa5801bbb8e8185f3990c5d52100d0593c64ab98a10f4b3b1da5b8",
+          "post": "c12980921ed6f2f4a4c9787a219474f1d4178983b658e69785b6d07f1ceb1d37"
+        }
+      ],
+      "accept": "Arena active; source-error ledger.commit recovers without masking; mission unchanged",
+      "status": "deployed-verified",
+      "restart": true,
+      "deployed_at": "2026-10-18T23:41:50Z",
+      "backup": "/home/marek/ai-v100/research/deploy/rollback/arena-writer-busy-timeout-20261019-20261018T234150Z",
+      "host_sha": "c12980921ed6f2f4a4c9787a219474f1d4178983b658e69785b6d07f1ceb1d37",
+      "acceptance": "Arena MainPID 1003804 NRestarts 0; Browser AX recovered forward-paper-active; mission untouched"
+    },
+    {
+      "id": "v100-startup-timeout-repair-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-v100-startup-timeout-repair-20261019",
+      "release": "work/progress/v100-startup-timeout-repair-20261019/README.md",
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/venvs/v100-continual/lib/python3.11/site-packages/rlm/v100/competition.py",
+          "pre": "fadb3dc996eb3281deb8664605d601bb949ab499ecce44276b704d8e61c7ca26",
+          "post": "b049270463e96af9e3f5b44f95345cbbff039ef99904082e23681782b309c2b7"
+        }
+      ],
+      "accept": "exact host pre; atomic replace; py_compile; restart only v100-mission.service; verify /health=200 and dashboard freshness",
+      "status": "superseded-host-drift"
+    },
+    {
+      "id": "paper-fee-receipt-wiring-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-paper-fee-receipt-wiring-20261019",
+      "release": "work/progress/paper-fee-receipt-wiring-20261019/release.sh",
+      "copy": [
+        "work/progress/paper-fee-receipt-wiring-20261019/synta-paper-arena.pre.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/bin/synta-paper-arena.py",
+          "pre": "c12980921ed6f2f4a4c9787a219474f1d4178983b658e69785b6d07f1ceb1d37",
+          "post": "f1505e5551ad0bafbc88743a937acb010a8df78ad14dbcf4ae9b256fab0068a7"
+        }
+      ],
+      "accept": "exact pre/post SHA; py_compile; arena active; fresh cost snapshot shows receipt-derived per-symbol assumptions; no mission restart",
+      "status": "deployed-verified",
+      "restart": true,
+      "deployed_at": "2026-10-19T11:37:32Z",
+      "host_sha": "f1505e5551ad0bafbc88743a937acb010a8df78ad14dbcf4ae9b256fab0068a7",
+      "backup": "/home/marek/ai-v100/research/deploy/rollback/paper-fee-receipt-wiring-20261019-20261019T093732Z",
+      "acceptance": "Host SHA f1505e5551ad0bafbc88743a937acb010a8df78ad14dbcf4ae9b256fab0068a7; py_compile/import verified previously; arena and forward active; fresh /tmp/synta_receipts/paper_fee_source.json at 2026-10-19T15:18:13Z shows BTC-KRAKEN taker_bps 26, round_trip 68, source public_schedule; latest PAPER quote fresh at 2026-10-19T15:18:32Z; SQLite BUSY diagnostic recovered; no mission restart for this package"
+    },
+    {
+      "id": "backtest-prospective-scope-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-backtest-prospective-scope-20261019",
+      "release": "work/progress/backtest-local-quotes-20261019/release.sh",
+      "copy": [
+        "work/progress/backtest-local-quotes-20261019/backtest_engine.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/synta-control/work/backtest-engine-20261018/backtest_engine.py",
+          "pre": "db2a1449e0468e4c8ba5ea642852e741ca80e10286490cc4e460dba22c0a1273",
+          "post": "181221f1aa0f0ec8e38ac4d54d7aae055aa891d811d1f41f002760efec859ef4"
+        }
+      ],
+      "accept": "exact pre/post SHA; py_compile; fresh prospective-scope metadata; no strategy promotion; service active",
+      "status": "deployed-verified"
+    },
+    {
+      "id": "backtest-latest-pointer-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-backtest-latest-pointer-20261019",
+      "release": "work/progress/backtest-local-quotes-20261019/release-latest-pointer.sh",
+      "copy": [
+        "work/progress/backtest-local-quotes-20261019/backtest_engine.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/synta-control/work/backtest-engine-20261018/backtest_engine.py",
+          "pre": "181221f1aa0f0ec8e38ac4d54d7aae055aa891d811d1f41f002760efec859ef4",
+          "post": "99e44a5731c90b0a1adf111e0cd462ff0aa263a2ecead74636ef9eab7211b5df"
+        }
+      ],
+      "accept": "exact pre/post SHA; py_compile; fresh backtest_latest pointer; dashboard status age fresh",
+      "status": "deployed-verified"
+    },
+    {
+      "id": "dashboard-backtest-scope-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-dashboard-backtest-scope-20261019",
+      "release": "work/progress/dashboard-backtest-scope-20261019/release.sh",
+      "copy": [
+        "work/progress/dashboard-backtest-scope-20261019/dashboard_server.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/synta-control/work/dashboard-v2-20261018/dashboard_server.py",
+          "pre": "cfd099b433a14b9bb83f73bd53b0cb278e0ed8de2b896db0d54add9962e58961",
+          "post": "f5455561723c4214f2fd84e8a3a12fddb28943c371da3bb178239cd951a7fda8"
+        }
+      ],
+      "accept": "exact pre/post SHA; py_compile; dashboard 8771 exposes latest walkforward scope and fresh age",
+      "status": "deployed-verified",
+      "host_sha": "f5455561723c4214f2fd84e8a3a12fddb28943c371da3bb178239cd951a7fda8",
+      "deployed_at": "2026-10-19T14:23:07Z",
+      "acceptance_result": "host SHA exact; py_compile; /api/status age=0; evaluation_scope=prospective_quote_replay; oos_valid=false; /api/backtests/latest fresh"
+    },
+    {
+      "id": "paper-cost-gate-20261019",
+      "host": "marek@192.168.0.68",
+      "stage": "/tmp/synta-paper-cost-gate-20261019",
+      "release": "work/progress/paper-cost-gate-20261019/release.sh",
+      "copy": [
+        "work/progress/paper-cost-gate-20261019/synta_live_paper_v3.py"
+      ],
+      "targets": [
+        {
+          "path": "/home/marek/ai-v100/tools/synta_live_paper_v3.py",
+          "pre": "9570f8161502efef81379e064472434541427a589029f0e5303b77ee81b4f4f3",
+          "post": "c50e87d0fc36e2e57b7e0f93a771a43d9751de2ee540dbae2f2f36631c785480"
+        }
+      ],
+      "accept": "exact pre/post SHA; py_compile; receipt round-trip gate; PAPER active",
+      "status": "superseded-host-drift",
+      "host_sha": "308c2d643fc18854f581d4ce254d64fc51d14656219a4fcfd7a9d430c3963d09",
+      "superseded_at": "2026-10-19T15:20:00Z",
+      "superseded_reason": "Strict preflight: host SHA differs from queued preimage; current runtime is newer and active. Candidate not deployed."
+    },
+    {
+      "id": "paper-cost-pnl-diagnostics-20261019",
+      "status": "deployed-verified",
+      "host": "debian1",
+      "remote_target": "/home/marek/ai-v100/tools/synta_live_paper_v3.py",
+      "pre_sha256": "a563940e57d48bc40e551e76132e4afeab5f036a303d3e7384c73a28383e204c",
+      "post_sha256": "e32b4df7542339ba28187a418d7891322ab293d4551f87ee604979fdd07a0d27",
+      "acceptance": "user service active; API cost_diagnostics round_trip_bps=68, rsi_gate=6.8, fee_ok=true; fresh fills pnl_status=receipt_reconciled",
+      "backup": "/home/marek/ai-v100/tools/synta_live_paper_v3.py.pre-cost-diagnostics-20261019",
+      "ts": "2026-10-19T14:34:25.1699692Z"
+    },
+    {
+      "id": "dashboard-cost-diagnostics-20261019",
+      "status": "deployed-verified",
+      "host": "debian1",
+      "remote_target": "/home/marek/synta-control/work/dashboard-v2-20261018/dashboard_v2.html",
+      "pre_sha256": "83d9cc9b428b807932dfd87a739116848159e8d5435e23c1c33770bcca4811d2",
+      "post_sha256": "aeb102202c05430a2962151f8448a821d99179572af53226e1c5d46b2fc82745",
+      "acceptance": "8771 serves paper-runtime-section; /api/bot_status exposes receipt diagnostics",
+      "backup": "/opt/synta/dashboard_v2.html.pre-cost-diagnostics-20261019",
+      "ts": "2026-10-19T14:38:10.8154994Z"
+    },
+    {
+      "id": "paper-rsi-cooldown-20261019",
+      "status": "deployed-verified",
+      "host": "debian1",
+      "remote_target": "/home/marek/ai-v100/tools/synta_live_paper_v3.py",
+      "pre_sha256": "e32b4df7542339ba28187a418d7891322ab293d4551f87ee604979fdd07a0d27",
+      "post_sha256": "540b9870d21403d8e6997c49aaa21c737df1f094f6a26353a0e9e1c334cb59f3",
+      "acceptance": "SHA 540b9870...; user service active; 90-96 decisions/min; no new fill for at least 127 seconds after restart (fills remained 30, latest 16:42:07); RSI gate 6.8; branch C account unchanged during observation",
+      "backup": "/home/marek/ai-v100/tools/synta_live_paper_v3.py.pre-rsi-cooldown-20261019",
+      "ts": "2026-10-19T14:41:08.3088785Z"
+    },
+    {
+      "id": "paper-runtime-diagnostics-20261019",
+      "status": "deployed-verified",
+      "host": "debian1",
+      "targets": [
+        {
+          "remote_target": "/home/marek/ai-v100/tools/synta_live_paper_v3.py",
+          "pre_sha256": "540b9870d21403d8e6997c49aaa21c737df1f094f6a26353a0e9e1c334cb59f3",
+          "post_sha256": "0973ee0f46429ac2e4ca43d9a83492b84b6e6c82a948a961f22f54891a6dc5f2"
+        },
+        {
+          "remote_target": "/home/marek/synta-control/work/dashboard-v2-20261018/dashboard_v2.html",
+          "pre_sha256": "aeb102202c05430a2962151f8448a821d99179572af53226e1c5d46b2fc82745",
+          "post_sha256": "ed2a4bdda7de3c36e29a617d121e00f6af25cec5a4803ae3229746a7fffcd812"
+        }
+      ],
+      "acceptance": "full stop/start required; new MainPID 48639; API cost_diagnostics includes rsi_min_hold_seconds=300 and dashboard source contains cooldown label",
+      "backup": "remote .pre-runtime-diagnostics-20261019",
+      "ts": "2026-10-19T14:45:09.2237457Z"
+    },
+    {
+      "id": "paper-instrument-runtime-20261019",
+      "status": "deployed-verified",
+      "host": "debian1",
+      "remote_target": "/home/marek/ai-v100/tools/synta_live_paper_v3.py",
+      "pre_sha256": "0973ee0f46429ac2e4ca43d9a83492b84b6e6c82a948a961f22f54891a6dc5f2",
+      "post_sha256": "308c2d643fc18854f581d4ce254d64fc51d14656219a4fcfd7a9d430c3963d09",
+      "acceptance": "SHA 308c2d64...; MainPID 49003 active; PAPER /api/status instrument=BTC-KRAKEN; dashboard /api/bot_status instrument=BTC-KRAKEN; cooldown=300",
+      "backup": "/home/marek/ai-v100/tools/synta_live_paper_v3.py.pre-instrument-runtime-20261019",
+      "ts": "2026-10-19T14:49:37.5925676Z"
+    },
+    {
+      "id": "forward-sqlite-busy-timeout-20261019",
+      "status": "deployed-verified",
+      "host": "debian1",
+      "remote_target": "/home/marek/ai-v100/bin/synta-paper-forward-worker.py",
+      "pre_sha256": "8480d36fff60433fa72e82ea0ae7195bf987f7f73f8a6b046cc8083f480536b6",
+      "post_sha256": "13ff4ccd9837a7bbd5ed0f0f2bf164959f3fe1ffe6013c9bb6f5262d723317e2",
+      "acceptance": "SHA 13ff4ccd...; forward service active; latest state waiting-source-sync; prior SQLITE_BUSY diagnostic transitioned to recovered and no new error during two observations",
+      "backup": "/home/marek/ai-v100/bin/synta-paper-forward-worker.py.pre-sqlite-busy-timeout-20261019",
+      "ts": "2026-10-19T14:54:09.0489624Z"
+    },
+    {
+      "id": "candidate-prereq-gate-20261019",
+      "status": "DEPLOY-READY",
+      "host": "debian1",
+      "remote_target": "/home/marek/ai-v100/bin/synta-paper-candidate-lab.py",
+      "pre_sha256": "2cedeef6f331335edd36cdd36b11491ec3597b42db40be4191a70a585cfc90a7",
+      "post_sha256": "680034af84963f68553fe5ec736d6b8acda398554a032a642e95e95783960810",
+      "package_path": "work/progress/candidate-prereq-gate-20261019/",
+      "changes": [
+        "Add paper-v100-mission to backend allowlist (unblocks candidate lab when researcher-config has backend=paper-v100-mission)",
+        "Add reconcile_pre_request_state(state, now) method with next_review_at=now+300 to break rapid-fire retry loop after pre-request failures",
+        "Add bind_history_row_contract() to inject history row contract into candidate prompt once"
+      ],
+      "acceptance": "SHA 680034af; candidate-lab service active; stage transitions from context-error to uncertain/waiting within 90s; no tight-loop context-error; reconciled state has next_review_at >= now+300",
+      "backup": "/home/marek/ai-v100/backups/candidate-prereq-gate-20261019/synta-paper-candidate-lab.py.pre",
+      "rollback_cmd": "bash work/progress/candidate-prereq-gate-20261019/release.sh --rollback",
+      "test_evidence": "8/8 tests in test_candidate_prereq_gate.py PASSED",
+      "ts": "2026-10-19T16:00:00Z"
+    }
+  ],
+  "manual_only": [
+    "R1/R2 roadmap text (Codex owns the file)",
+    "M1 Debian2 root steps 2-6",
+    "V1 V100 spec decoding (maintenance window)",
+    "M2 MoE measurement"
+  ],
+  "done": [
+    "B2",
+    "B3",
+    "C1",
+    "C2",
+    "D-GATE",
+    "D1+D2",
+    "M1-debian1",
+    "R1/R2",
+    "D1b",
+    "D1c",
+    "V1-gate-repair",
+    "dashboard-review-clock-host39",
+    "candidate-lab-model-align-20261019",
+    "candidate-json-feedback-20261019",
+    "candidate-output-budget-20261019",
+    "dashboard-legacy-card-clarity-20261019",
+    "arena-writer-busy-timeout-20261019"
+  ],
+  "withdrawn": [
+    "Q2 (superseded by Codex remote_nodes 83567a41, 20:2xZ)"
+  ],
+  "rejected": [
+    {
+      "id": "V1-gate-original-20261019",
+      "reason": "preflight exact-SHA mismatch and 3/40 focused test failures",
+      "package": {
+        "id": "V1-gate",
+        "host": "marek@192.168.0.68",
+        "stage": "/tmp/synta-mtp-gate-repair-20261019",
+        "release": "work/progress/mtp-gate-noise-repair-20261019/release.sh",
+        "copy": [
+          "work/progress/mtp-gate-noise-repair-20261019/mtp_gate.py"
+        ],
+        "targets": [
+          {
+            "path": "/home/marek/ai-v100/venvs/v100-continual/lib/python3.11/site-packages/rlm/v100/mtp_gate.py",
+            "pre": "e1089a1b4713f1851a5c8700a99c58ababe6fbc52e1e6f2e48252a199e291dab",
+            "post": "bcde048135b9030e053dc2a5ed1adb78c69cdfce3044cdde545b4cef8a792c9e"
+          }
+        ],
+        "accept": "host import OK; running mission unaffected; optimize-mtp window is a separate Mantie decision (~3.5h mission stop)",
+        "post": "8531e68255c98cc875c51af63044ff10966ad700f0ad0111905743814e3df1bb",
+        "repair": "Codex repair after exact-SHA/test-integrity rejection; no MTP enablement or restart"
+      },
+      "actual_staged_sha256": "46702850a58305a6928b0999dc213227affdf9c7215a0a37572cf5263443d461",
+      "expected_post_sha256": "bcde048135b9030e053dc2a5ed1adb78c69cdfce3044cdde545b4cef8a792c9e"
+    }
+  ],
+  "updated_at": "2026-10-19T14:45:00Z"
+}
