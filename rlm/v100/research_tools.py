@@ -37,6 +37,9 @@ COMPACT_CPU_TOOLS = {
     "backtest_prices",
     "source_ingest_status",
     "start_source_ingest",
+    "record_hypothesis_sources",
+    "record_source_outcome",
+    "source_influence_report",
 }
 
 TOOLS = [
@@ -214,6 +217,21 @@ TOOLS = [
     tool_schema(
         "start_source_ingest",
         "Start or restart parallel ingest drone threads for all registered providers. Each drone runs independently; one failed provider does not stall others. Returns which drones were started. No real orders placed; no guaranteed throughput; provider terms and rate limits apply.",
+        {},
+    ),
+    tool_schema(
+        "record_hypothesis_sources",
+        "Record which verified public sources were actually used in a hypothesis: source_id, url, sha256, excerpt (≤512 chars), model_score (0..1 relevance), acquired_at. Attribution is stored at hypothesis time; outcome comparison happens after resolution only. No look-ahead. Rejects invalid or empty source lists without fabricating attribution.",
+        {"hypothesis_id": {"type": "string"}, "sources": {"type": "array", "items": {"type": "object"}}},
+    ),
+    tool_schema(
+        "record_source_outcome",
+        "Record a resolved paper outcome for a hypothesis (paper return or Brier delta). Sets source_used flag from previously recorded sources. Used for source-vs-control comparison after resolution only. No real-money amounts.",
+        {"hypothesis_id": {"type": "string"}, "outcome": {"type": "number"}, "cohort_id": {"type": "string"}},
+    ),
+    tool_schema(
+        "source_influence_report",
+        "Show recent hypothesis-source attributions (source_id, url, sha256, excerpt, model_score) and a descriptive source-used vs control comparison on resolved outcomes. No look-ahead; delta is descriptive, not causal; no profit claim. Empty or unverified sources show as zero entries.",
         {},
     ),
     tool_schema(
@@ -1057,6 +1075,18 @@ class ResearchTools:
             from rlm.v100.source_ingest import start_ingest
 
             return start_ingest(self.root)
+        if name == "record_hypothesis_sources" and set(arguments) == {"hypothesis_id", "sources"}:
+            from rlm.v100.source_influence import record_hypothesis_sources
+
+            return record_hypothesis_sources(self.root, **arguments)
+        if name == "record_source_outcome" and "hypothesis_id" in arguments and "outcome" in arguments:
+            from rlm.v100.source_influence import record_outcome
+
+            return record_outcome(self.root, arguments["hypothesis_id"], arguments["outcome"], cohort_id=arguments.get("cohort_id"))
+        if name == "source_influence_report" and not arguments:
+            from rlm.v100.source_influence import source_influence_report
+
+            return source_influence_report(self.root)
         if name in ("search_memory", "read_source"):
             from rlm.v100.mission_memory import store
 
