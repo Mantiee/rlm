@@ -35,6 +35,8 @@ COMPACT_CPU_TOOLS = {
     "batch_backtest_status",
     "batch_backtest_throughput",
     "backtest_prices",
+    "source_ingest_status",
+    "start_source_ingest",
 }
 
 TOOLS = [
@@ -203,6 +205,16 @@ TOOLS = [
         "register_public_feed",
         "Register a public JSON feed for an already verified instrument/feed, or timestamped research news. Does not certify fees, bookmaker rules, source reliability or live account eligibility. No private/paid endpoints. New feeds are picked up by the observer next tick.",
         {"configuration": {"type": "object"}},
+    ),
+    tool_schema(
+        "source_ingest_status",
+        "Return the live status of all parallel source-ingest drones: last fetch time, consecutive errors, total rows ingested, average lag between publisher-claimed published_at and local acquired_at, and whether any drone is in backoff. Throughput reflects actual provider rate limits and hardware; no fixed multiplier is claimed.",
+        {},
+    ),
+    tool_schema(
+        "start_source_ingest",
+        "Start or restart parallel ingest drone threads for all registered providers. Each drone runs independently; one failed provider does not stall others. Returns which drones were started. No real orders placed; no guaranteed throughput; provider terms and rate limits apply.",
+        {},
     ),
     tool_schema(
         "reward_policy_status",
@@ -1037,6 +1049,14 @@ class ResearchTools:
             from rlm.v100.backtest_batch import throughput_report
 
             return throughput_report(self.root)
+        if name == "source_ingest_status" and not arguments:
+            from rlm.v100.source_ingest import ingest_status
+
+            return ingest_status(self.root)
+        if name == "start_source_ingest" and not arguments:
+            from rlm.v100.source_ingest import start_ingest
+
+            return start_ingest(self.root)
         if name in ("search_memory", "read_source"):
             from rlm.v100.mission_memory import store
 
