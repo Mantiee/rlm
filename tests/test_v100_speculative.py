@@ -99,6 +99,26 @@ def test_comparison_refuses_missing_drafts_and_changed_target(tmp_path):
         compare_reports(old, new)
 
 
+def test_experiment_profiles_force_greedy_gate_sampling():
+    source = (Path(__file__).parents[1] / "profiles/v100.toml").read_text()
+    source = source.replace("[runtime]\n", "[runtime]\ntemperature = 1.0\n")
+    assert tomllib.loads(source)["runtime"]["temperature"] == 1.0
+    for draft in (None, Path("draft.gguf")):
+        assert tomllib.loads(mtp_profile_text(source, draft, 2))["runtime"]["temperature"] == 0.0
+
+
+def test_comparison_refuses_sampled_or_mismatched_answers(tmp_path):
+    old = benchmark(tmp_path)
+    new = copy.deepcopy(old)
+    new["profile"]["runtime"]["seed"] = 7
+    with pytest.raises(ValueError, match="Sampling"):
+        compare_reports(old, new)
+    for report in (old, new):
+        report["profile"]["runtime"].update(temperature=1.0, seed=42)
+    with pytest.raises(ValueError, match="greedy"):
+        compare_reports(old, new)
+
+
 def test_recommendation_uses_measurement_not_largest_draft(tmp_path):
     baseline = benchmark(tmp_path)
     comparison = {}
@@ -261,6 +281,22 @@ def test_runner_refuses_busy_gpu_without_starting_processes(tmp_path, monkeypatc
     )
     with pytest.raises(ValueError, match="Stop the inference server"):
         run_mtp(tmp_path, 3, (2, 4))
+
+
+def test_runner_refuses_sampled_profiles_before_loading_models(tmp_path, monkeypatch):
+    profile_path = prepare_fixture(tmp_path)
+    source = profile_path.read_text().replace("[runtime]\n", "[runtime]\ntemperature = 1.0\n")
+    for name, draft in (("baseline", None), ("mtp2", tmp_path / "draft.gguf")):
+        # Profiles created before the greedy gate keep the user's sampling temperature.
+        text = mtp_profile_text(source, draft, 2).replace(
+            "temperature = 0.0\n", "temperature = 1.0\n"
+        )
+        (tmp_path / f"research/v100-{name}.toml").write_text(text)
+    monkeypatch.setattr(
+        speculative.subprocess, "run", lambda *a, **kw: pytest.fail("Must not query the GPU")
+    )
+    with pytest.raises(ValueError, match="temperature = 0.0"):
+        run_mtp(tmp_path, 3, (2,))
 
 
 def test_runner_cleans_up_only_own_children_after_benchmark_failure(tmp_path, monkeypatch):

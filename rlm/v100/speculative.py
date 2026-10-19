@@ -15,6 +15,7 @@ from pathlib import Path
 import requests
 
 from rlm.v100.common import atomic_json, load_profile
+from rlm.v100.inference import sampling_settings
 
 ASSISTANT_MODEL = "google/gemma-4-12B-it-assistant"
 ASSISTANT_REVISION = "46d4c6f13f0ac0ad827b915669b8df9b81c64c51"
@@ -62,6 +63,9 @@ def mtp_profile_text(source: str, draft_model: Path | None, tokens: int) -> str:
         key = line.split("=", 1)[0].strip()
         if section == "runtime" and key == "base_url":
             lines[index] = 'base_url = "http://127.0.0.1:8089"\n'
+        # The exact-answer gate is meaningful only for greedy decoding; sampled answers differ by noise.
+        if section == "runtime" and key == "temperature":
+            lines[index] = "temperature = 0.0\n"
         if section == "server":
             if key == "draft_model":
                 lines[index] = (
@@ -111,6 +115,11 @@ def compare_reports(baseline: dict, candidate: dict) -> dict:
             baseline["profile"][section][key] != candidate["profile"][section][key] for key in keys
         ):
             raise ValueError(f"Target/runtime settings differ in {section}")
+    sampling = sampling_settings(baseline["profile"])
+    if sampling != sampling_settings(candidate["profile"]):
+        raise ValueError("Sampling settings differ")
+    if sampling["temperature"] != 0.0:
+        raise ValueError("Exact-answer gate requires greedy sampling (temperature 0)")
     before = {(r["case"], r["repeat"]): r for r in baseline["runs"]}
     after = {(r["case"], r["repeat"]): r for r in candidate["runs"]}
     if not before or before.keys() != after.keys():
@@ -184,6 +193,8 @@ def test_mtp(
     for name, profile in loaded.items():
         if profile["runtime"]["base_url"] != "http://127.0.0.1:8089":
             raise ValueError("MTP experiment runner requires loopback port 8089")
+        if sampling_settings(profile)["temperature"] != 0.0:
+            raise ValueError(f"{name} profile must set temperature = 0.0 for the exact-answer gate")
         if (name == "baseline") != (not profile["server"]["draft_model"]):
             raise ValueError("Baseline must have no draft, MTP profiles must have a draft")
         if name != "baseline" and profile["server"].get("spec_type") != "draft-mtp":
